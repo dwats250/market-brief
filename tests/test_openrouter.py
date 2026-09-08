@@ -38,3 +38,12 @@ def test_openrouter_retries_only_transient_transport_failures():
     output, _ = synthesize_openrouter(fixture_packet(), api_key="secret", requester=requester,
                                       sleeper=lambda _: None)
     assert output["mode"] == "SAMPLE" and len(calls) == 3
+
+
+def test_openrouter_accepts_fenced_json_transport_wrapper():
+    def requester(payload, api_key):
+        return {"id": "response-test", "choices": [{"message": {
+            "content": "```json\n" + json.dumps(narrative()) + "\n```"}}]}
+
+    output, _ = synthesize_openrouter(fixture_packet(), api_key="secret", requester=requester)
+    assert output["mode"] == "SAMPLE"

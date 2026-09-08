@@ -157,6 +157,9 @@ def _openrouter_narrative(response):
         keys = ",".join(sorted(str(key) for key in message)) or "none"
         finish = choices[0].get("finish_reason", "unknown")
         raise ValueError(f"OpenRouter returned no structured synthesis (message_keys={keys}; finish={finish})")
+    content = content.strip()
+    if content.startswith("```") and content.endswith("```"):
+        content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content, flags=re.I)
     try:
         return json.loads(content)
     except json.JSONDecodeError:

@@ -30,16 +30,20 @@ def test_markdown_html_same_facts_mode_and_literal_halt():
         assert value.lower() in page.lower()
     parsed = Page()
     parsed.feed(page)
-    assert not parsed.scripts
+    assert len(parsed.scripts) == 1
     assert set(parsed.refs) <= parsed.ids
     assert "Content-Security-Policy" in page
+    assert 'id="theme-choice"' in page
+    assert page.index("What to watch") < page.index("Macro &amp; cross-asset")
+    assert "direction-positive" in page and "direction-negative" in page
+    assert 'class="number direction-neutral">3.86 % yield' in page
 
 
 def test_model_html_is_escaped_in_both_formats():
     value = narrative()
     value["banner"]["title"] = '<script>alert("bad")</script>'
     md, page = render(fixture_packet(), value)
-    assert "<script>" not in page and "<script>" not in md
+    assert '<script>alert("bad")</script>' not in page and '<script>alert("bad")</script>' not in md
     assert "&lt;script&gt;" in page
 
 

@@ -13,6 +13,16 @@ TITLES = {"macro": "Macro & cross-asset", "equities": "Equity structure",
           "events": "Event risk"}
 
 
+def direction(row):
+    if row.get("metric") not in {"daily return", "daily yield change"} \
+            and not row.get("metric", "").startswith("relative to "):
+        return "neutral"
+    value = row.get("value")
+    if not isinstance(value, (int, float)) or value == 0:
+        return "neutral"
+    return "positive" if value > 0 else "negative"
+
+
 def formatted(row):
     if row.get("value") is None:
         return "Unavailable"
@@ -38,13 +48,14 @@ def presentation(packet, narrative):
             continue
         if row["metric"] in {"twenty-session return", "fifty-session average", "regular close"}:
             continue
-        facts.append({**row, "display": formatted(row)})
+        facts.append({**row, "display": formatted(row), "direction": direction(row)})
     equity = [r for r in facts if r["topic"] in
               {h["symbol"] for h in packet["history"]} or r["frequency"] == "intraday"]
     macro = [r for r in facts if r not in equity]
     priority = ["SPY-daily", "QQQ-daily", "treasury-2y-change", "treasury-10y-change",
                 "GLD-daily", "GDX-daily"]
-    chips = [dict(catalog[i], display=formatted(catalog[i])) for i in priority if i in catalog]
+    chips = [dict(catalog[i], display=formatted(catalog[i]), direction=direction(catalog[i]))
+             for i in priority if i in catalog]
     if not chips:
         chips = facts[:4]
     selected = set(narrative["attention_ids"])

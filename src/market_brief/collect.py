@@ -307,7 +307,7 @@ def alpaca_collect(now, symbols=ALPACA_UNIVERSE, key_id=None, secret_key=None):
         bars = _alpaca_request("/v2/stocks/bars", {
             "symbols": ",".join(symbols), "timeframe": "1Day",
             "start": (now - timedelta(days=120)).date().isoformat(), "end": now.date().isoformat(),
-            "limit": 1000, "adjustment": "split", "feed": "iex", "sort": "asc",
+            "limit": 10000, "adjustment": "split", "feed": "iex", "sort": "asc",
         }, deadline, key_id, secret_key)
         histories = _alpaca_history(bars, now, retrieved, "alpaca-daily")
         daily["coverage_date"] = max((h["dates"][-1] for h in histories), default=None)

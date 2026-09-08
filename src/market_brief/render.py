@@ -17,7 +17,7 @@ TITLES = {"macro": "Macro & cross-asset", "equities": "Equity structure",
 HORIZON_LABELS = {"daily return": "1d", "twenty-session return": "20s",
                   "fifty-session average": "50d avg"}
 PACIFIC = ZoneInfo("America/Vancouver")
-DISPLAY_STATUSES = {"LIVE", "LAST GOOD BRIEF", "SAMPLE"}
+DISPLAY_STATUSES = {"LIVE", "LIVE COMMISSIONING", "LAST GOOD BRIEF", "SAMPLE"}
 
 
 def pacific_time(value, include_date=False):
@@ -31,6 +31,8 @@ def status_for(packet):
     explicit = run.get("display_status")
     if explicit in DISPLAY_STATUSES:
         return explicit
+    if run.get("commissioning"):
+        return "LIVE COMMISSIONING"
     if run["mode"] == "SAMPLE":
         return "SAMPLE"
     if (run["checkpoint"] == "PREMARKET"
@@ -71,6 +73,7 @@ def presentation(packet, narrative):
     actual_started_at = packet["run"].get("actual_started_at", packet["run"]["target_time"])
     status = status_for(packet)
     commissioning = (status == "SAMPLE" and packet["run"]["mode"] == "LIVE")
+    live_commissioning = status == "LIVE COMMISSIONING"
 
     def expand(text):
         return TOKEN.sub(lambda m: formatted(catalog[m[1]]), text)
@@ -124,12 +127,16 @@ def presentation(packet, narrative):
                    if s.get("provider") or s.get("feed") or s.get("data_delay")],
     )
     return dict(mode=packet["run"]["mode"], status=status, commissioning=commissioning,
+        live_commissioning=live_commissioning,
         checkpoint=packet["run"]["checkpoint"],
         session=packet["run"]["session"],
         target=packet["run"]["target_time"],
         actual_started_at=actual_started_at,
-        scheduled_label=pacific_time(packet["run"]["session"]["scheduled_checkpoint_at"], True),
+        header_label="LIVE COMMISSIONING" if live_commissioning else packet["run"]["checkpoint"],
+        scheduled_label=pacific_time(actual_started_at if live_commissioning
+                                     else packet["run"]["session"]["scheduled_checkpoint_at"], True),
         updated_label=pacific_time(actual_started_at),
+        updated_prefix="Updated" if live_commissioning else "Last updated",
         technical=technical,
         coverage=packet["coverage"],
         banner={**narrative["banner"], "title": expand(narrative["banner"]["title"]),

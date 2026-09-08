@@ -88,3 +88,18 @@ def test_sample_commissioning_status_is_plain_language():
     assert "commissioning test, not the scheduled pre-market brief" in page
     assert "collection smoke test" not in page
     assert "COMMISSIONING RUN" in md
+
+
+def test_live_commissioning_has_no_checkpoint_claim():
+    packet = fixture_packet()
+    packet["run"]["mode"] = "LIVE"
+    packet["run"]["checkpoint"] = "COMMISSIONING"
+    packet["run"]["commissioning"] = True
+    value = narrative()
+    value["mode"] = "LIVE"
+    _, page = render(packet, value)
+    header = page.split("<h1>", 1)[0]
+    assert "LIVE COMMISSIONING" in header
+    assert "PREMARKET" not in header
+    assert "OPEN_1M" not in header
+    assert "Collected at 5:45 AM PT" in header

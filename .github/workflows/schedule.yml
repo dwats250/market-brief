@@ -27,6 +27,11 @@ on:
           - OPEN_30M
           - AFTERNOON
           - CLOSE_1M
+      commissioning:
+        description: Run a current-time live commissioning brief
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -54,19 +59,28 @@ jobs:
         env:
           EVENT_SCHEDULE: ${{ github.event.schedule }}
           INPUT_CHECKPOINT: ${{ inputs.checkpoint }}
+          INPUT_COMMISSIONING: ${{ inputs.commissioning }}
         run: |
-          if [ -n "$INPUT_CHECKPOINT" ]; then
+          if [ "$INPUT_COMMISSIONING" = "true" ]; then
+            checkpoint=PREMARKET
+            label="LIVE COMMISSIONING"
+            run=true
+          elif [ -n "$INPUT_CHECKPOINT" ]; then
             checkpoint="$INPUT_CHECKPOINT"
+            label="$checkpoint"
             run=true
           else
             checkpoint=$(python -m market_brief resolve-scheduled)
             if [ "$checkpoint" = "SKIP" ]; then
               run=false
+              label=SKIP
             else
               run=true
+              label="$checkpoint"
             fi
           fi
           echo "checkpoint=$checkpoint" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
           echo "run=$run" >> "$GITHUB_OUTPUT"
       - name: Alpaca commissioning probe
         if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
@@ -76,7 +90,14 @@ jobs:
         run: python -m market_brief alpaca-probe --full
       - name: Collect, synthesize, validate, and render manually
         if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
-        run: python -m market_brief premarket --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
+        env:
+          COMMISSIONING: ${{ inputs.commissioning }}
+        run: |
+          if [ "$COMMISSIONING" = "true" ]; then
+            python -m market_brief premarket --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}" --commissioning
+          else
+            python -m market_brief premarket --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
+          fi
       - name: Collect, synthesize, validate, and render on schedule
         if: github.event_name != 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
@@ -89,6 +110,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No publishable changes"
           else
-            git commit -m "Publish ${{ steps.checkpoint.outputs.checkpoint }} brief"
+            git commit -m "Publish ${{ steps.checkpoint.outputs.label }} brief"
             git push
           fi

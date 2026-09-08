@@ -123,6 +123,7 @@ def run(args):
     started = datetime.now(timezone.utc)
     mode = "SAMPLE" if args.replay else "LIVE"
     checkpoint = args.checkpoint
+    commissioning = bool(getattr(args, "commissioning", False))
     if args.replay:
         raw = read_json(args.input or ROOT / "tests/fixtures/evidence.sample.json")
         target = timestamp(raw["target_time"])
@@ -135,6 +136,9 @@ def run(args):
         if args.input:
             raw = merge_input(raw, read_json(args.input))
     packet = normalize_packet(raw, target, mode, checkpoint)
+    if commissioning:
+        packet["run"]["checkpoint"] = "COMMISSIONING"
+        packet["run"]["commissioning"] = True
     packet["previous"] = previous_brief()
     universe = read_json(ROOT / "config/universe.json")
     thresholds = read_json(ROOT / "config/magnitude.json")
@@ -234,6 +238,8 @@ def main(argv=None):
     parser.add_argument("--cuttingboard", action="store_true", help="optional public GET-only quotation")
     parser.add_argument("--checkpoint", choices=CHECKPOINTS, default="PREMARKET")
     parser.add_argument("--full", action="store_true", help="probe the configured full Alpaca universe")
+    parser.add_argument("--commissioning", action="store_true",
+                        help="label a manual live run by its actual collection time")
     args = parser.parse_args(argv)
     try:
         if args.command == "alpaca-probe":

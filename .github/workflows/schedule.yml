@@ -2,18 +2,19 @@ name: Scheduled Market Brief
 
 on:
   schedule:
-    - cron: "0 6 * * 1-5"
-      timezone: America/Vancouver
-    - cron: "31 6 * * 1-5"
-      timezone: America/Vancouver
-    - cron: "0 7 * * 1-5"
-      timezone: America/Vancouver
-    - cron: "7 12 * * 1-5"
-      timezone: America/Vancouver
-    - cron: "1 13 * * 1-5"
-      timezone: America/Vancouver
-    - cron: "1 10 * * 1-5"
-      timezone: America/Vancouver
+    # UTC candidates for both PDT and PST. The application calendar guard
+    # selects the due Pacific checkpoint and skips the other season's candidate.
+    - cron: "0 13 * * 1-5"   # 06:00 PDT / 05:00 PST
+    - cron: "31 13 * * 1-5"  # 06:31 PDT / 05:31 PST
+    - cron: "0 14 * * 1-5"   # 07:00 PDT / 06:00 PST
+    - cron: "31 14 * * 1-5"  # 07:31 PDT / 06:31 PST
+    - cron: "0 15 * * 1-5"   # 08:00 PDT / 07:00 PST
+    - cron: "7 19 * * 1-5"   # 12:07 PDT / 11:07 PST
+    - cron: "1 17 * * 1-5"   # 10:01 PDT early close
+    - cron: "1 18 * * 1-5"   # 10:01 PST early close
+    - cron: "1 20 * * 1-5"   # 13:01 PDT full close
+    - cron: "7 20 * * 1-5"   # 12:07 PDT / 12:07 PST candidate
+    - cron: "1 21 * * 1-5"   # 13:01 PST full close
   workflow_dispatch:
     inputs:
       checkpoint:
@@ -56,31 +57,31 @@ jobs:
         run: |
           if [ -n "$INPUT_CHECKPOINT" ]; then
             checkpoint="$INPUT_CHECKPOINT"
+            run=true
           else
-            case "$EVENT_SCHEDULE" in
-              "0 6 * * 1-5") checkpoint=PREMARKET ;;
-              "31 6 * * 1-5") checkpoint=OPEN_1M ;;
-              "0 7 * * 1-5") checkpoint=OPEN_30M ;;
-              "7 12 * * 1-5") checkpoint=AFTERNOON ;;
-              "1 13 * * 1-5") checkpoint=CLOSE_1M ;;
-              "1 10 * * 1-5") checkpoint=CLOSE_1M ;;
-              *) echo "Unknown scheduled checkpoint: $EVENT_SCHEDULE" >&2; exit 1 ;;
-            esac
+            checkpoint=$(python -m market_brief resolve-scheduled)
+            if [ "$checkpoint" = "SKIP" ]; then
+              run=false
+            else
+              run=true
+            fi
           fi
           echo "checkpoint=$checkpoint" >> "$GITHUB_OUTPUT"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
       - name: Alpaca commissioning probe
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief alpaca-probe
       - name: Full Alpaca coverage probe
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief alpaca-probe --full
       - name: Collect, synthesize, validate, and render manually
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief premarket --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
       - name: Collect, synthesize, validate, and render on schedule
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
       - name: Publish latest successful brief
+        if: steps.checkpoint.outputs.run == 'true'
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com

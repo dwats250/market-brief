@@ -14,7 +14,7 @@ from .collect import ALPACA_UNIVERSE, alpaca_probe, collect_live, cuttingboard_r
 from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_json, timestamp
 from .metrics import annotate_magnitude, derive
 from .render import render
-from .schedule import CHECKPOINTS, checkpoint_session, due
+from .schedule import CHECKPOINTS, checkpoint_session, due, scheduled_checkpoint
 from .synthesize import construct_prompt, synthesize, validate_narrative
 
 
@@ -226,7 +226,8 @@ def scheduled(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="One local pre-market briefing, grounded in evidence")
-    parser.add_argument("command", choices=["premarket", "schedule", "alpaca-probe", "open", "publish"])
+    parser.add_argument("command", choices=["premarket", "schedule", "resolve-scheduled",
+                                             "alpaca-probe", "open", "publish"])
     parser.add_argument("--replay", action="store_true", help="offline fictional evidence + narrative")
     parser.add_argument("--input", type=Path, help="sourced input JSON; SAMPLE for replay, LIVE otherwise")
     parser.add_argument("--synthesize", action="store_true", help="call Claude even for SAMPLE evidence")
@@ -243,6 +244,9 @@ def main(argv=None):
             return open_latest()
         if args.command == "publish":
             print(publish_latest())
+            return 0
+        if args.command == "resolve-scheduled":
+            print(scheduled_checkpoint(datetime.now(timezone.utc)) or "SKIP")
             return 0
         if args.command == "schedule":
             return scheduled(args)

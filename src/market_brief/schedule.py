@@ -46,6 +46,19 @@ def due(now, checkpoint, tolerance_minutes=45):
     return 0 <= delta <= tolerance_minutes * 60, info
 
 
+def scheduled_checkpoint(now, tolerance_minutes=45):
+    """Resolve a UTC scheduler candidate to the nearest due Pacific checkpoint."""
+    candidates = []
+    for checkpoint in CHECKPOINTS:
+        info = checkpoint_session(now, checkpoint)
+        if not info["trading_day"]:
+            continue
+        delta = (now - datetime.fromisoformat(info["scheduled_at"])).total_seconds()
+        if 0 <= delta <= tolerance_minutes * 60:
+            candidates.append((delta, checkpoint))
+    return min(candidates)[1] if candidates else None
+
+
 def session_relation(when, exchange_open, exchange_close):
     if when < exchange_open:
         return "BEFORE OPEN"

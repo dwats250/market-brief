@@ -25,7 +25,7 @@ class Page(HTMLParser):
 def test_markdown_html_same_facts_mode_and_literal_halt():
     md, page = render(fixture_packet(), narrative())
     for value in ("FICTIONAL SAMPLE", "HALT", "-4.00 bp", "+1.00 bp", "INTERPRETATION",
-                  "WATCH", "OBSERVED", "current pre-market direction unavailable"):
+                  "WATCH", "OBSERVED", "current prints unavailable"):
         assert value in md
         assert value.lower() in page.lower()
     parsed = Page()

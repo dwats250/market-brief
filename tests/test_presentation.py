@@ -159,3 +159,10 @@ def test_compact_average_cell_is_a_bare_price():
     nvda = next(row for row in equities["mega_rows"] if row["symbol"] == "NVDA")
     assert nvda["average"]["display"] == "114.03"
     assert nvda["r20"]["display"].endswith(" %")
+
+
+def test_missing_current_prints_are_not_called_premarket_after_the_close():
+    packet = packet_at(utc("2026-09-08T20:03:00+00:00"), intraday=False)
+    assert "pre-market" not in " ".join(packet["coverage"]["missing_domains"])
+    assert "pre-market" not in packet["coverage"]["horizon"]
+    assert "current prints unavailable" in packet["coverage"]["missing_domains"]

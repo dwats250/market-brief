@@ -248,13 +248,13 @@ def finalize_coverage(packet):
     if not core_present:
         missing_domains.append("equity prior-close history")
     if not has_current:
-        missing_domains.append("current pre-market direction unavailable")
+        missing_domains.append("current prints unavailable")
     if not any(r["metric"] == "daily yield change" for r in packet["observations"]):
         missing_domains.append("current Treasury change")
     packet["coverage"] = dict(status=status, bootstrap=bootstrap, current_premarket=has_current,
         limitations=list(dict.fromkeys(missing)), missing_domains=missing_domains,
         horizon=("Timestamped intraday observations available; see individual clocks."
-                 if has_current else "Previous-close / dated context only; current pre-market direction unavailable."))
+                 if has_current else "Previous-close / dated context only; no timestamped current prints."))
     checkpoint = packet["run"]["checkpoint"]
     basis = [CHECKPOINT_TITLES.get(checkpoint, checkpoint.replace("_", " ").title()),
              "prior close", "Treasury prior-close/current as available",

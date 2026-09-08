@@ -2,7 +2,7 @@ from html.parser import HTMLParser
 
 from test_pipeline import fixture_packet, narrative
 
-from market_brief.render import render
+from market_brief.render import compact_equity_rows, measure_label, render
 
 
 class Page(HTMLParser):
@@ -103,3 +103,31 @@ def test_live_commissioning_has_no_checkpoint_claim():
     assert "PREMARKET" not in header
     assert "OPEN_1M" not in header
     assert "Collected at 5:45 AM PT" in header
+
+
+def test_compact_equity_rows_use_current_observation_and_human_labels():
+    rows = [
+        dict(id="xle-intraday", topic="XLE", metric="premarket return", value=0.55,
+             unit="%", frequency="intraday", status="AVAILABLE",
+             observed_at="2026-09-08T17:30:00+00:00"),
+        dict(id="xle-r20", topic="XLE", metric="twenty-session return", value=11.45,
+             unit="%", frequency="daily", status="BACKGROUND", observed_at="2026-09-04"),
+        dict(id="xle-spread", topic="XLE", metric="relative to SPY", value=11.83,
+             unit="pp", frequency="daily", status="BACKGROUND", observed_at="2026-09-04"),
+        dict(id="xle-sma", topic="XLE", metric="fifty-session average", value=59.20,
+             unit="USD", frequency="daily", status="BACKGROUND", observed_at="2026-09-04"),
+    ]
+    row = compact_equity_rows(rows, ["XLE"])[0]
+    assert row["label"] == "Energy"
+    assert row["today"]["display"] == "+0.55 %"
+    assert row["today"]["observed"] == "Tuesday, Sep 8 · 10:30 AM PT"
+    assert measure_label(rows[0]) == "Intraday vs prior close"
+
+
+def test_render_deemphasizes_provenance_and_epistemic_boilerplate():
+    _, page = render(fixture_packet(), narrative())
+    assert page.count('class="cite"') < 40
+    assert "Uncertainty:" not in page
+    assert "Alternative:" not in page
+    assert "Generated UTC:" in page
+    assert "2026-09-08T" in page

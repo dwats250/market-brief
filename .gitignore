@@ -1,0 +1,24 @@
+# Local state and real market material never belong in the design history.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.cache/
+cache/
+inputs/
+runs/
+reports/
+exports/
+local/
+config.local.*
+*.log
+.DS_Store

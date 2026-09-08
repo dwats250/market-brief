@@ -32,6 +32,11 @@ on:
         required: false
         default: false
         type: boolean
+      experiment:
+        description: Synthesis experiment only; retain the run as an artifact and never publish
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -98,8 +103,11 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         env:
           COMMISSIONING: ${{ inputs.commissioning }}
+          EXPERIMENT: ${{ inputs.experiment }}
         run: |
-          if [ "$COMMISSIONING" = "true" ]; then
+          if [ "$EXPERIMENT" = "true" ]; then
+            python -m market_brief premarket --commissioning --experiment
+          elif [ "$COMMISSIONING" = "true" ]; then
             python -m market_brief premarket --commissioning
           else
             python -m market_brief premarket --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
@@ -107,8 +115,15 @@ jobs:
       - name: Collect, synthesize, validate, and render on schedule
         if: github.event_name != 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
+      - name: Retain experiment run
+        if: always() && inputs.experiment == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthesis-experiment
+          path: runs/
+          retention-days: 14
       - name: Publish latest successful brief
-        if: steps.checkpoint.outputs.run == 'true'
+        if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
@@ -120,14 +135,14 @@ jobs:
             git push
           fi
       - name: Configure Pages
-        if: steps.checkpoint.outputs.run == 'true'
+        if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
         uses: actions/configure-pages@v5
       - name: Upload Pages artifact
-        if: steps.checkpoint.outputs.run == 'true'
+        if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
         uses: actions/upload-pages-artifact@v3
         with:
           path: publish
       - name: Deploy Pages
-        if: steps.checkpoint.outputs.run == 'true'
+        if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
         id: deployment
         uses: actions/deploy-pages@v4

@@ -123,6 +123,7 @@ def run(args):
     started = datetime.now(timezone.utc)
     mode = "SAMPLE" if args.replay else "LIVE"
     commissioning = bool(getattr(args, "commissioning", False))
+    experiment = bool(getattr(args, "experiment", False))
     if args.replay:
         raw = read_json(args.input or ROOT / "tests/fixtures/evidence.sample.json")
         target = timestamp(raw["target_time"])
@@ -164,7 +165,7 @@ def run(args):
                     checkpoint=checkpoint, actual_started_at=started.isoformat(),
                     scheduled_checkpoint_at=checkpoint_data["scheduled_at"],
                     coverage=packet["coverage"]["status"], evidence_hash=digest(packet),
-                    validation="NOT_RUN", model_route="none")
+                    validation="NOT_RUN", model_route="none", experiment=experiment)
     try:
         if packet["coverage"]["status"] == "INSUFFICIENT":
             raise ValueError("no usable observations/events/context; evidence diagnostic only")
@@ -182,12 +183,12 @@ def run(args):
         (folder / "brief.md").write_text(markdown)
         (folder / "brief.html").write_text(page)
         update_latest(ROOT, page)
-        if mode == "LIVE":
+        if mode == "LIVE" and not experiment:
             publish_latest(ROOT)
         write_json(folder / "narrative.json", narrative)
         metadata.update(validation="PASS", model_route=model["route"], model=model,
                         markdown_hash=digest(markdown), html_hash=digest(page))
-        if mode == "LIVE" and packet["coverage"]["status"] in {"READY", "PARTIAL"}:
+        if mode == "LIVE" and not experiment and packet["coverage"]["status"] in {"READY", "PARTIAL"}:
             pointer = ROOT / "runs/latest-success.json"
             if pointer.is_symlink():
                 raise ValueError("latest-success pointer cannot be a symlink")
@@ -239,6 +240,8 @@ def main(argv=None):
     parser.add_argument("--cuttingboard", action="store_true", help="optional public GET-only quotation")
     parser.add_argument("--checkpoint", choices=CHECKPOINTS, default="PREMARKET")
     parser.add_argument("--full", action="store_true", help="probe the configured full Alpaca universe")
+    parser.add_argument("--experiment", action="store_true",
+                        help="retain the run locally without publishing or recording success")
     parser.add_argument("--commissioning", action="store_true",
                         help="label a manual live run by its actual collection time and market phase")
     args = parser.parse_args(argv)

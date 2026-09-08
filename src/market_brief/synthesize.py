@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 from jsonschema import Draft202012Validator
 
-from .evidence import ROOT, canonical, compact_model_record, digest, evidence_catalog, model_packet
+from .evidence import ROOT, canonical, digest, evidence_catalog, model_packet
 
 TEXT = {"type": "string", "minLength": 1, "maxLength": 1800}
 # One claim of roughly eight to twelve words; the bound is a backstop, not the target.
@@ -111,12 +111,82 @@ def validate_narrative(narrative, packet):
     return narrative
 
 
-def construct_prompt(packet):
+HISTORY_ERROR = re.compile(r"^(?P<symbol>[A-Z][\w.-]*): invalid/incomplete historical context \((?P<reason>.*)\)$")
+
+
+def _history_error_summary(packet, errors):
+    """Twenty-two near-identical strings become one structured statement of the gap."""
+    symbols, reasons = [], []
+    for text in errors:
+        match = HISTORY_ERROR.match(text)
+        if match:
+            symbols.append(match["symbol"])
+            if match["reason"] not in reasons:
+                reasons.append(match["reason"])
+        elif text not in reasons:
+            reasons.append(text)
+    affected = set(symbols)
+    latest = [h["dates"][-1] for h in packet.get("history", [])
+              if h.get("symbol") in affected and h.get("dates")]
+    return dict(affected_count=len(errors), affected_symbols=sorted(affected),
+                expected_session=packet["run"]["session"]["previous_session"],
+                latest_provider_session=max(latest) if latest else None, reasons=reasons)
+
+
+def synthesis_packet(packet):
+    """The bounded editorial projection: one canonical copy of each admitted fact, no renderer plumbing.
+
+    `model_packet` remains the authority filter (permitted sources, usable rows) for both this
+    projection and the validator; this function only changes the shape the model reads.
+    """
     projected = model_packet(packet)
+    catalog = evidence_catalog(projected)
+    groups, baselines = {}, {}
+    events, context_items = [], []
+    for row in catalog.values():
+        if "value" not in row:
+            continue
+        baselines.setdefault(row["metric"], row.get("baseline"))
+        item = {key: row[key] for key in ("id", "metric", "value", "unit", "magnitude", "status", "observed_at")
+                if key in row}
+        groups.setdefault(row["topic"], []).append(item)
+    for row in projected["events"]:
+        events.append({key: row[key] for key in ("id", "title", "scheduled_at", "session_relation", "status")
+                       if row.get(key) is not None})
+    for row in projected["context_items"]:
+        context_items.append({key: row[key] for key in ("id", "title", "published_at") if row.get(key) is not None})
+    session = projected["run"].get("session", {})
+    result = dict(
+        run=dict(mode=projected["run"]["mode"], checkpoint=projected["run"]["checkpoint"],
+                 target_time=projected["run"]["target_time"],
+                 session={key: session[key] for key in
+                          ("date", "trading_day", "previous_session", "open", "close", "meaningful_premarket")
+                          if key in session}),
+        coverage=projected["coverage"],
+        baselines=baselines,
+        catalog=[dict(topic=topic, rows=rows) for topic, rows in groups.items()],
+        sector_leadership={key: [row["id"] for row in rows]
+                           for key, rows in projected.get("sector_leadership", {}).items()},
+        attention=projected["attention"],
+        events=events, context_items=context_items,
+        sources=[{key: value for key, value in source.items()
+                  if key in ("id", "name", "kind", "status", "feed", "data_delay", "coverage_date")
+                  and value is not None
+                  or (key == "reason" and value and source.get("status") != "AVAILABLE")}
+                 for source in projected["sources"]],
+        cuttingboard=projected["cuttingboard"],
+    )
+    if packet.get("history_lag"):
+        result["history_lag"] = packet["history_lag"]
+    if packet.get("history_errors"):
+        result["history_errors"] = _history_error_summary(packet, packet["history_errors"])
+    return result
+
+
+def construct_prompt(packet):
     instructions = (ROOT / "prompts/synthesis.md").read_text()
-    catalog = {ident: compact_model_record(row) for ident, row in evidence_catalog(projected).items()}
-    user = canonical(dict(evidence=projected, catalog=catalog,
-                          output_schema=NARRATIVE_SCHEMA))
+    projected = synthesis_packet(packet)
+    user = canonical(projected)
     size = len(user.encode())
     sections = {key: len(canonical(value).encode()) for key, value in projected.items()}
     largest = ", ".join(f"{key}={value}" for key, value in
@@ -241,9 +311,21 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
         diagnostic = _openrouter_diagnostic(response)
         raise ValueError(f"{exc}; diagnostic={diagnostic}") from None
     usage = response.get("usage") if isinstance(response, dict) else None
-    safe_usage = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-                  if isinstance(usage, dict) and key in usage}
+    safe_usage = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cost")
+                  if isinstance(usage, dict) and isinstance(usage.get(key), (int, float))
+                  and not isinstance(usage.get(key), bool)}
+    choice = (response.get("choices") or [{}])[0]
+    finish_reason = choice.get("finish_reason", "unknown") if isinstance(choice, dict) else "unknown"
+    provider_route = response.get("provider", "unknown")
+    resolved_model = response.get("model", OPENROUTER_MODEL)
+    if safe_usage:
+        print("Synthesis usage: " + " ".join(f"{key}={value}" for key, value in safe_usage.items())
+              + f" finish={finish_reason} provider={provider_route} model={resolved_model}", flush=True)
+    else:
+        print(f"Synthesis usage: unavailable finish={finish_reason} provider={provider_route}", flush=True)
     return narrative, dict(route="openrouter", provider="OpenRouter", model=OPENROUTER_MODEL,
+                           resolved_model=resolved_model, provider_route=provider_route,
+                           finish_reason=finish_reason,
                            requested_at=requested_at, response_id=response.get("id"), usage=safe_usage,
                            prompt_hash=digest(dict(system=system, user=user)), evidence_hash=digest(packet))
 

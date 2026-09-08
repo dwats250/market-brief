@@ -2,6 +2,8 @@
 
 import html
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -14,6 +16,27 @@ TITLES = {"macro": "Macro & cross-asset", "equities": "Equity structure",
 
 HORIZON_LABELS = {"daily return": "1d", "twenty-session return": "20s",
                   "fifty-session average": "50d avg"}
+PACIFIC = ZoneInfo("America/Vancouver")
+DISPLAY_STATUSES = {"LIVE", "LAST GOOD BRIEF", "SAMPLE"}
+
+
+def pacific_time(value, include_date=False):
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(PACIFIC)
+    date_part = dt.strftime("%A, %b %-d · ") if include_date else ""
+    return f"{date_part}{dt.strftime('%-I:%M %p')} PT"
+
+
+def status_for(packet):
+    run = packet["run"]
+    explicit = run.get("display_status")
+    if explicit in DISPLAY_STATUSES:
+        return explicit
+    if run["mode"] == "SAMPLE":
+        return "SAMPLE"
+    if (run["checkpoint"] == "PREMARKET"
+            and not packet["run"]["session"].get("meaningful_premarket")):
+        return "SAMPLE"
+    return "LIVE"
 
 
 def measure_label(row):
@@ -45,6 +68,9 @@ def formatted(row):
 
 def presentation(packet, narrative):
     catalog = evidence_catalog(packet)
+    actual_started_at = packet["run"].get("actual_started_at", packet["run"]["target_time"])
+    status = status_for(packet)
+    commissioning = (status == "SAMPLE" and packet["run"]["mode"] == "LIVE")
 
     def expand(text):
         return TOKEN.sub(lambda m: formatted(catalog[m[1]]), text)
@@ -80,14 +106,31 @@ def presentation(packet, narrative):
             attention=[{**a, "why": attention_why.get(a["id"], "")} for a in packet["attention"]
                        if a["id"] in selected]
                       if key == "attention" else [],
-            events=packet["events"][:4] if key == "events" else []))
+            events=[{**event, "scheduled_label": pacific_time(event["scheduled_at"], True)}
+                    for event in packet["events"][:4]] if key == "events" else []))
     sector_leadership = {key: [{**row, "display": formatted(row), "direction": direction(row),
                                 "measure": measure_label(row)} for row in rows]
                          for key, rows in packet.get("sector_leadership", {}).items()}
-    return dict(mode=packet["run"]["mode"], checkpoint=packet["run"]["checkpoint"],
+    technical = dict(
+        generated_utc=actual_started_at,
+        evidence_cutoff_utc=packet["run"]["target_time"],
+        checkpoint=packet["run"]["checkpoint"],
+        bootstrap=packet["coverage"]["bootstrap"],
+        cuttingboard={key: packet["cuttingboard"].get(key) for key in
+                      ("status", "generated_at", "captured_at", "schema_version")
+                      if packet["cuttingboard"].get(key)},
+        providers=[dict(name=s["name"], provider=s.get("provider"), feed=s.get("feed"),
+                        data_delay=s.get("data_delay")) for s in packet["sources"]
+                   if s.get("provider") or s.get("feed") or s.get("data_delay")],
+    )
+    return dict(mode=packet["run"]["mode"], status=status, commissioning=commissioning,
+        checkpoint=packet["run"]["checkpoint"],
         session=packet["run"]["session"],
         target=packet["run"]["target_time"],
-        actual_started_at=packet["run"].get("actual_started_at", packet["run"]["target_time"]),
+        actual_started_at=actual_started_at,
+        scheduled_label=pacific_time(packet["run"]["session"]["scheduled_checkpoint_at"], True),
+        updated_label=pacific_time(actual_started_at),
+        technical=technical,
         coverage=packet["coverage"],
         banner={**narrative["banner"], "title": expand(narrative["banner"]["title"]),
                 "limitation": expand(narrative["banner"]["limitation"])}, chips=chips,
@@ -119,15 +162,19 @@ def markdown(view):
         return text
 
     lines = [f"# {esc(view['banner']['title'])}", ""]
-    if view["mode"] == "SAMPLE":
-        lines += ["> FICTIONAL SAMPLE / REPLAY — not current market facts. No live model required.", ""]
-    lines += [f"{view['checkpoint']} · {view['session']['date']} · Evidence cutoff {view['target']}", "",
+    if view["status"] == "SAMPLE":
+        label = " · COMMISSIONING RUN" if view["commissioning"] else " · FICTIONAL SAMPLE / REPLAY"
+        lines += [f"> SAMPLE{label} — not the scheduled brief.", ""]
+    lines += [f"{view['status']} · {view['checkpoint']}",
+              f"{esc(view['scheduled_label'])}",
+              f"Last updated: {esc(view['updated_label'])}", "",
               f"**INTERPRETATION — {view['banner']['label']}**", "",
               esc(view["banner"]["limitation"]), "",
               esc(view["coverage"]["basis"]), "",
               f"Bootstrap: **{view['coverage']['bootstrap']}**. {esc(view['coverage']['horizon'])}", ""]
-    if view["mode"] == "LIVE" and not view["session"]["meaningful_premarket"]:
-        lines += ["> OUTSIDE PRE-MARKET WINDOW — collection smoke test, not morning acceptance.", ""]
+    if view["commissioning"]:
+        lines += [f"> SAMPLE · COMMISSIONING RUN. Generated at {esc(view['updated_label'])}. ",
+                  "This was a commissioning test, not the scheduled pre-market brief.", ""]
     lines += ["## The morning in a minute", ""]
     for p in view["summary"]:
         lines += [para(p), ""]
@@ -157,7 +204,7 @@ def markdown(view):
             lines += [f"**OBSERVED · {a['symbol']}** — {esc(a['reason'])}. "
                       f"{esc(a['why'])} {a['date']} / {a['horizon']}. {refs(a['evidence_ids'])}", ""]
         for event in section["events"]:
-            event_time = esc(event.get("scheduled_at_et", event["scheduled_at"]))
+            event_time = esc(event["scheduled_label"])
             lines += [f"**OBSERVED** · {esc(event['title'])} — {event_time} · "
                       f"{esc(event.get('session_relation', ''))}. "
                       f"{refs([event['id']])}", ""]
@@ -166,7 +213,7 @@ def markdown(view):
             if cb["status"] == "AVAILABLE":
                 lines += [f"**SOURCE QUOTATION** · Outcome: {esc(cb.get('outcome') or 'not exposed')}; "
                           f"permission: {esc(cb.get('permission') or 'not exposed')}. "
-                          f"Generated {esc(cb['generated_at'])}. No override or recommendation.", ""]
+                          "Read-only context captured; see Technical details.", ""]
             else:
                 lines += [f"{esc(cb['status'])} — {esc(cb.get('reason', ''))}.", ""]
         elif not any(section[k] for k in ("facts", "paragraphs", "attention", "events")):
@@ -184,7 +231,16 @@ def markdown(view):
                   f"{esc(row['display'])} · {esc(row.get('baseline', 'published / scheduled item'))} "
                   f"· observed/published {esc(row.get('observed_at') or row.get('published_at') or 'not exposed')} "
                   f"· source {esc(row['source_id'])}", ""]
-    lines += ["Model-assisted interpretation; factual rows are deterministic. Personal local edition.", ""]
+    lines += ["", "### Technical details", "",
+              f"Generated UTC: {esc(view['technical']['generated_utc'])}",
+              f"Evidence cutoff UTC: {esc(view['technical']['evidence_cutoff_utc'])}",
+              f"Checkpoint: {esc(view['technical']['checkpoint'])}",
+              f"Bootstrap: {esc(view['technical']['bootstrap'])}", "",
+              (f"Cuttingboard: generated {esc(view['technical']['cuttingboard'].get('generated_at'))}; "
+               f"captured {esc(view['technical']['cuttingboard'].get('captured_at'))}; "
+               f"schema {esc(view['technical']['cuttingboard'].get('schema_version'))}"
+               if view['technical']['cuttingboard'] else ""), "",
+              "Model-assisted interpretation; factual rows are deterministic. Personal local edition.", ""]
     return "\n".join(lines)
 
 

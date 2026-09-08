@@ -49,3 +49,42 @@ def test_model_html_is_escaped_in_both_formats():
 
 def test_render_deterministic_for_identical_records():
     assert render(fixture_packet(), narrative()) == render(fixture_packet(), narrative())
+
+
+def test_live_header_uses_pacific_time_and_hides_plumbing():
+    packet = fixture_packet()
+    packet["run"]["mode"] = "LIVE"
+    packet["run"]["checkpoint"] = "OPEN_1M"
+    packet["run"]["session"]["scheduled_checkpoint_at"] = "2026-09-08T13:31:00+00:00"
+    packet["run"]["session"]["meaningful_premarket"] = True
+    value = narrative()
+    value["mode"] = "LIVE"
+    _, page = render(packet, value)
+    header = page.split("<h1>", 1)[0]
+    assert "LIVE" in header
+    assert "Tuesday, Sep 8 · 6:31 AM PT" in header
+    assert "Last updated: 5:45 AM PT" in header
+    assert "Evidence cutoff" not in header
+    assert "Generated 2026-" not in header
+    assert "+00:00" not in header
+
+
+def test_last_good_status_is_explicit():
+    packet = fixture_packet()
+    packet["run"]["display_status"] = "LAST GOOD BRIEF"
+    _, page = render(packet, narrative())
+    assert "LAST GOOD BRIEF" in page.split("<h1>", 1)[0]
+
+
+def test_sample_commissioning_status_is_plain_language():
+    packet = fixture_packet()
+    packet["run"]["mode"] = "LIVE"
+    packet["run"]["session"]["meaningful_premarket"] = False
+    value = narrative()
+    value["mode"] = "LIVE"
+    md, page = render(packet, value)
+    header = page.split("<h1>", 1)[0]
+    assert "SAMPLE" in header and "COMMISSIONING RUN" in header
+    assert "commissioning test, not the scheduled pre-market brief" in page
+    assert "collection smoke test" not in page
+    assert "COMMISSIONING RUN" in md

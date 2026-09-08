@@ -124,6 +124,7 @@ def run(args):
     mode = "SAMPLE" if args.replay else "LIVE"
     commissioning = bool(getattr(args, "commissioning", False))
     experiment = bool(getattr(args, "experiment", False))
+    compact = bool(getattr(args, "compact_packet", False))
     if args.replay:
         raw = read_json(args.input or ROOT / "tests/fixtures/evidence.sample.json")
         target = timestamp(raw["target_time"])
@@ -165,20 +166,21 @@ def run(args):
                     checkpoint=checkpoint, actual_started_at=started.isoformat(),
                     scheduled_checkpoint_at=checkpoint_data["scheduled_at"],
                     coverage=packet["coverage"]["status"], evidence_hash=digest(packet),
-                    validation="NOT_RUN", model_route="none", experiment=experiment)
+                    validation="NOT_RUN", model_route="none", experiment=experiment,
+                    synthesis_projection="compact" if compact else "baseline")
     try:
         if packet["coverage"]["status"] == "INSUFFICIENT":
             raise ValueError("no usable observations/events/context; evidence diagnostic only")
         if args.replay and not args.synthesize:
             narrative = read_json(ROOT / "tests/fixtures/narrative.sample.json")
             validate_narrative(narrative, packet)
-            system, prompt = construct_prompt(packet)
+            system, prompt = construct_prompt(packet, compact=compact)
             model = dict(route="fixture-replay", resolved_models=[],
                          prompt_hash=digest(dict(system=system, user=prompt)),
                          evidence_hash=digest(packet))
         else:
             print("Evidence collected; requesting one isolated structured synthesis.", flush=True)
-            narrative, model = synthesize(packet)
+            narrative, model = synthesize(packet, compact=compact)
         markdown, page = render(packet, narrative)
         (folder / "brief.md").write_text(markdown)
         (folder / "brief.html").write_text(page)
@@ -240,6 +242,8 @@ def main(argv=None):
     parser.add_argument("--cuttingboard", action="store_true", help="optional public GET-only quotation")
     parser.add_argument("--checkpoint", choices=CHECKPOINTS, default="PREMARKET")
     parser.add_argument("--full", action="store_true", help="probe the configured full Alpaca universe")
+    parser.add_argument("--compact-packet", action="store_true",
+                        help="experimental bounded synthesis projection instead of the baseline payload")
     parser.add_argument("--experiment", action="store_true",
                         help="retain the run locally without publishing or recording success")
     parser.add_argument("--commissioning", action="store_true",

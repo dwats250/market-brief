@@ -10,7 +10,11 @@ v0.2 synthesis contract) are in place.
 
 ## Next
 
-Observe several scheduled editions under the v0.2 contract before touching the synthesis packet.
+Observe several scheduled editions under the v0.2 contract. The compact synthesis projection
+(`--compact-packet`, 68.5% smaller on the 2026-09-08 control evidence) is opt-in only: its one
+paid A/B call on 2026-09-08 failed schema validation at the banner object because the payload
+omitted the output schema and the transport did not enforce it. The schema is now kept in the
+compact payload; a second A/B call needs the owner's decision.
 
 ## Later
 

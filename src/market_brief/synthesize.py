@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 from jsonschema import Draft202012Validator
 
-from .evidence import ROOT, canonical, digest, evidence_catalog, model_packet
+from .evidence import ROOT, canonical, compact_model_record, digest, evidence_catalog, model_packet
 
 TEXT = {"type": "string", "minLength": 1, "maxLength": 1800}
 # One claim of roughly eight to twelve words; the bound is a backstop, not the target.
@@ -183,9 +183,19 @@ def synthesis_packet(packet):
     return result
 
 
-def construct_prompt(packet):
+def construct_prompt(packet, compact=False):
+    """Default payload is the accepted baseline shape. `compact` is the experimental projection.
+
+    The 2026-09-08 experiment showed the transport does not enforce the response schema on its
+    own, so the compact payload keeps `output_schema` in context.
+    """
     instructions = (ROOT / "prompts/synthesis.md").read_text()
-    projected = synthesis_packet(packet)
+    if compact:
+        projected = dict(synthesis_packet(packet), output_schema=NARRATIVE_SCHEMA)
+    else:
+        model_view = model_packet(packet)
+        catalog = {ident: compact_model_record(row) for ident, row in evidence_catalog(model_view).items()}
+        projected = dict(evidence=model_view, catalog=catalog, output_schema=NARRATIVE_SCHEMA)
     user = canonical(projected)
     size = len(user.encode())
     sections = {key: len(canonical(value).encode()) for key, value in projected.items()}
@@ -282,11 +292,11 @@ def _openrouter_narrative(response):
                          f"diagnostic={diagnostic}") from None
 
 
-def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, sleeper=time.sleep):
+def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, sleeper=time.sleep, compact=False):
     api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OpenRouter credentials are not configured")
-    system, user = construct_prompt(packet)
+    system, user = construct_prompt(packet, compact=compact)
     requested_at = datetime.now(timezone.utc).isoformat()
     payload = dict(model=OPENROUTER_MODEL, temperature=0, max_tokens=10000,
                    messages=[{"role": "system", "content": system},
@@ -330,13 +340,13 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
                            prompt_hash=digest(dict(system=system, user=user)), evidence_hash=digest(packet))
 
 
-def synthesize(packet, runner=subprocess.run):
+def synthesize(packet, runner=subprocess.run, compact=False):
     if os.environ.get("OPENROUTER_API_KEY"):
-        return synthesize_openrouter(packet)
+        return synthesize_openrouter(packet, compact=compact)
     executable = shutil.which("claude")
     if not executable:
         raise ValueError("Claude CLI is not installed")
-    system, user = construct_prompt(packet)
+    system, user = construct_prompt(packet, compact=compact)
     argv = [executable, "--print", "--safe-mode", "--tools", "", "--strict-mcp-config",
             "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands",
             "--no-session-persistence", "--setting-sources", "", "--output-format", "json",

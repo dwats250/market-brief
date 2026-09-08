@@ -14,7 +14,7 @@ from .collect import ALPACA_UNIVERSE, alpaca_probe, collect_live, cuttingboard_r
 from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_json, timestamp
 from .metrics import annotate_magnitude, derive
 from .render import render
-from .schedule import CHECKPOINTS, checkpoint_session, due, scheduled_checkpoint
+from .schedule import CHECKPOINTS, checkpoint_session, current_phase, due, scheduled_checkpoint
 from .synthesize import construct_prompt, synthesize, validate_narrative
 
 
@@ -122,7 +122,6 @@ def merge_input(collected, supplied):
 def run(args):
     started = datetime.now(timezone.utc)
     mode = "SAMPLE" if args.replay else "LIVE"
-    checkpoint = args.checkpoint
     commissioning = bool(getattr(args, "commissioning", False))
     if args.replay:
         raw = read_json(args.input or ROOT / "tests/fixtures/evidence.sample.json")
@@ -135,9 +134,10 @@ def run(args):
         raw = collect_live(target, include_cuttingboard=args.cuttingboard)
         if args.input:
             raw = merge_input(raw, read_json(args.input))
+    # A commissioning run describes the market phase it actually collected in.
+    checkpoint = current_phase(target) if commissioning else args.checkpoint
     packet = normalize_packet(raw, target, mode, checkpoint)
     if commissioning:
-        packet["run"]["checkpoint"] = "COMMISSIONING"
         packet["run"]["commissioning"] = True
     packet["previous"] = previous_brief()
     universe = read_json(ROOT / "config/universe.json")
@@ -182,7 +182,8 @@ def run(args):
         (folder / "brief.md").write_text(markdown)
         (folder / "brief.html").write_text(page)
         update_latest(ROOT, page)
-        publish_latest(ROOT)
+        if mode == "LIVE":
+            publish_latest(ROOT)
         write_json(folder / "narrative.json", narrative)
         metadata.update(validation="PASS", model_route=model["route"], model=model,
                         markdown_hash=digest(markdown), html_hash=digest(page))
@@ -239,7 +240,7 @@ def main(argv=None):
     parser.add_argument("--checkpoint", choices=CHECKPOINTS, default="PREMARKET")
     parser.add_argument("--full", action="store_true", help="probe the configured full Alpaca universe")
     parser.add_argument("--commissioning", action="store_true",
-                        help="label a manual live run by its actual collection time")
+                        help="label a manual live run by its actual collection time and market phase")
     args = parser.parse_args(argv)
     try:
         if args.command == "alpaca-probe":

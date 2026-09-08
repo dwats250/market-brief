@@ -67,6 +67,14 @@ def derive(packet, universe, thresholds=None):
     seen = set()
     cal = xcals.get_calendar("XNYS")
     now = timestamp(packet["run"]["target_time"])
+    session = packet["run"]["session"]
+    accepted_last = {session["previous_session"]}
+    lagged_session = None
+    if session.get("trading_day") and session["previous_session"] == session["date"]:
+        # The session completed today; the provider may not have published its daily
+        # bar yet. Admit history through exactly the prior session, and only today.
+        lagged_session = cal.previous_session(session["date"]).date().isoformat()
+        accepted_last.add(lagged_session)
     for h in packet["history"]:
         sym = h["symbol"]
         try:
@@ -78,8 +86,11 @@ def derive(packet, universe, thresholds=None):
             dates, closes = h["dates"], h["closes"]
             if not 2 <= len(closes) <= 65 or len(dates) != len(closes):
                 raise ValueError("history must contain two to sixty-five aligned closes")
-            if dates[-1] != packet["run"]["session"]["previous_session"]:
+            if dates[-1] not in accepted_last:
                 raise ValueError("history is not through the last completed exchange session")
+            if lagged_session and dates[-1] == lagged_session:
+                packet["history_lag"] = dict(completed_session=session["date"],
+                                             history_through=lagged_session)
             expected = [s.date().isoformat() for s in cal.sessions_in_range(dates[0], dates[-1])]
             if dates != expected:
                 raise ValueError("history dates duplicate, unsorted, or missing sessions")

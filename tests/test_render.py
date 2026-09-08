@@ -90,21 +90,6 @@ def test_sample_commissioning_status_is_plain_language():
     assert "COMMISSIONING RUN" in md
 
 
-def test_live_commissioning_has_no_checkpoint_claim():
-    packet = fixture_packet()
-    packet["run"]["mode"] = "LIVE"
-    packet["run"]["checkpoint"] = "COMMISSIONING"
-    packet["run"]["commissioning"] = True
-    value = narrative()
-    value["mode"] = "LIVE"
-    _, page = render(packet, value)
-    header = page.split("<h1>", 1)[0]
-    assert "LIVE COMMISSIONING" in header
-    assert "PREMARKET" not in header
-    assert "OPEN_1M" not in header
-    assert "Collected at 5:45 AM PT" in header
-
-
 def test_compact_equity_rows_use_current_observation_and_human_labels():
     rows = [
         dict(id="xle-intraday", topic="XLE", metric="premarket return", value=0.55,
@@ -121,7 +106,7 @@ def test_compact_equity_rows_use_current_observation_and_human_labels():
     assert row["label"] == "Energy"
     assert row["today"]["display"] == "+0.55 %"
     assert row["today"]["observed"] == "Tuesday, Sep 8 · 10:30 AM PT"
-    assert measure_label(rows[0]) == "Intraday vs prior close"
+    assert measure_label(rows[0]) == "XLE · Intraday vs prior close"
 
 
 def test_render_deemphasizes_provenance_and_epistemic_boilerplate():

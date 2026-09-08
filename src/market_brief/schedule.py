@@ -8,6 +8,8 @@ import exchange_calendars as xcals
 VANCOUVER = ZoneInfo("America/Vancouver")
 ET = ZoneInfo("America/New_York")
 CHECKPOINTS = ("PREMARKET", "OPEN_1M", "OPEN_30M", "AFTERNOON", "CLOSE_1M")
+CHECKPOINT_TITLES = {"PREMARKET": "Premarket", "OPEN_1M": "Open +1M", "OPEN_30M": "Opening structure",
+                     "AFTERNOON": "Afternoon", "CLOSE_1M": "Close +1M"}
 STATIC_LOCAL_TIMES = {
     "PREMARKET": (6, 0),
     "OPEN_1M": (6, 31),
@@ -57,6 +59,33 @@ def scheduled_checkpoint(now, tolerance_minutes=45):
         if 0 <= delta <= tolerance_minutes * 60:
             candidates.append((delta, checkpoint))
     return min(candidates)[1] if candidates else None
+
+
+def current_phase(now):
+    """Map a clock time to the checkpoint whose session phase it falls in.
+
+    Phases partition the trading day by the scheduled checkpoints themselves:
+    before the open is PREMARKET, the first half hour is OPEN_1M, then OPEN_30M
+    until the afternoon checkpoint, AFTERNOON until the close, and CLOSE_1M after.
+    Non-trading days resolve to PREMARKET of the next session.
+    """
+    cal = xcals.get_calendar("XNYS")
+    local = now.astimezone(ET)
+    day = local.date().isoformat()
+    if not cal.is_session(day):
+        return "PREMARKET"
+    opening = cal.session_open(day).to_pydatetime()
+    closing = cal.session_close(day).to_pydatetime()
+    afternoon = datetime.fromisoformat(checkpoint_session(now, "AFTERNOON")["scheduled_at"])
+    if now < opening:
+        return "PREMARKET"
+    if now >= closing:
+        return "CLOSE_1M"
+    if now < opening + timedelta(minutes=30):
+        return "OPEN_1M"
+    if now < afternoon:
+        return "OPEN_30M"
+    return "AFTERNOON"
 
 
 def session_relation(when, exchange_open, exchange_close):

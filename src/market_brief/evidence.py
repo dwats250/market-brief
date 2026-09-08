@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
 
-from .schedule import CHECKPOINTS, checkpoint_session, session_relation
+from .schedule import CHECKPOINT_TITLES, CHECKPOINTS, checkpoint_session, session_relation
 
 ROOT = Path(__file__).resolve().parents[2]
 ET = ZoneInfo("America/New_York")
@@ -228,6 +228,11 @@ def finalize_coverage(packet):
     missing += [f"{r['topic']}: {r['reason']}" for r in packet["observations"]
                 if r["status"] not in USABLE]
     missing += packet.get("history_errors", [])
+    if packet.get("history_lag"):
+        lag = packet["history_lag"]
+        missing.append(f"Daily history through {lag['history_through']}: the completed "
+                       f"{lag['completed_session']} daily bar was not yet published, so 20D, "
+                       "relative, and 50D context lag one session")
     has_current = any(r["frequency"] == "intraday" and r["status"] in USABLE
                       for r in packet["observations"])
     calendar_complete = {s["id"] for s in calendars if s["status"] == "AVAILABLE"
@@ -250,18 +255,18 @@ def finalize_coverage(packet):
         limitations=list(dict.fromkeys(missing)), missing_domains=missing_domains,
         horizon=("Timestamped intraday observations available; see individual clocks."
                  if has_current else "Previous-close / dated context only; current pre-market direction unavailable."))
-    basis = [packet["run"]["checkpoint"].replace("_", " ").title(),
+    checkpoint = packet["run"]["checkpoint"]
+    basis = [CHECKPOINT_TITLES.get(checkpoint, checkpoint.replace("_", " ").title()),
              "prior close", "Treasury prior-close/current as available",
-             "pre-market available" if has_current else "pre-market unavailable",
+             "current prints available" if has_current else "current prints unavailable",
              "breadth available" if any(r.get("topic") in {"XLI", "XLK", "XLF"} for r in packet["derived"])
-             else "breadth unavailable",
-             "calendar checked" if any(s["status"] == "AVAILABLE" for s in calendars)
-             else "calendar unavailable"]
-    if packet.get("cuttingboard", {}).get("status"):
-        basis.append("Cuttingboard " + packet["cuttingboard"]["status"].lower())
+             else "breadth unavailable"]
     if packet["run"]["session"].get("session_gap"):
         basis.append("session gap / holiday")
     packet["coverage"]["basis"] = "Basis: " + " · ".join(basis)
+    # Integration state is retained for the ledger, not the reading line.
+    packet["coverage"]["calendar"] = ("checked" if any(s["status"] == "AVAILABLE" for s in calendars)
+                                      else "unavailable")
     return packet
 
 

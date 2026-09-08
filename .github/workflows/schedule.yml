@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       checkpoint:
-        description: Checkpoint to run
+        description: Checkpoint to run (ignored when commissioning is true)
         required: true
         type: choice
         options:
@@ -67,7 +67,8 @@ jobs:
           INPUT_COMMISSIONING: ${{ inputs.commissioning }}
         run: |
           if [ "$INPUT_COMMISSIONING" = "true" ]; then
-            checkpoint=PREMARKET
+            # The application resolves the market phase from the clock at collection time.
+            checkpoint=CURRENT
             label="LIVE COMMISSIONING"
             run=true
           elif [ -n "$INPUT_CHECKPOINT" ]; then
@@ -99,7 +100,7 @@ jobs:
           COMMISSIONING: ${{ inputs.commissioning }}
         run: |
           if [ "$COMMISSIONING" = "true" ]; then
-            python -m market_brief premarket --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}" --commissioning
+            python -m market_brief premarket --commissioning
           else
             python -m market_brief premarket --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
           fi

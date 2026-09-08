@@ -16,6 +16,8 @@ from jsonschema import Draft202012Validator
 from .evidence import ROOT, canonical, compact_model_record, digest, evidence_catalog, model_packet
 
 TEXT = {"type": "string", "minLength": 1, "maxLength": 1800}
+# One claim of roughly eight to twelve words; the bound is a backstop, not the target.
+HEADLINE = {"type": "string", "minLength": 1, "maxLength": 160}
 REFS = {"type": "array", "items": {"type": "string"}, "minItems": 1,
         "maxItems": 12, "uniqueItems": True}
 HORIZONS = ["OPENING_HOUR", "SESSION", "NEXT_CLOSE", "NEXT_BRIEF"]
@@ -38,7 +40,7 @@ PARAGRAPH = obj({"text": TEXT, "class": {"enum": ["OBSERVED", "INTERPRETATION"]}
 NARRATIVE_SCHEMA = obj({
     "schema_version": {"const": "market-brief.narrative.v0"},
     "mode": {"enum": ["LIVE", "SAMPLE"]},
-    "banner": obj({"title": TEXT, "label": {"enum": ["RISK-ON", "RISK-OFF", "MIXED", "INDETERMINATE"]},
+    "banner": obj({"title": HEADLINE, "label": {"enum": ["RISK-ON", "RISK-OFF", "MIXED", "INDETERMINATE"]},
                    "class": {"const": "INTERPRETATION"}, "evidence_ids": REFS,
                    "limitation": TEXT}),
     "summary": {"type": "array", "items": PARAGRAPH, "minItems": 1, "maxItems": 2},
@@ -63,6 +65,8 @@ def validate_narrative(narrative, packet):
         raise ValueError("malformed narrative at " + ".".join(map(str, errors[0].absolute_path)))
     if narrative["mode"] != packet["run"]["mode"]:
         raise ValueError("sample/live narrative mode mismatch")
+    if ";" in narrative["banner"]["title"]:
+        raise ValueError("headline must be one claim without a semicolon")
     catalog = evidence_catalog(model_packet(packet))
     records = [narrative["banner"], *narrative["summary"], *narrative["watches"]]
     records += [p for section in narrative["sections"].values() for p in section]

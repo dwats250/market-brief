@@ -225,6 +225,8 @@ def _alpaca_history(payload, now, retrieved_at, source_id):
                 and finite_number(bar.get("c"))]
         rows = [(date, close) for date, close in rows
                 if date[:10] < now.date().isoformat()]
+        rows.sort(key=lambda row: row[0])
+        rows = rows[-65:]
         if not rows:
             continue
         dates = [_bar_date(date) for date, _ in rows]

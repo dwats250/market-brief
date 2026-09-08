@@ -15,6 +15,7 @@ TEXT = {"type": "string", "minLength": 1, "maxLength": 1800}
 REFS = {"type": "array", "items": {"type": "string"}, "minItems": 1,
         "maxItems": 12, "uniqueItems": True}
 HORIZONS = ["OPENING_HOUR", "SESSION", "NEXT_CLOSE", "NEXT_BRIEF"]
+EVENT_HORIZON = re.compile(r"^EVENT\([a-zA-Z][\w-]{0,79}\)$")
 ALLOWED_LABELS = re.compile(r"\b(?:2Y|5Y|10Y|30Y|5-session|20-session|50-day|50-session)\b")
 TRADE_LANGUAGE = re.compile(r"\b(entry|target|sizing|buy|sell|execute|execution|order)\b", re.I)
 
@@ -42,7 +43,8 @@ NARRATIVE_SCHEMA = obj({
         "id": {"type": "string"}, "why": TEXT})},
     "watches": {"type": "array", "minItems": 1, "maxItems": 3, "items": obj({
         "class": {"const": "WATCH"}, "condition": TEXT, "confirmation": TEXT,
-        "contradiction": TEXT, "horizon": {"enum": HORIZONS}, "evidence_ids": REFS})},
+        "contradiction": TEXT, "horizon": {"oneOf": [{"enum": HORIZONS},
+            {"pattern": EVENT_HORIZON.pattern}]}, "evidence_ids": REFS})},
     "changes": {"type": "array", "maxItems": 0},
 })
 TOKEN = re.compile(r"\{\{([a-zA-Z][\w-]*)\}\}")
@@ -88,6 +90,10 @@ def validate_narrative(narrative, packet):
         if TRADE_LANGUAGE.search(item["why"]):
             raise ValueError("trade language in attention reason")
     for watch in narrative["watches"]:
+        if watch["horizon"].startswith("EVENT("):
+            event_id = watch["horizon"][6:-1]
+            if event_id not in {row["id"] for row in model_packet(packet)["events"]}:
+                raise ValueError("watch references unknown event horizon")
         records = [catalog[ident] for ident in watch["evidence_ids"] if ident in catalog]
         if records and all(row.get("magnitude") == "SMALL" for row in records):
             raise ValueError("SMALL observations cannot anchor a watch")

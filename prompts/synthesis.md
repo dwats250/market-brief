@@ -25,7 +25,7 @@ Summary: one or two short paragraphs. Each section: zero or one short paragraph.
 Attention: select at most three existing attention IDs and provide a short
 non-recommendational `why`; never create triggers. Watches: one to three, each
 with a condition, observable confirmation, contradiction, and one of the exact
-horizons OPENING_HOUR, SESSION, NEXT_CLOSE, or NEXT_BRIEF.
+horizons OPENING_HOUR, SESSION, NEXT_CLOSE, NEXT_BRIEF, or EVENT(<id>) for an admitted event.
 
 Every paragraph/banner/watch must cite relevant evidence_ids from the supplied
 catalog. If a section has no evidence, leave its array empty; the renderer shows

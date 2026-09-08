@@ -35,14 +35,19 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
-  group: market-brief-schedule
+  group: market-brief-pages
   cancel-in-progress: false
 
 jobs:
   brief:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     env:
       APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
       APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
@@ -113,3 +118,15 @@ jobs:
             git commit -m "Publish ${{ steps.checkpoint.outputs.label }} brief"
             git push
           fi
+      - name: Configure Pages
+        if: steps.checkpoint.outputs.run == 'true'
+        uses: actions/configure-pages@v5
+      - name: Upload Pages artifact
+        if: steps.checkpoint.outputs.run == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: publish
+      - name: Deploy Pages
+        if: steps.checkpoint.outputs.run == 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4

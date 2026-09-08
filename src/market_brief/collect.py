@@ -262,17 +262,18 @@ def _alpaca_intraday(payload, histories, now, retrieved_at, source_id):
     return observations
 
 
-def alpaca_probe(now, key_id=None, secret_key=None, fetcher=_alpaca_request):
+def alpaca_probe(now, symbols=("SPY", "QQQ"), key_id=None, secret_key=None, fetcher=_alpaca_request):
     key_id = key_id or os.environ.get("APCA_API_KEY_ID")
     secret_key = secret_key or os.environ.get("APCA_API_SECRET_KEY")
     if not key_id or not secret_key:
         raise SourceError("Alpaca credentials are not configured")
     deadline = time.monotonic() + 45
     retrieved = datetime.now(timezone.utc)
-    snapshots = fetcher("/v2/stocks/snapshots", {"symbols": "SPY,QQQ", "feed": "iex"},
+    symbols = tuple(dict.fromkeys(symbols))
+    snapshots = fetcher("/v2/stocks/snapshots", {"symbols": ",".join(symbols), "feed": "iex"},
                         deadline, key_id, secret_key)
     bars = fetcher("/v2/stocks/bars", {
-        "symbols": "SPY,QQQ", "timeframe": "1Day", "start": (now - timedelta(days=120)).date().isoformat(),
+        "symbols": ",".join(symbols), "timeframe": "1Day", "start": (now - timedelta(days=120)).date().isoformat(),
         "end": now.date().isoformat(), "limit": 200, "adjustment": "split", "feed": "iex", "sort": "asc",
     }, deadline, key_id, secret_key)
     histories = _alpaca_history(bars, now, retrieved, "alpaca-daily")

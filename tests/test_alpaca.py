@@ -27,7 +27,7 @@ def test_alpaca_probe_reports_metadata_without_payload(capsys):
         return snapshots() if path.endswith("snapshots") else {"bars": {
             "SPY": bars("SPY"), "QQQ": bars("QQQ")}}
 
-    result = alpaca_probe(NOW, "id", "secret", fake)
+    result = alpaca_probe(NOW, key_id="id", secret_key="secret", fetcher=fake)
     assert result["authenticated"] and result["feed"] == "IEX"
     assert result["historical_symbols"] == ["QQQ", "SPY"]
     assert result["intraday_symbols"] == ["QQQ", "SPY"]

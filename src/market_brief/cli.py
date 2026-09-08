@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
-from .collect import alpaca_probe, collect_live, cuttingboard_record
+from .collect import ALPACA_UNIVERSE, alpaca_probe, collect_live, cuttingboard_record
 from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_json, timestamp
 from .metrics import annotate_magnitude, derive
 from .render import render
@@ -232,10 +232,11 @@ def main(argv=None):
     parser.add_argument("--synthesize", action="store_true", help="call Claude even for SAMPLE evidence")
     parser.add_argument("--cuttingboard", action="store_true", help="optional public GET-only quotation")
     parser.add_argument("--checkpoint", choices=CHECKPOINTS, default="PREMARKET")
+    parser.add_argument("--full", action="store_true", help="probe the configured full Alpaca universe")
     args = parser.parse_args(argv)
     try:
         if args.command == "alpaca-probe":
-            result = alpaca_probe(datetime.now(timezone.utc))
+            result = alpaca_probe(datetime.now(timezone.utc), ALPACA_UNIVERSE if args.full else ("SPY", "QQQ"))
             print(json.dumps(result, sort_keys=True))
             return 0
         if args.command == "open":

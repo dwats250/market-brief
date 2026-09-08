@@ -70,6 +70,9 @@ jobs:
       - name: Alpaca commissioning probe
         if: github.event_name == 'workflow_dispatch'
         run: python -m market_brief alpaca-probe
+      - name: Full Alpaca coverage probe
+        if: github.event_name == 'workflow_dispatch'
+        run: python -m market_brief alpaca-probe --full
       - name: Collect, synthesize, validate, and render manually
         if: github.event_name == 'workflow_dispatch'
         run: python -m market_brief premarket --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"

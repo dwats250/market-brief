@@ -10,11 +10,9 @@ v0.2 synthesis contract) are in place.
 
 ## Next
 
-Observe several scheduled editions under the v0.2 contract. The compact synthesis projection
-(`--compact-packet`, 68.5% smaller on the 2026-09-08 control evidence) is opt-in only: its one
-paid A/B call on 2026-09-08 failed schema validation at the banner object because the payload
-omitted the output schema and the transport did not enforce it. The schema is now kept in the
-compact payload; a second A/B call needs the owner's decision.
+Observe several scheduled editions under the v0.2 contract and the compact synthesis projection.
+The projection became production default on 2026-09-08 after A/B run 34280109434 validated on
+the same evidence as the accepted 1:50 PM PT control (25,280 bytes vs 80,189; 14,059 prompt tokens).
 
 ## Later
 

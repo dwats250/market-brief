@@ -10,3 +10,4 @@
 - Same-day post-close runs may use daily history through the prior completed session while the provider has not published today's bar; that lag is visible in coverage, never fills TODAY, and never applies beyond that day.
 - Only LIVE runs publish; fictional replay output never reaches the public brief.
 - The synthesis contract asks for one short headline claim, one global coverage caveat, and no table restatement; the validator enforces the headline bound and fail-closed grounding unchanged.
+- The model receives the bounded synthesis projection (one copy of each admitted fact, legend, leadership IDs, attention, compact sources, coverage, schema); the full normalized record stays local and `--full-packet` reproduces the original payload for diagnostics.

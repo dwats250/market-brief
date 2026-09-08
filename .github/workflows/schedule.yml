@@ -106,7 +106,7 @@ jobs:
           EXPERIMENT: ${{ inputs.experiment }}
         run: |
           if [ "$EXPERIMENT" = "true" ]; then
-            python -m market_brief premarket --commissioning --experiment --compact-packet
+            python -m market_brief premarket --commissioning --experiment
           elif [ "$COMMISSIONING" = "true" ]; then
             python -m market_brief premarket --commissioning
           else

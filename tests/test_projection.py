@@ -17,13 +17,19 @@ from market_brief.synthesize import (
 
 
 def payload(packet):
-    _, user = construct_prompt(packet, compact=True)
+    _, user = construct_prompt(packet)
     return json.loads(user)
 
 
-def test_default_payload_is_the_accepted_baseline_shape():
+def test_default_payload_is_the_compact_projection():
+    data = payload(fixture_packet())
+    assert "evidence" not in data and "lookback" not in data
+    assert {"catalog", "baselines", "output_schema", "attention", "coverage"} <= set(data)
+
+
+def test_full_payload_remains_available_for_diagnostics():
     packet = fixture_packet()
-    data = json.loads(construct_prompt(packet)[1])
+    data = json.loads(construct_prompt(packet, full=True)[1])
     assert set(data) == {"evidence", "catalog", "output_schema"}
     assert data["evidence"] == json.loads(json.dumps(model_packet(packet)))
     assert set(data["catalog"]) == set(evidence_catalog(model_packet(packet)))
@@ -39,7 +45,7 @@ def test_full_normalized_packet_is_untouched_by_projection():
     packet = fixture_packet()
     before = copy.deepcopy(packet)
     construct_prompt(packet)
-    construct_prompt(packet, compact=True)
+    construct_prompt(packet, full=True)
     synthesis_packet(packet)
     assert packet == before
     assert model_packet(packet) == model_packet(before)
@@ -48,13 +54,13 @@ def test_full_normalized_packet_is_untouched_by_projection():
 def test_projection_is_deterministic_and_smaller():
     packet = packet_at(utc("2026-09-08T20:03:00+00:00"))
     assert synthesis_packet(packet) == synthesis_packet(packet)
-    _, user = construct_prompt(packet, compact=True)
-    assert len(user.encode()) < len(construct_prompt(packet)[1].encode()) * 0.5
+    _, user = construct_prompt(packet)
+    assert len(user.encode()) < len(construct_prompt(packet, full=True)[1].encode()) * 0.5
 
 
 def test_each_evidence_row_is_sent_once_without_schema_or_renderer_fields():
     packet = fixture_packet()
-    _, user = construct_prompt(packet, compact=True)
+    _, user = construct_prompt(packet)
     data = payload(packet)
     assert "lookback" not in data and "evidence" not in data
     assert user.count('"SPY-daily"') == 1
@@ -67,7 +73,7 @@ def test_each_evidence_row_is_sent_once_without_schema_or_renderer_fields():
 
 def test_every_permitted_evidence_id_remains_available():
     packet = packet_at(utc("2026-09-08T20:03:00+00:00"))
-    user = construct_prompt(packet, compact=True)[1]
+    user = construct_prompt(packet)[1]
     permitted = set(evidence_catalog(model_packet(packet)))
     assert permitted
     for ident in permitted:
@@ -93,7 +99,7 @@ def test_repeated_history_errors_are_aggregated():
     assert summary["expected_session"] == "2026-09-08"
     assert summary["latest_provider_session"] == "2026-09-03"
     assert "last completed exchange session" in summary["reasons"][0]
-    assert "invalid/incomplete historical context" not in construct_prompt(packet, compact=True)[1]
+    assert "invalid/incomplete historical context" not in construct_prompt(packet)[1]
 
 
 def test_history_lag_and_unavailable_sources_are_kept_compactly():
@@ -146,7 +152,7 @@ def test_experiment_run_never_publishes_or_records_success(tmp_path, monkeypatch
     monkeypatch.setattr(cli, "collect_live", lambda target, include_cuttingboard=False: raw)
     value = narrative()
     value["mode"] = "LIVE"
-    monkeypatch.setattr(cli, "synthesize", lambda packet, compact=False: (value, {"route": "test"}))
+    monkeypatch.setattr(cli, "synthesize", lambda packet, full=False: (value, {"route": "test"}))
     original = cli.output_directory
     monkeypatch.setattr(cli, "output_directory", lambda root, mode, target: original(tmp_path, mode, target))
     monkeypatch.setattr(cli, "update_latest", lambda root, page: None)

@@ -154,7 +154,9 @@ def _openrouter_narrative(response):
     if isinstance(content, list):
         content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
     if not isinstance(content, str) or not content:
-        raise ValueError("OpenRouter returned no structured synthesis")
+        keys = ",".join(sorted(str(key) for key in message)) or "none"
+        finish = choices[0].get("finish_reason", "unknown")
+        raise ValueError(f"OpenRouter returned no structured synthesis (message_keys={keys}; finish={finish})")
     try:
         return json.loads(content)
     except json.JSONDecodeError:

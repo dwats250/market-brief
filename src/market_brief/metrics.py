@@ -1,5 +1,6 @@
 """Small deterministic price-return context; never a trading classifier."""
 
+from datetime import timedelta
 from statistics import fmean
 
 import exchange_calendars as xcals
@@ -83,7 +84,8 @@ def derive(packet, universe, thresholds=None):
             if dates != expected:
                 raise ValueError("history dates duplicate, unsorted, or missing sessions")
             retrieved = timestamp(h["retrieved_at"])
-            if retrieved > now or retrieved < cal.session_close(dates[-1]).to_pydatetime():
+            if (retrieved > now + timedelta(minutes=5)
+                    or retrieved < cal.session_close(dates[-1]).to_pydatetime()):
                 raise ValueError("history retrieval clock inconsistent")
             m = history_metrics(closes)
             histories[sym] = (h, m)

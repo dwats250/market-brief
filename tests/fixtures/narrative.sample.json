@@ -14,7 +14,7 @@
   },
   "summary": [
     {
-      "text": "In this fictional sample, growth has an edge over the broad equity benchmark. QQQ finished ahead of SPY, while the selected mega-cap's longer-window advance was stronger still. That is a useful place to start an opening watch, but a small basket cannot establish broad participation.",
+      "text": "In this fictional sample, growth has an edge over the broad equity benchmark. QQQ finished ahead of SPY, while the selected mega-cap's longer-window advance was stronger still. That is a useful place to start an opening watch, while breadth remains unmeasured.",
       "class": "INTERPRETATION",
       "evidence_ids": [
         "QQQ-daily",
@@ -25,7 +25,7 @@
       "alternative": ""
     },
     {
-      "text": "The useful tension is beneath the headline: front-end yields eased while the longer end rose, and the gold fund advanced while miners slipped. Those relationships argue for checking confirmation rather than compressing everything into a single risk-on story.",
+      "text": "The useful tension is beneath the headline: front-end yields eased while the longer end rose, and the gold fund advanced while miners slipped. Those relationships leave confirmation as the next check rather than a single risk-on story.",
       "class": "INTERPRETATION",
       "evidence_ids": [
         "treasury-2y-change",
@@ -54,7 +54,7 @@
     ],
     "equities": [
       {
-        "text": "QQQ's prior-session return was {{QQQ-daily}}, compared with {{SPY-daily}} for SPY. The sample suggests a growth preference, but neither exchange breadth nor index weights are available. Relative returns do not establish actual index contribution.",
+        "text": "QQQ's prior-session return was {{QQQ-daily}}, compared with {{SPY-daily}} for SPY. The sample suggests a growth preference, while exchange breadth and index weights remain unavailable.",
         "class": "INTERPRETATION",
         "evidence_ids": [
           "QQQ-daily",
@@ -82,13 +82,23 @@
     "attention-NVDA-spread",
     "attention-XLI-cross"
   ],
+  "attention": [
+    {
+      "id": "attention-NVDA-spread",
+      "why": "NVDA's relative leadership matters because it tests whether growth participation extends beyond the broad benchmark."
+    },
+    {
+      "id": "attention-XLI-cross",
+      "why": "XLI's moving-average transition matters because cyclical participation can confirm or weaken the growth-led map."
+    }
+  ],
   "watches": [
     {
       "class": "WATCH",
       "condition": "If growth retains its lead after regular trading begins, check whether participation extends beyond the selected mega-cap.",
       "confirmation": "More independently observed sectors improve on synchronized comparisons.",
       "contradiction": "The benchmark lead persists while participation narrows.",
-      "horizon": "The sample session's opening hour",
+      "horizon": "OPENING_HOUR",
       "evidence_ids": [
         "QQQ-daily",
         "SPY-daily",
@@ -100,10 +110,11 @@
       "condition": "Revisit the gold fund and miners on the same return horizon.",
       "confirmation": "Miners join the metal fund's strength.",
       "contradiction": "Miner weakness persists despite firmness in the gold fund.",
-      "horizon": "A subsequent regular-session observation",
+      "horizon": "NEXT_CLOSE",
       "evidence_ids": [
         "GLD-daily",
-        "GDX-daily"
+        "GDX-daily",
+        "GDX-spread20"
       ]
     }
   ],

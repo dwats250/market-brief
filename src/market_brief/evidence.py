@@ -12,9 +12,12 @@ from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
 
+from .schedule import CHECKPOINTS, checkpoint_session, session_relation
+
 ROOT = Path(__file__).resolve().parents[2]
 ET = ZoneInfo("America/New_York")
 USABLE = {"AVAILABLE", "DELAYED", "BACKGROUND"}
+FRESHNESS = {"LIVE", "DELAYED", "PRIOR_CLOSE", "DATED", "STALE", "UNAVAILABLE", "INVALID"}
 SCHEMA = "market-brief.evidence.v0"
 
 
@@ -51,7 +54,7 @@ def safe_url(value):
     return value
 
 
-def session_info(now):
+def session_info(now, checkpoint="PREMARKET"):
     local = now.astimezone(ET)
     cal = xcals.get_calendar("XNYS")
     day = local.date().isoformat()
@@ -62,10 +65,14 @@ def session_info(now):
         previous = session
     opening = cal.session_open(session).to_pydatetime()
     closing = cal.session_close(session).to_pydatetime()
+    checkpoint_data = checkpoint_session(now, checkpoint)
     return dict(date=day, trading_day=bool(trading),
                 previous_session=previous.date().isoformat(),
                 open=opening.isoformat(), close=closing.isoformat(),
-                meaningful_premarket=bool(trading and local.hour >= 7 and now < opening))
+                meaningful_premarket=bool(trading and local.hour >= 7 and now < opening),
+                session_gap=not trading,
+                checkpoint=checkpoint,
+                scheduled_checkpoint_at=checkpoint_data["scheduled_at"])
 
 
 def normalize_observation(raw, now):
@@ -73,9 +80,11 @@ def normalize_observation(raw, now):
             "observed_at", "retrieved_at", "source_id", "status", "reason")
     row = {key: raw.get(key) for key in keys}
     row["reason"] = row["reason"] or ""
+    row["freshness"] = "UNAVAILABLE"
 
     def reject(status, reason):
-        row.update(status=status, reason=reason, value=None)
+        row.update(status=status, reason=reason, value=None,
+                   freshness=status if status in FRESHNESS else "UNAVAILABLE")
         return row
 
     if not all(isinstance(row[k], str) and row[k] for k in
@@ -98,6 +107,7 @@ def normalize_observation(raw, now):
             if (now.astimezone(ET).date() - observed).days > 7:
                 return reject("STALE", "daily background older than seven calendar days")
             row["status"] = "BACKGROUND"
+            row["freshness"] = "PRIOR_CLOSE"
         elif row["frequency"] == "intraday":
             observed = timestamp(row["observed_at"])
             if observed > now or observed > retrieved:
@@ -106,6 +116,7 @@ def normalize_observation(raw, now):
             if age > 1200:
                 return reject("STALE", "intraday observation older than twenty minutes")
             row["status"] = "DELAYED" if age > 60 else "AVAILABLE"
+            row["freshness"] = "DELAYED" if age > 60 else "LIVE"
         else:
             return reject("INVALID", "unsupported frequency")
     except (TypeError, ValueError):
@@ -116,24 +127,33 @@ def normalize_observation(raw, now):
 def source_record(raw):
     result = {key: raw.get(key) for key in (
         "id", "name", "kind", "url", "retrieved_at", "status", "reason",
-        "llm_allowed", "retention_allowed", "coverage_date")}
+        "llm_allowed", "retention_allowed", "coverage_date", "expected_freshness")}
     if not all(isinstance(result[k], str) and result[k] for k in
                ("id", "name", "kind", "url", "retrieved_at", "status")):
         raise ValueError("malformed source record")
     safe_url(result["url"])
     timestamp(result["retrieved_at"])
+    if result["expected_freshness"] is None:
+        result["expected_freshness"] = {
+            "economic_series": "PRIOR_CLOSE", "calendar": "DATED", "news": "DATED",
+            "price": "PRIOR_CLOSE", "quote": "LIVE"
+        }.get(result["kind"], "DATED")
+    if result["expected_freshness"] not in FRESHNESS:
+        raise ValueError("unsupported expected freshness")
     return result
 
 
-def normalize_packet(raw, now, mode):
+def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
     if raw.get("mode") != mode or mode not in {"LIVE", "SAMPLE"}:
         raise ValueError("sample/live input mode mismatch")
+    if checkpoint not in CHECKPOINTS:
+        raise ValueError("unsupported checkpoint")
     sources = [source_record(s) for s in raw.get("sources", [])]
     by_source = {s["id"]: s for s in sources}
     if len(by_source) != len(sources):
         raise ValueError("duplicate source ID")
-    packet = dict(schema_version=SCHEMA, run=dict(mode=mode, checkpoint="premarket",
-                  target_time=now.isoformat(), session=session_info(now)), sources=sources,
+    packet = dict(schema_version=SCHEMA, run=dict(mode=mode, checkpoint=checkpoint,
+                  target_time=now.isoformat(), session=session_info(now, checkpoint)), sources=sources,
                   observations=[], history=[], derived=[], events=[], context_items=[],
                   attention=[], previous=None, cuttingboard=raw.get("cuttingboard", {
                       "status": "UNAVAILABLE", "reason": "not requested"}))
@@ -144,6 +164,8 @@ def normalize_packet(raw, now, mode):
             raise ValueError("observation references unknown source")
         if source["retention_allowed"] is not True:
             row.update(value=None, status="UNAVAILABLE", reason="retention not admitted")
+            row["freshness"] = "UNAVAILABLE"
+        row["expected_freshness"] = source["expected_freshness"]
         packet["observations"].append(row)
     for h in raw.get("history", []):
         source = by_source.get(h.get("source_id"))
@@ -175,8 +197,17 @@ def normalize_packet(raw, now, mode):
                     continue
                 if when.astimezone(ET).date() != now.astimezone(ET).date():
                     continue
+                record["freshness"] = "DATED"
+                record["expected_freshness"] = source["expected_freshness"]
+                session = packet["run"]["session"]
+                record["scheduled_at_et"] = when.astimezone(ET).isoformat()
+                record["session_relation"] = session_relation(
+                    when, timestamp(session["open"]), timestamp(session["close"]))
             elif now - timestamp(item["published_at"]) > timedelta(days=2):
                 continue
+            else:
+                record["freshness"] = "DATED"
+                record["expected_freshness"] = source["expected_freshness"]
             packet[field].append(record)
     identities = [row.get("id") for key in ("observations", "history", "events", "context_items")
                   for row in packet[key]]
@@ -203,10 +234,33 @@ def finalize_coverage(packet):
     ready = {"SPY", "QQQ"} <= anchors and {"bls", "bea", "fed-calendar"} <= calendar_complete
     usable = bool(packet["derived"] or packet["events"] or packet["context_items"]
                   or any(r["status"] in USABLE for r in packet["observations"]))
-    packet["coverage"] = dict(status="READY" if ready else "PARTIAL" if usable else "INSUFFICIENT",
-        current_premarket=has_current, limitations=list(dict.fromkeys(missing)),
+    status = "READY" if ready else "PARTIAL" if usable else "INSUFFICIENT"
+    core_present = {"SPY", "QQQ"} <= anchors
+    bootstrap = ("BASELINE" if not packet.get("previous") else
+                 "FULL" if core_present else "PARTIAL")
+    missing_domains = []
+    if not core_present:
+        missing_domains.append("equity prior-close history")
+    if not has_current:
+        missing_domains.append("current pre-market direction unavailable")
+    if not any(r["metric"] == "daily yield change" for r in packet["observations"]):
+        missing_domains.append("current Treasury change")
+    packet["coverage"] = dict(status=status, bootstrap=bootstrap, current_premarket=has_current,
+        limitations=list(dict.fromkeys(missing)), missing_domains=missing_domains,
         horizon=("Timestamped intraday observations available; see individual clocks."
                  if has_current else "Previous-close / dated context only; current pre-market direction unavailable."))
+    basis = [packet["run"]["checkpoint"].replace("_", " ").title(),
+             "prior close", "Treasury prior-close/current as available",
+             "pre-market available" if has_current else "pre-market unavailable",
+             "breadth available" if any(r.get("topic") in {"XLI", "XLK", "XLF"} for r in packet["derived"])
+             else "breadth unavailable",
+             "calendar checked" if any(s["status"] == "AVAILABLE" for s in calendars)
+             else "calendar unavailable"]
+    if packet.get("cuttingboard", {}).get("status"):
+        basis.append("Cuttingboard " + packet["cuttingboard"]["status"].lower())
+    if packet["run"]["session"].get("session_gap"):
+        basis.append("session gap / holiday")
+    packet["coverage"]["basis"] = "Basis: " + " · ".join(basis)
     return packet
 
 
@@ -221,6 +275,11 @@ def model_packet(packet):
     result.pop("history", None)
     for field in ("observations", "derived", "events", "context_items"):
         result[field] = [r for r in result[field] if r.get("source_id") in allowed]
+    result["sector_leadership"] = dict(
+        top=[r for r in result.get("sector_leadership", {}).get("top", [])
+             if r.get("source_id") in allowed],
+        bottom=[r for r in result.get("sector_leadership", {}).get("bottom", [])
+                if r.get("source_id") in allowed])
     permitted_ids = set(evidence_catalog(result))
     result["attention"] = [a for a in result["attention"]
                            if set(a["evidence_ids"]) <= permitted_ids]

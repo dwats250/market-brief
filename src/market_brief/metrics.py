@@ -6,6 +6,31 @@ import exchange_calendars as xcals
 
 from .evidence import finite, timestamp
 
+DEFAULT_MAGNITUDE_THRESHOLDS = {
+    "%": {"SMALL": 0.25, "NOTABLE": 1.0},
+    "bp": {"SMALL": 3.0, "NOTABLE": 10.0},
+    "pp": {"SMALL": 0.25, "NOTABLE": 1.0},
+}
+
+
+def magnitude(value, unit, thresholds=None):
+    limits = (thresholds or DEFAULT_MAGNITUDE_THRESHOLDS).get(unit)
+    if limits is None or not finite(value):
+        return "NEUTRAL"
+    absolute = abs(value)
+    if absolute < limits["SMALL"]:
+        return "SMALL"
+    if absolute < limits["NOTABLE"]:
+        return "NOTABLE"
+    return "LARGE"
+
+
+def annotate_magnitude(packet, thresholds=None):
+    for field in ("observations", "derived"):
+        for row in packet[field]:
+            row["magnitude"] = magnitude(row.get("value"), row.get("unit"), thresholds)
+    return packet
+
 
 def return_pct(current, baseline):
     if not finite(current) or not finite(baseline) or baseline <= 0:
@@ -34,8 +59,9 @@ def history_metrics(closes):
                 sma_50=fmean(closes[-50:]) if len(closes) >= 50 else None, cross_50=cross)
 
 
-def derive(packet, universe):
+def derive(packet, universe, thresholds=None):
     packet["derived"], packet["attention"], packet["history_errors"] = [], [], []
+    packet["lookback"] = {}
     histories = {}
     seen = set()
     cal = xcals.get_calendar("XNYS")
@@ -61,6 +87,9 @@ def derive(packet, universe):
                 raise ValueError("history retrieval clock inconsistent")
             m = history_metrics(closes)
             histories[sym] = (h, m)
+            packet["lookback"][sym] = dict(sessions=len(closes),
+                r20="available" if len(closes) >= 21 else "n/a",
+                sma50="available" if len(closes) >= 50 else "n/a")
         except (ValueError, TypeError, KeyError):
             packet["history_errors"].append(f"{sym}: invalid/incomplete historical context")
     def add(sym, suffix, metric, value, unit, baseline, h, inputs=None):
@@ -68,7 +97,9 @@ def derive(packet, universe):
                    unit=unit, baseline=baseline, observed_at=h["dates"][-1],
                    retrieved_at=h["retrieved_at"], source_id=h["source_id"],
                    frequency="daily", status="BACKGROUND", reason="", formula_version="v0",
-                   input_ids=inputs or [h["id"]], adjustment=h["adjustment"])
+                   input_ids=inputs or [h["id"]], adjustment=h["adjustment"],
+                   freshness="PRIOR_CLOSE", expected_freshness="PRIOR_CLOSE",
+                   magnitude=magnitude(value, unit, thresholds))
         packet["derived"].append(row)
         return row["id"]
     for sym, (h, m) in histories.items():
@@ -98,5 +129,13 @@ def derive(packet, universe):
                 if abs(spread) >= 3:
                     packet["attention"].append(dict(id=f"attention-{sym}-spread", symbol=sym,
                         reason=f"Material twenty-session return spread versus {benchmark}",
-                        evidence_ids=[ident], horizon="daily", date=h["dates"][-1]))
+                    evidence_ids=[ident], horizon="daily", date=h["dates"][-1]))
+    sectors = set(universe.get("groups", {}).get("SECTORS", []))
+    sector_rows = [r for r in packet["derived"] if r["topic"] in sectors
+                   and r["metric"] == "relative to SPY"]
+    sector_rows.sort(key=lambda row: row["value"], reverse=True)
+    packet["sector_leadership"] = dict(top=sector_rows[:3], bottom=list(reversed(sector_rows[-3:])))
+    for row in packet["derived"]:
+        if "magnitude" not in row:
+            row["magnitude"] = magnitude(row.get("value"), row.get("unit"), thresholds)
     return packet

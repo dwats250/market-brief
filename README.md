@@ -10,12 +10,15 @@ The pre-market pipeline supports live collection, fixture replay, deterministic 
 
 ```bash
 python -m market_brief premarket --replay
+python -m market_brief schedule --checkpoint PREMARKET
 python -m market_brief publish
 python -m market_brief open
 python -m pytest
 ```
 
 The replay uses fictional evidence and is labeled in the generated brief.
+Scheduled runs resolve exchange sessions in `America/Vancouver`; the five
+checkpoints are `PREMARKET`, `OPEN_1M`, `OPEN_30M`, `AFTERNOON`, and `CLOSE_1M`.
 
 ## Output
 

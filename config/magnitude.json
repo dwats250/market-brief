@@ -1,0 +1,5 @@
+{
+  "%": {"SMALL": 0.25, "NOTABLE": 1.0},
+  "bp": {"SMALL": 3.0, "NOTABLE": 10.0},
+  "pp": {"SMALL": 0.25, "NOTABLE": 1.0}
+}

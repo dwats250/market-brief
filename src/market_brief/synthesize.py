@@ -14,6 +14,9 @@ from .evidence import ROOT, canonical, digest, evidence_catalog, model_packet
 TEXT = {"type": "string", "minLength": 1, "maxLength": 1800}
 REFS = {"type": "array", "items": {"type": "string"}, "minItems": 1,
         "maxItems": 12, "uniqueItems": True}
+HORIZONS = ["OPENING_HOUR", "SESSION", "NEXT_CLOSE", "NEXT_BRIEF"]
+ALLOWED_LABELS = re.compile(r"\b(?:2Y|5Y|10Y|30Y|5-session|20-session|50-day|50-session)\b")
+TRADE_LANGUAGE = re.compile(r"\b(entry|target|sizing|buy|sell|execute|execution|order)\b", re.I)
 
 
 def obj(properties):
@@ -31,13 +34,15 @@ NARRATIVE_SCHEMA = obj({
                    "class": {"const": "INTERPRETATION"}, "evidence_ids": REFS,
                    "limitation": TEXT}),
     "summary": {"type": "array", "items": PARAGRAPH, "minItems": 1, "maxItems": 2},
-    "sections": obj({k: {"type": "array", "items": PARAGRAPH, "maxItems": 2}
+    "sections": obj({k: {"type": "array", "items": PARAGRAPH, "maxItems": 1}
                      for k in ("macro", "equities", "attention", "cuttingboard", "events")}),
     "attention_ids": {"type": "array", "items": {"type": "string"},
                       "maxItems": 3, "uniqueItems": True},
+    "attention": {"type": "array", "maxItems": 3, "items": obj({
+        "id": {"type": "string"}, "why": TEXT})},
     "watches": {"type": "array", "minItems": 1, "maxItems": 3, "items": obj({
         "class": {"const": "WATCH"}, "condition": TEXT, "confirmation": TEXT,
-        "contradiction": TEXT, "horizon": TEXT, "evidence_ids": REFS})},
+        "contradiction": TEXT, "horizon": {"enum": HORIZONS}, "evidence_ids": REFS})},
     "changes": {"type": "array", "maxItems": 0},
 })
 TOKEN = re.compile(r"\{\{([a-zA-Z][\w-]*)\}\}")
@@ -63,6 +68,7 @@ def validate_narrative(narrative, packet):
                 if ident not in refs or not isinstance(catalog[ident].get("value"), (int, float)):
                     raise ValueError("numeric placeholder not grounded in cited observation")
             plain = TOKEN.sub("", text)
+            plain = ALLOWED_LABELS.sub("", plain)
             if re.search(r"\d|[{}]", plain):
                 raise ValueError("literal numeric claim or malformed evidence placeholder")
             if packet["run"]["mode"] == "SAMPLE" and re.search(
@@ -73,6 +79,18 @@ def validate_narrative(narrative, packet):
     admitted = {a["id"] for a in model_packet(packet)["attention"]}
     if not set(narrative["attention_ids"]) <= admitted:
         raise ValueError("unknown attention trigger")
+    attention = narrative.get("attention", [])
+    if {item["id"] for item in attention} != set(narrative["attention_ids"]):
+        raise ValueError("attention reasons must match selected triggers")
+    for item in attention:
+        if re.search(r"\d", ALLOWED_LABELS.sub("", item["why"])):
+            raise ValueError("literal numeric claim in attention reason")
+        if TRADE_LANGUAGE.search(item["why"]):
+            raise ValueError("trade language in attention reason")
+    for watch in narrative["watches"]:
+        records = [catalog[ident] for ident in watch["evidence_ids"] if ident in catalog]
+        if records and all(row.get("magnitude") == "SMALL" for row in records):
+            raise ValueError("SMALL observations cannot anchor a watch")
     return narrative
 
 

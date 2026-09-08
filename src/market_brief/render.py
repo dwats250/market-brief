@@ -12,6 +12,17 @@ TITLES = {"macro": "Macro & cross-asset", "equities": "Equity structure",
           "attention": "On the attention list", "cuttingboard": "Cuttingboard context",
           "events": "Event risk"}
 
+HORIZON_LABELS = {"daily return": "1d", "twenty-session return": "20s",
+                  "fifty-session average": "50d avg"}
+
+
+def measure_label(row):
+    metric = row["metric"]
+    if metric.startswith("relative to "):
+        return f"{row['topic']} vs {metric.removeprefix('relative to ')} · 20s"
+    horizon = HORIZON_LABELS.get(metric, metric)
+    return f"{row['topic']} · {horizon}"
+
 
 def direction(row):
     if row.get("metric") not in {"daily return", "daily yield change"} \
@@ -46,9 +57,10 @@ def presentation(packet, narrative):
     for row in [*packet["observations"], *packet["derived"]]:
         if row["status"] not in USABLE:
             continue
-        if row["metric"] in {"twenty-session return", "fifty-session average", "regular close"}:
+        if row["metric"] in {"regular close"}:
             continue
-        facts.append({**row, "display": formatted(row), "direction": direction(row)})
+        facts.append({**row, "display": formatted(row), "direction": direction(row),
+                      "measure": measure_label(row)})
     equity = [r for r in facts if r["topic"] in
               {h["symbol"] for h in packet["history"]} or r["frequency"] == "intraday"]
     macro = [r for r in facts if r not in equity]
@@ -59,16 +71,24 @@ def presentation(packet, narrative):
     if not chips:
         chips = facts[:4]
     selected = set(narrative["attention_ids"])
+    attention_why = {item["id"]: item["why"] for item in narrative.get("attention", [])}
     sections = []
     for key, title in TITLES.items():
         sections.append(dict(key=key, title=title,
             paragraphs=[paragraph(p) for p in narrative["sections"][key]],
             facts=macro if key == "macro" else equity if key == "equities" else [],
-            attention=[a for a in packet["attention"] if a["id"] in selected]
+            attention=[{**a, "why": attention_why.get(a["id"], "")} for a in packet["attention"]
+                       if a["id"] in selected]
                       if key == "attention" else [],
             events=packet["events"][:4] if key == "events" else []))
-    return dict(mode=packet["run"]["mode"], session=packet["run"]["session"],
-        target=packet["run"]["target_time"], coverage=packet["coverage"],
+    sector_leadership = {key: [{**row, "display": formatted(row), "direction": direction(row),
+                                "measure": measure_label(row)} for row in rows]
+                         for key, rows in packet.get("sector_leadership", {}).items()}
+    return dict(mode=packet["run"]["mode"], checkpoint=packet["run"]["checkpoint"],
+        session=packet["run"]["session"],
+        target=packet["run"]["target_time"],
+        actual_started_at=packet["run"].get("actual_started_at", packet["run"]["target_time"]),
+        coverage=packet["coverage"],
         banner={**narrative["banner"], "title": expand(narrative["banner"]["title"]),
                 "limitation": expand(narrative["banner"]["limitation"])}, chips=chips,
         summary=[paragraph(p) for p in narrative["summary"]], sections=sections,
@@ -76,6 +96,8 @@ def presentation(packet, narrative):
                           ("condition", "confirmation", "contradiction", "horizon")}}
                  for w in narrative["watches"]],
         sources=packet["sources"], cuttingboard=packet["cuttingboard"],
+        sector_leadership=sector_leadership or {"top": [], "bottom": []},
+        lookback=packet.get("lookback", {}),
         evidence=[dict(r, display=formatted(r) if "value" in r else r["title"])
                   for r in catalog.values()], context_items=packet["context_items"])
 
@@ -86,7 +108,7 @@ def markdown(view):
         return re.sub(r"([\\`*_\[\]|])", r"\\\1", html.escape(text))
 
     def refs(ids):
-        return " ".join(f"[{esc(i)}](#evidence-{i})" for i in ids)
+        return " ".join(f"[evidence](#evidence-{i})" for i in ids)
 
     def para(p):
         text = f"**{p['class']}** · {esc(p['text'])} {refs(p['evidence_ids'])}"
@@ -99,31 +121,45 @@ def markdown(view):
     lines = [f"# {esc(view['banner']['title'])}", ""]
     if view["mode"] == "SAMPLE":
         lines += ["> FICTIONAL SAMPLE / REPLAY — not current market facts. No live model required.", ""]
-    lines += [f"PRE-MARKET · {view['session']['date']} · Evidence cutoff {view['target']}", "",
+    lines += [f"{view['checkpoint']} · {view['session']['date']} · Evidence cutoff {view['target']}", "",
               f"**INTERPRETATION — {view['banner']['label']}**", "",
               esc(view["banner"]["limitation"]), "",
-              f"Coverage: **{view['coverage']['status']}**. {esc(view['coverage']['horizon'])}", ""]
+              esc(view["coverage"]["basis"]), "",
+              f"Bootstrap: **{view['coverage']['bootstrap']}**. {esc(view['coverage']['horizon'])}", ""]
     if view["mode"] == "LIVE" and not view["session"]["meaningful_premarket"]:
         lines += ["> OUTSIDE PRE-MARKET WINDOW — collection smoke test, not morning acceptance.", ""]
     lines += ["## The morning in a minute", ""]
     for p in view["summary"]:
         lines += [para(p), ""]
+    lines += ["## What to watch", ""]
+    for w in view["watches"]:
+        lines += [f"- **WATCH** · {esc(w['condition'])} Confirmation: {esc(w['confirmation'])} "
+                  f"Contradiction: {esc(w['contradiction'])} Horizon: {esc(w['horizon'])}. "
+                  f"{refs(w['evidence_ids'])}"]
+    lines += [""]
     for section in view["sections"]:
         lines += [f"## {section['title']}", ""]
         if section["facts"]:
-            lines += ["**OBSERVED**", "", "| Measure | Observation | Horizon / evidence |",
+            lines += ["**OBSERVED**", "", "| Measure | Observation | Date / source |",
                       "|---|---:|---|"]
             for row in section["facts"]:
-                lines.append(f"| {esc(row['topic'])} · {esc(row['metric'])} | {row['display']} | "
+                lines.append(f"| {esc(row['measure'])} | {row['display']} | "
                              f"{row['observed_at']} · {row['status']} · {refs([row['id']])} |")
             lines.append("")
+            if section["key"] == "equities":
+                for symbol, state in view["lookback"].items():
+                    if state["r20"] != "available":
+                        lines.append(f"{esc(symbol)} 20s: n/a ({state['sessions']} sessions)")
+                lines.append("")
         for p in section["paragraphs"]:
             lines += [para(p), ""]
         for a in section["attention"]:
             lines += [f"**OBSERVED · {a['symbol']}** — {esc(a['reason'])}. "
-                      f"{a['date']} / {a['horizon']}. {refs(a['evidence_ids'])}", ""]
+                      f"{esc(a['why'])} {a['date']} / {a['horizon']}. {refs(a['evidence_ids'])}", ""]
         for event in section["events"]:
-            lines += [f"**OBSERVED** · {esc(event['title'])} — {esc(event['scheduled_at'])}. "
+            event_time = esc(event.get("scheduled_at_et", event["scheduled_at"]))
+            lines += [f"**OBSERVED** · {esc(event['title'])} — {event_time} · "
+                      f"{esc(event.get('session_relation', ''))}. "
                       f"{refs([event['id']])}", ""]
         if section["key"] == "cuttingboard":
             cb = view["cuttingboard"]
@@ -135,12 +171,7 @@ def markdown(view):
                 lines += [f"{esc(cb['status'])} — {esc(cb.get('reason', ''))}.", ""]
         elif not any(section[k] for k in ("facts", "paragraphs", "attention", "events")):
             lines += ["No admitted observations in this section; coverage is incomplete.", ""]
-    lines += ["## What to watch", ""]
-    for w in view["watches"]:
-        lines += [f"- **WATCH** · {esc(w['condition'])} Confirmation: {esc(w['confirmation'])} "
-                  f"Contradiction: {esc(w['contradiction'])} Horizon: {esc(w['horizon'])}. "
-                  f"{refs(w['evidence_ids'])}"]
-    lines += ["", "## Sources & coverage", ""]
+    lines += ["## Sources & coverage", ""]
     for limitation in view["coverage"]["limitations"]:
         lines += [f"- {esc(limitation)}"]
     for s in view["sources"]:

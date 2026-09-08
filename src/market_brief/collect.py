@@ -274,7 +274,8 @@ def alpaca_probe(now, symbols=("SPY", "QQQ"), key_id=None, secret_key=None, fetc
                         deadline, key_id, secret_key)
     bars = fetcher("/v2/stocks/bars", {
         "symbols": ",".join(symbols), "timeframe": "1Day", "start": (now - timedelta(days=120)).date().isoformat(),
-        "end": now.date().isoformat(), "limit": 200, "adjustment": "split", "feed": "iex", "sort": "asc",
+        "end": now.date().isoformat(), "limit": 10000 if len(symbols) > 2 else 200,
+        "adjustment": "split", "feed": "iex", "sort": "asc",
     }, deadline, key_id, secret_key)
     histories = _alpaca_history(bars, now, retrieved, "alpaca-daily")
     return dict(authenticated=True, provider="Alpaca Trading API", plan="Basic", feed="IEX",

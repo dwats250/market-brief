@@ -90,8 +90,8 @@ def derive(packet, universe, thresholds=None):
             packet["lookback"][sym] = dict(sessions=len(closes),
                 r20="available" if len(closes) >= 21 else "n/a",
                 sma50="available" if len(closes) >= 50 else "n/a")
-        except (ValueError, TypeError, KeyError):
-            packet["history_errors"].append(f"{sym}: invalid/incomplete historical context")
+        except (ValueError, TypeError, KeyError) as exc:
+            packet["history_errors"].append(f"{sym}: invalid/incomplete historical context ({exc})")
     def add(sym, suffix, metric, value, unit, baseline, h, inputs=None):
         row = dict(id=f"{sym}-{suffix}", topic=sym, metric=metric, value=round(value, 6),
                    unit=unit, baseline=baseline, observed_at=h["dates"][-1],

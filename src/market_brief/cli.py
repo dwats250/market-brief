@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
-from .collect import collect_live, cuttingboard_record
+from .collect import alpaca_probe, collect_live, cuttingboard_record
 from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_json, timestamp
 from .metrics import annotate_magnitude, derive
 from .render import render
@@ -226,7 +226,7 @@ def scheduled(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="One local pre-market briefing, grounded in evidence")
-    parser.add_argument("command", choices=["premarket", "schedule", "open", "publish"])
+    parser.add_argument("command", choices=["premarket", "schedule", "alpaca-probe", "open", "publish"])
     parser.add_argument("--replay", action="store_true", help="offline fictional evidence + narrative")
     parser.add_argument("--input", type=Path, help="sourced input JSON; SAMPLE for replay, LIVE otherwise")
     parser.add_argument("--synthesize", action="store_true", help="call Claude even for SAMPLE evidence")
@@ -234,6 +234,10 @@ def main(argv=None):
     parser.add_argument("--checkpoint", choices=CHECKPOINTS, default="PREMARKET")
     args = parser.parse_args(argv)
     try:
+        if args.command == "alpaca-probe":
+            result = alpaca_probe(datetime.now(timezone.utc))
+            print(json.dumps(result, sort_keys=True))
+            return 0
         if args.command == "open":
             return open_latest()
         if args.command == "publish":

@@ -1,13 +1,14 @@
 """GET-only official sources. No account discovery, arbitrary crawling, or trading routes."""
 
 import json
+import os
 import re
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
@@ -18,7 +19,14 @@ TREASURY = "https://home.treasury.gov/resource-center/data-chart-center/interest
 BLS = "https://www.bls.gov/schedule/news_release/bls.ics"
 FED = "https://www.federalreserve.gov/feeds/press_all.xml"
 CB = "https://dwats250.github.io/cuttingboard/contract.json"
-HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB)}
+ALPACA_DATA = "https://data.alpaca.markets"
+ALPACA_BARS = f"{ALPACA_DATA}/v2/stocks/bars"
+ALPACA_SNAPSHOTS = f"{ALPACA_DATA}/v2/stocks/snapshots"
+HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA)}
+ALPACA_UNIVERSE = (
+    "SPY", "QQQ", "XLK", "XLF", "XLE", "XLI", "XLY", "XLP", "XLV", "XLU",
+    "XLB", "XLRE", "XLC", "GLD", "GDX", "AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG",
+)
 
 
 class SourceError(ValueError):
@@ -58,10 +66,16 @@ def fetch(url, deadline):
     raise SourceError("unavailable")
 
 
-def source(ident, name, kind, url, now, status="AVAILABLE", reason=""):
+def source(ident, name, kind, url, now, status="AVAILABLE", reason="", **metadata):
     return dict(id=ident, name=name, kind=kind, url=url, retrieved_at=now.isoformat(),
                 status=status, reason=reason, llm_allowed=True, retention_allowed=True,
-                coverage_date=None)
+                coverage_date=None, **metadata)
+
+
+def alpaca_source(ident, name, now, feed, expected_freshness):
+    return source(ident, name, "price", ALPACA_DATA, now, expected_freshness=expected_freshness,
+                  provider="Alpaca Trading API", feed=feed, plan="Basic", data_delay="IEX real-time"
+                  if feed == "iex" else "SIP delayed")
 
 
 def xml_root(text):
@@ -176,6 +190,144 @@ def cuttingboard_record(raw, now, captured):
         return result
 
 
+def _alpaca_request(path, params, deadline, key_id, secret_key):
+    query = urlencode(params, doseq=True)
+    request = Request(f"{ALPACA_DATA}{path}?{query}", headers={
+        "APCA-API-KEY-ID": key_id,
+        "APCA-API-SECRET-KEY": secret_key,
+        "User-Agent": "MarketBrief/0.1 personal research",
+    })
+    opener = build_opener(SameHostRedirect())
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise SourceError("Alpaca collection deadline exceeded")
+    try:
+        with opener.open(request, timeout=min(20, remaining)) as response:
+            payload = response.read(2_000_001)
+            if len(payload) > 2_000_000:
+                raise SourceError("Alpaca response size limit exceeded")
+            return json.loads(payload.decode("utf-8"))
+    except HTTPError as exc:
+        raise SourceError(f"Alpaca HTTP {exc.code}") from None
+    except (URLError, TimeoutError, OSError, UnicodeError, json.JSONDecodeError):
+        raise SourceError("Alpaca network or response failure") from None
+
+
+def _bar_date(value):
+    return timestamp(value).date().isoformat()
+
+
+def _alpaca_history(payload, now, retrieved_at, source_id):
+    histories = []
+    for symbol, bars in payload.get("bars", {}).items():
+        rows = [(bar.get("t"), bar.get("c")) for bar in bars
+                if isinstance(bar, dict) and isinstance(bar.get("t"), str)
+                and finite_number(bar.get("c"))]
+        rows = [(date, close) for date, close in rows
+                if date[:10] < now.date().isoformat()]
+        if not rows:
+            continue
+        dates = [_bar_date(date) for date, _ in rows]
+        closes = [close for _, close in rows]
+        histories.append(dict(id=f"history-{symbol}", symbol=symbol, dates=dates, closes=closes,
+                              adjustment="split", session="regular_close", source_id=source_id,
+                              retrieved_at=retrieved_at.isoformat()))
+    return histories
+
+
+def finite_number(value):
+    return isinstance(value, (int, float)) and value == value and value not in (float("inf"), float("-inf"))
+
+
+def _alpaca_intraday(payload, histories, now, retrieved_at, source_id):
+    observations = []
+    by_symbol = {row["symbol"]: row for row in histories}
+    for symbol, snapshot in payload.items():
+        trade = snapshot.get("latestTrade") or {}
+        close = (snapshot.get("prevDailyBar") or {}).get("c")
+        observed_at = trade.get("t")
+        price = trade.get("p")
+        if symbol not in by_symbol or not finite_number(price) or not finite_number(close) or not observed_at:
+            continue
+        when = timestamp(observed_at)
+        if when.date() != now.date() or when > now:
+            continue
+        value = 100 * (price / close - 1) if close else None
+        if value is None or not finite_number(value):
+            continue
+        observations.append(dict(id=f"{symbol}-intraday", topic=symbol, metric="premarket return",
+            value=value, unit="%", baseline="Alpaca IEX latest trade versus previous regular close",
+            frequency="intraday", observed_at=observed_at, retrieved_at=retrieved_at.isoformat(),
+            source_id=source_id, status="AVAILABLE", reason="feed=IEX; latest trade timestamp"))
+    return observations
+
+
+def alpaca_probe(now, key_id=None, secret_key=None, fetcher=_alpaca_request):
+    key_id = key_id or os.environ.get("APCA_API_KEY_ID")
+    secret_key = secret_key or os.environ.get("APCA_API_SECRET_KEY")
+    if not key_id or not secret_key:
+        raise SourceError("Alpaca credentials are not configured")
+    deadline = time.monotonic() + 45
+    retrieved = datetime.now(timezone.utc)
+    snapshots = fetcher("/v2/stocks/snapshots", {"symbols": "SPY,QQQ", "feed": "iex"},
+                        deadline, key_id, secret_key)
+    bars = fetcher("/v2/stocks/bars", {
+        "symbols": "SPY,QQQ", "timeframe": "1Day", "start": (now - timedelta(days=120)).date().isoformat(),
+        "end": now.date().isoformat(), "limit": 200, "adjustment": "split", "feed": "iex", "sort": "asc",
+    }, deadline, key_id, secret_key)
+    histories = _alpaca_history(bars, now, retrieved, "alpaca-daily")
+    return dict(authenticated=True, provider="Alpaca Trading API", plan="Basic", feed="IEX",
+                snapshot_symbols=sorted(snapshots), historical_symbols=sorted(h["symbol"] for h in histories),
+                historical_sessions={h["symbol"]: len(h["dates"]) for h in histories},
+                intraday_symbols=sorted(r["topic"] for r in _alpaca_intraday(
+                    snapshots, histories, now, retrieved, "alpaca-iex")),
+                retrieved_at=retrieved.isoformat())
+
+
+def alpaca_collect(now, symbols=ALPACA_UNIVERSE, key_id=None, secret_key=None):
+    key_id = key_id or os.environ.get("APCA_API_KEY_ID")
+    secret_key = secret_key or os.environ.get("APCA_API_SECRET_KEY")
+    if not key_id or not secret_key:
+        return dict(sources=[source("alpaca-daily", "Alpaca daily bars", "price", ALPACA_DATA, now,
+            "UNAVAILABLE", "credentials are not configured", expected_freshness="PRIOR_CLOSE"),
+            source("alpaca-iex", "Alpaca IEX current data", "quote", ALPACA_DATA, now,
+            "UNAVAILABLE", "credentials are not configured", expected_freshness="LIVE")],
+            observations=[], history=[])
+    deadline = time.monotonic() + 90
+    retrieved = datetime.now(timezone.utc)
+    symbols = tuple(dict.fromkeys(symbols))
+    daily = source("alpaca-daily", "Alpaca historical daily bars · IEX feed", "price", ALPACA_DATA,
+                   now, expected_freshness="PRIOR_CLOSE", provider="Alpaca Trading API", feed="IEX",
+                   plan="Basic", data_delay="historical daily; feed entitlement returned by account")
+    intraday = source("alpaca-iex", "Alpaca current equity data · IEX feed", "quote", ALPACA_DATA,
+                      now, expected_freshness="LIVE", provider="Alpaca Trading API", feed="IEX",
+                      plan="Basic", data_delay="IEX real-time when timestamped current")
+    try:
+        bars = _alpaca_request("/v2/stocks/bars", {
+            "symbols": ",".join(symbols), "timeframe": "1Day",
+            "start": (now - timedelta(days=120)).date().isoformat(), "end": now.date().isoformat(),
+            "limit": 1000, "adjustment": "split", "feed": "iex", "sort": "asc",
+        }, deadline, key_id, secret_key)
+        histories = _alpaca_history(bars, now, retrieved, "alpaca-daily")
+        daily["coverage_date"] = max((h["dates"][-1] for h in histories), default=None)
+        daily["coverage_symbols"] = len(histories)
+    except SourceError as exc:
+        daily.update(status="UNAVAILABLE", reason=str(exc))
+        histories = []
+    try:
+        snapshots = _alpaca_request("/v2/stocks/snapshots", {
+            "symbols": ",".join(symbols), "feed": "iex",
+        }, deadline, key_id, secret_key)
+        observations = _alpaca_intraday(snapshots, histories, now, retrieved, "alpaca-iex")
+        intraday["coverage_symbols"] = len(observations)
+        if not observations:
+            intraday.update(status="UNAVAILABLE", reason="no current IEX trade timestamps returned")
+    except SourceError as exc:
+        intraday.update(status="UNAVAILABLE", reason=str(exc))
+        observations = []
+    return dict(sources=[daily, intraday], observations=observations, history=histories)
+
+
 def collect_live(now, include_cuttingboard=False, fetcher=fetch):
     raw = dict(mode="LIVE", sources=[], observations=[], history=[], events=[], context_items=[])
     deadline = time.monotonic() + 120
@@ -208,6 +360,10 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
     ):
         raw["sources"].append(source(ident, name, "calendar", url, now, "UNAVAILABLE",
                                     "not automated in this slice; sourced input supported"))
+    equity = alpaca_collect(now)
+    raw["sources"].extend(equity["sources"])
+    raw["observations"].extend(equity["observations"])
+    raw["history"].extend(equity["history"])
     raw["cuttingboard"] = dict(status="UNAVAILABLE", reason="optional source not requested")
     if include_cuttingboard:
         captured = datetime.now(timezone.utc)

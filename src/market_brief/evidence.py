@@ -127,7 +127,8 @@ def normalize_observation(raw, now):
 def source_record(raw):
     result = {key: raw.get(key) for key in (
         "id", "name", "kind", "url", "retrieved_at", "status", "reason",
-        "llm_allowed", "retention_allowed", "coverage_date", "expected_freshness")}
+        "llm_allowed", "retention_allowed", "coverage_date", "expected_freshness",
+        "provider", "feed", "plan", "data_delay", "coverage_symbols")}
     if not all(isinstance(result[k], str) and result[k] for k in
                ("id", "name", "kind", "url", "retrieved_at", "status")):
         raise ValueError("malformed source record")

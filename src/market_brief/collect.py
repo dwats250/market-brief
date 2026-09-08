@@ -281,6 +281,7 @@ def alpaca_probe(now, symbols=("SPY", "QQQ"), key_id=None, secret_key=None, fetc
     return dict(authenticated=True, provider="Alpaca Trading API", plan="Basic", feed="IEX",
                 snapshot_symbols=sorted(snapshots), historical_symbols=sorted(h["symbol"] for h in histories),
                 historical_sessions={h["symbol"]: len(h["dates"]) for h in histories},
+                historical_ranges={h["symbol"]: [h["dates"][0], h["dates"][-1]] for h in histories},
                 intraday_symbols=sorted(r["topic"] for r in _alpaca_intraday(
                     snapshots, histories, now, retrieved, "alpaca-iex")),
                 retrieved_at=retrieved.isoformat())

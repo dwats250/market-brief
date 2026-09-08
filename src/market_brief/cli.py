@@ -172,7 +172,7 @@ def run(args):
                          prompt_hash=digest(dict(system=system, user=prompt)),
                          evidence_hash=digest(packet))
         else:
-            print("Evidence collected; requesting one isolated Claude synthesis.", flush=True)
+            print("Evidence collected; requesting one isolated structured synthesis.", flush=True)
             narrative, model = synthesize(packet)
         markdown, page = render(packet, narrative)
         (folder / "brief.md").write_text(markdown)

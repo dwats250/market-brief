@@ -168,8 +168,9 @@ def _openrouter_diagnostic(response, message=None, content=None):
         "finish_reason": choice.get("finish_reason", "unknown") if isinstance(choice, dict) else "unknown",
         "content_type": type(content).__name__ if content is not None else "missing",
         "content_bytes": len(content.encode("utf-8")) if isinstance(content, str) else 0,
-        "usage_keys": sorted(response.get("usage", {})) if isinstance(response, dict)
-        and isinstance(response.get("usage"), dict) else [],
+        "usage": {key: value for key, value in (response.get("usage") or {}).items()
+                   if isinstance(value, (int, float))}
+        if isinstance(response, dict) and isinstance(response.get("usage"), dict) else {},
         "provider": response.get("provider", "unknown") if isinstance(response, dict) else "unknown",
         "metadata_keys": sorted(response.get("openrouter_metadata", {}))
         if isinstance(response, dict) and isinstance(response.get("openrouter_metadata"), dict) else [],
@@ -225,7 +226,12 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
             if attempt == 2:
                 raise ValueError("OpenRouter transient failure after bounded retries") from None
             sleeper(2 ** attempt)
-    narrative = validate_narrative(_openrouter_narrative(response), packet)
+    narrative = _openrouter_narrative(response)
+    try:
+        narrative = validate_narrative(narrative, packet)
+    except ValueError as exc:
+        diagnostic = _openrouter_diagnostic(response)
+        raise ValueError(f"{exc}; diagnostic={diagnostic}") from None
     usage = response.get("usage") if isinstance(response, dict) else None
     safe_usage = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
                   if isinstance(usage, dict) and key in usage}

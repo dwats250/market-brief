@@ -136,7 +136,14 @@ def _openrouter_post(payload, api_key, timeout=180):
     }, method="POST")
     try:
         with urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read(2_000_001).decode("utf-8"))
+            body = response.read(2_000_001)
+            result = json.loads(body.decode("utf-8"))
+            if isinstance(result, dict):
+                result["_market_brief_transport"] = {
+                    "http_status": response.status,
+                    "response_bytes": len(body),
+                }
+            return result
     except HTTPError as exc:
         if exc.code in TRANSIENT_OPENROUTER_STATUS:
             raise _TransientOpenRouterError(f"OpenRouter transient HTTP {exc.code}") from None
@@ -145,6 +152,28 @@ def _openrouter_post(payload, api_key, timeout=180):
         raise ValueError(f"OpenRouter HTTP {exc.code}") from None
     except (URLError, TimeoutError, OSError, UnicodeError, json.JSONDecodeError):
         raise _TransientOpenRouterError("OpenRouter network or response failure") from None
+
+
+def _openrouter_diagnostic(response, message=None, content=None):
+    choice = (response.get("choices") or [{}])[0] if isinstance(response, dict) else {}
+    message = message if isinstance(message, dict) else (choice.get("message") or {})
+    transport = response.get("_market_brief_transport", {}) if isinstance(response, dict) else {}
+    return canonical({
+        "http_status": transport.get("http_status", "unknown"),
+        "response_bytes": transport.get("response_bytes", "unknown"),
+        "response_keys": sorted(key for key in response if not key.startswith("_"))
+        if isinstance(response, dict) else [],
+        "choice_keys": sorted(choice) if isinstance(choice, dict) else [],
+        "message_keys": sorted(message) if isinstance(message, dict) else [],
+        "finish_reason": choice.get("finish_reason", "unknown") if isinstance(choice, dict) else "unknown",
+        "content_type": type(content).__name__ if content is not None else "missing",
+        "content_bytes": len(content.encode("utf-8")) if isinstance(content, str) else 0,
+        "usage_keys": sorted(response.get("usage", {})) if isinstance(response, dict)
+        and isinstance(response.get("usage"), dict) else [],
+        "provider": response.get("provider", "unknown") if isinstance(response, dict) else "unknown",
+        "metadata_keys": sorted(response.get("openrouter_metadata", {}))
+        if isinstance(response, dict) and isinstance(response.get("openrouter_metadata"), dict) else [],
+    })
 
 
 def _openrouter_narrative(response):
@@ -160,16 +189,18 @@ def _openrouter_narrative(response):
     if isinstance(content, list):
         content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
     if not isinstance(content, str) or not content:
-        keys = ",".join(sorted(str(key) for key in message)) or "none"
-        finish = choices[0].get("finish_reason", "unknown")
-        raise ValueError(f"OpenRouter returned no structured synthesis (message_keys={keys}; finish={finish})")
+        diagnostic = _openrouter_diagnostic(response, message)
+        raise ValueError("OpenRouter returned no structured synthesis; "
+                         f"diagnostic={diagnostic}")
     content = content.strip()
     if content.startswith("```") and content.endswith("```"):
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content, flags=re.I)
     try:
         return json.loads(content)
     except json.JSONDecodeError:
-        raise ValueError("OpenRouter returned malformed structured synthesis") from None
+        diagnostic = _openrouter_diagnostic(response, message, content)
+        raise ValueError("OpenRouter returned malformed structured synthesis; "
+                         f"diagnostic={diagnostic}") from None
 
 
 def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, sleeper=time.sleep):
@@ -181,6 +212,7 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     payload = dict(model=OPENROUTER_MODEL, temperature=0, max_tokens=6000,
                    messages=[{"role": "system", "content": system},
                              {"role": "user", "content": user}],
+                   plugins=[{"id": "response-healing"}],
                    response_format={"type": "json_schema", "json_schema": {
                        "name": "market_brief_narrative", "strict": True, "schema": NARRATIVE_SCHEMA}},
                    reasoning={"exclude": True})

@@ -1,0 +1,220 @@
+"""GET-only official sources. No account discovery, arbitrary crawling, or trading routes."""
+
+import json
+import re
+import time
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+from zoneinfo import ZoneInfo
+
+from .evidence import ET as EASTERN
+from .evidence import timestamp
+
+TREASURY = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml"
+BLS = "https://www.bls.gov/schedule/news_release/bls.ics"
+FED = "https://www.federalreserve.gov/feeds/press_all.xml"
+CB = "https://dwats250.github.io/cuttingboard/contract.json"
+HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB)}
+
+
+class SourceError(ValueError):
+    pass
+
+
+class SameHostRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        old, new = urlsplit(req.full_url), urlsplit(newurl)
+        if new.scheme != "https" or new.hostname != old.hostname:
+            raise SourceError("cross-host redirect rejected")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def fetch(url, deadline):
+    if urlsplit(url).hostname not in HOSTS or urlsplit(url).scheme != "https":
+        raise SourceError("source outside allowlist")
+    opener = build_opener(SameHostRedirect())
+    for attempt in range(2):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise SourceError("collection deadline exceeded")
+        try:
+            request = Request(url, headers={"User-Agent": "MarketBrief/0.1 personal research"})
+            with opener.open(request, timeout=min(15, remaining)) as response:
+                data = response.read(1_000_001)
+                if len(data) > 1_000_000:
+                    raise SourceError("response size limit exceeded")
+                return data.decode("utf-8-sig")
+        except HTTPError as exc:
+            if attempt == 0 and exc.code in {500, 502, 503, 504}:
+                continue
+            raise SourceError(f"HTTP {exc.code}") from None
+        except (URLError, TimeoutError, OSError):
+            if attempt:
+                raise SourceError("network unavailable or timeout") from None
+    raise SourceError("unavailable")
+
+
+def source(ident, name, kind, url, now, status="AVAILABLE", reason=""):
+    return dict(id=ident, name=name, kind=kind, url=url, retrieved_at=now.isoformat(),
+                status=status, reason=reason, llm_allowed=True, retention_allowed=True,
+                coverage_date=None)
+
+
+def xml_root(text):
+    if "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper():
+        raise SourceError("XML declarations rejected")
+    return ET.fromstring(text)
+
+
+def treasury_rows(text, now, retrieved):
+    rows = []
+    for entry in xml_root(text).findall("{*}entry"):
+        fields = {e.tag.split("}")[-1]: e.text for e in entry.iter()}
+        day = (fields.get("NEW_DATE") or "")[:10]
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) and day < now.astimezone(EASTERN).date().isoformat():
+            rows.append((day, fields))
+    if not rows:
+        raise SourceError("no prior daily yield observation")
+    rows.sort(key=lambda x: x[0])
+    day, fields = rows[-1]
+    result = []
+    for term in (2, 5, 10):
+        raw = fields.get(f"BC_{term}YEAR")
+        value = float(raw) if raw else None
+        result.append(dict(id=f"treasury-{term}y", topic=f"US {term}Y", metric="daily par yield",
+            value=value, unit="% yield", baseline="daily Treasury par curve, not an intraday quote",
+            frequency="daily", observed_at=day, retrieved_at=retrieved.isoformat(),
+            source_id="treasury", status="BACKGROUND", reason=""))
+        if len(rows) >= 2 and raw and rows[-2][1].get(f"BC_{term}YEAR"):
+            prior = float(rows[-2][1][f"BC_{term}YEAR"])
+            result.append(dict(id=f"treasury-{term}y-change", topic=f"US {term}Y",
+                metric="daily yield change", value=(value-prior)*100, unit="bp",
+                baseline=f"daily observation {rows[-2][0]}", frequency="daily", observed_at=day,
+                retrieved_at=retrieved.isoformat(), source_id="treasury", status="BACKGROUND",
+                reason=""))
+    return result
+
+
+def calendar_events(text, now, retrieved):
+    if "BEGIN:VCALENDAR" not in text or "END:VCALENDAR" not in text:
+        raise SourceError("malformed calendar")
+    text = re.sub(r"\r?\n[ \t]", "", text)
+    events, dates = [], []
+    for block in text.split("BEGIN:VEVENT")[1:]:
+        if "END:VEVENT" not in block or "RRULE:" in block:
+            raise SourceError("incomplete or recurring calendar unsupported")
+        fields = dict(line.split(":", 1) for line in block.split("END:VEVENT")[0].splitlines()
+                      if ":" in line)
+        start_key = next((k for k in fields if k.startswith("DTSTART")), None)
+        if not start_key or "SUMMARY" not in fields:
+            raise SourceError("calendar event lacks time/title")
+        value = fields[start_key]
+        zone = timezone.utc if value.endswith("Z") else ZoneInfo(
+            start_key.split("TZID=")[-1] if "TZID=" in start_key else "America/New_York")
+        when = datetime.strptime(value.rstrip("Z"), "%Y%m%dT%H%M%S").replace(tzinfo=zone)
+        dates.append(when.astimezone(EASTERN).date())
+        if dates[-1] != now.astimezone(EASTERN).date():
+            continue
+        events.append(dict(id=f"bls-event-{len(events)}", title=fields["SUMMARY"].replace("\\,", ","),
+            source_id="bls", published_at=None, checked_at=retrieved.isoformat(),
+            scheduled_at=when.astimezone(timezone.utc).isoformat(), status="SCHEDULED"))
+    today = now.astimezone(EASTERN).date()
+    if not dates or not min(dates) <= today <= max(dates):
+        raise SourceError("calendar does not establish coverage for target date")
+    return events
+
+
+def fed_context(text, now):
+    root = xml_root(text)
+    if root.tag != "rss" or root.find("channel") is None:
+        raise SourceError("malformed RSS")
+    result = []
+    for item in root.findall("./channel/item"):
+        title, published = item.findtext("title"), item.findtext("pubDate")
+        if not title or not published:
+            raise SourceError("RSS item lacks title/publication time")
+        when = parsedate_to_datetime(published)
+        if when.tzinfo is None:
+            raise SourceError("RSS publication lacks timezone")
+        if now - timedelta(days=2) <= when <= now:
+            result.append(dict(id=f"fed-item-{len(result)}", title=title[:400], source_id="fed",
+                               published_at=when.isoformat(), status="AVAILABLE"))
+    return result[:6]
+
+
+def cuttingboard_record(raw, now, captured):
+    result = dict(status="INVALID", reason="malformed or unsupported public contract",
+                  source=CB, captured_at=captured.isoformat(), adapter_version="v0")
+    try:
+        if raw.get("schema_version") != "v2":
+            return result
+        generated = timestamp(raw["generated_at"])
+        if generated > now:
+            return result
+        if (now-generated).total_seconds() > 5400:
+            return dict(result, status="STALE", reason="source generation older than ninety minutes")
+        if raw.get("session_date") != now.astimezone(EASTERN).date().isoformat():
+            return dict(result, status="STALE", reason="source belongs to another session")
+        state = raw.get("system_state")
+        if not isinstance(state, dict):
+            return result
+        values = {"outcome": raw.get("outcome"), "permission": state.get("permission")}
+        if any(v is not None and (not isinstance(v, str) or len(v) > 80) for v in values.values()):
+            return result
+        if state.get("outcome") is not None and state["outcome"] != values["outcome"]:
+            return result
+        generation = raw.get("generation_id")
+        if generation is not None and not isinstance(generation, str):
+            return result
+        return dict(result, status="AVAILABLE", reason="", schema_version="v2",
+                    generated_at=generated.isoformat(), generation_id=generation, **values)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return result
+
+
+def collect_live(now, include_cuttingboard=False, fetcher=fetch):
+    raw = dict(mode="LIVE", sources=[], observations=[], history=[], events=[], context_items=[])
+    deadline = time.monotonic() + 120
+    jobs = [
+        ("treasury", "US Treasury", "economic_series", TREASURY,
+         f"{TREASURY}?data=daily_treasury_yield_curve&field_tdr_date_value={now.year}"),
+        ("bls", "BLS calendar", "calendar", BLS, BLS),
+        ("fed", "Federal Reserve releases", "news", FED, FED),
+    ]
+    for ident, name, kind, url, request_url in jobs:
+        record = source(ident, name, kind, url, now)
+        try:
+            body = fetcher(request_url, deadline)
+            retrieved = datetime.now(timezone.utc)
+            record["retrieved_at"] = retrieved.isoformat()
+            if ident == "treasury":
+                raw["observations"].extend(treasury_rows(body, now, retrieved))
+            elif ident == "bls":
+                raw["events"].extend(calendar_events(body, now, retrieved))
+                record["coverage_date"] = now.astimezone(EASTERN).date().isoformat()
+            else:
+                raw["context_items"].extend(fed_context(body, now))
+        except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:
+            reason = str(exc) if isinstance(exc, SourceError) else f"malformed {type(exc).__name__}"
+            record.update(status="UNAVAILABLE", reason=reason)
+        raw["sources"].append(record)
+    for ident, name, url in (
+        ("bea", "BEA calendar", "https://www.bea.gov/news/schedule"),
+        ("fed-calendar", "Fed calendar", "https://www.federalreserve.gov/newsevents/calendar.htm"),
+    ):
+        raw["sources"].append(source(ident, name, "calendar", url, now, "UNAVAILABLE",
+                                    "not automated in this slice; sourced input supported"))
+    raw["cuttingboard"] = dict(status="UNAVAILABLE", reason="optional source not requested")
+    if include_cuttingboard:
+        captured = datetime.now(timezone.utc)
+        try:
+            payload = json.loads(fetcher(CB, deadline))
+            raw["cuttingboard"] = cuttingboard_record(payload, now, captured)
+        except (ValueError, SourceError):
+            raw["cuttingboard"] = dict(status="UNAVAILABLE", reason="public GET failed",
+                                       source=CB, captured_at=captured.isoformat(), adapter_version="v0")
+    return raw

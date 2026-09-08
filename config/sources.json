@@ -1,0 +1,6 @@
+{
+  "version": "v0",
+  "wired": ["Treasury daily yield XML", "BLS release-calendar ICS", "Federal Reserve press-release RSS", "sourced local input", "optional published Cuttingboard contract"],
+  "deferred": ["authenticated equities/ETF API", "BEA calendar", "Fed calendar", "live yields", "DXY", "USDJPY", "crude futures", "gold/silver futures", "VIX", "comprehensive breadth", "automated earnings", "general news search"],
+  "policy": "Only normalized records with explicit retention permission persist; only llm_allowed facts enter synthesis. Public government factual extracts are admitted. No account or credential discovery."
+}

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>{{ banner.title }} · Market Brief</title>
+<style>
+:root{color-scheme:light;--paper:#f6f3ec;--ink:#242e2a;--muted:#627168;--teal:#205e52;--line:#d8ddd3;--amber:#84551a}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.65 system-ui,sans-serif}
+main{max-width:1000px;margin:auto;padding:44px 54px 60px}a{color:var(--teal);text-underline-offset:3px;overflow-wrap:anywhere}
+.masthead{display:flex;justify-content:space-between;border-top:4px solid var(--teal);padding-top:14px;font-size:12px;letter-spacing:.13em;text-transform:uppercase;color:var(--teal)}
+.edition{font-size:12px;color:var(--muted);margin-top:12px;overflow-wrap:anywhere}h1{font:normal 48px/1.12 Georgia,serif;letter-spacing:-.025em;max-width:760px;margin:24px 0}
+h2{font:normal 28px/1.2 Georgia,serif;margin:0 0 18px}h3{font-size:16px;margin-bottom:6px}p{margin:12px 0}.label{font-size:10px;font-weight:750;letter-spacing:.13em;text-transform:uppercase;color:var(--teal)}
+.state{display:flex;gap:12px;align-items:baseline;margin:20px 0 8px}.state strong{font-size:21px;letter-spacing:.06em}.lead{font-size:18px;line-height:1.7}
+.chips{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:14px 0;margin-top:20px;gap:16px}
+.chip strong{display:block;font-size:23px;font-variant-numeric:tabular-nums}.chip small{display:block;font-size:10px;color:var(--muted)}
+.notice{font-size:13px;color:var(--amber);padding:12px 16px;border-left:3px solid #bc904e;background:#eee6d7;margin:18px 0}.sample{font-weight:650}.coverage{font-size:13px;color:var(--muted);margin:18px 0 26px}
+section{border-top:1px solid var(--line);padding-top:26px;margin-top:28px}table{width:100%;border-collapse:collapse;font-size:14px;table-layout:fixed}th{text-align:left;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding:9px 8px;border-bottom:1px solid var(--line)}td{padding:11px 8px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}th:first-child{width:43%}th:nth-child(2){width:25%}td.number{font-variant-numeric:tabular-nums;font-weight:650}td small{display:block;font-size:11px;color:var(--muted)}
+.cite{font-size:10px;margin-left:5px;white-space:normal}.fine{font-size:13px;color:var(--muted)}.watch{border-left:2px solid var(--teal);padding-left:20px;margin:23px 0}.watch p{margin:5px 0}.watch .condition{font-weight:650}details{border-top:1px solid var(--line);padding:15px 0;font-size:13px}summary{cursor:pointer;font-weight:650}.sources{padding-left:20px}.sources li{margin:12px 0}.ledger{padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}footer{font-size:11px;color:var(--muted);margin-top:32px}
+@media(max-width:600px){main{padding:24px 20px 36px}h1{font-size:35px}h2{font-size:25px}.masthead{font-size:10px}.chips{grid-template-columns:repeat(2,1fr);gap:13px}.lead{font-size:16px}table{font-size:12px}td,th{padding:8px 4px}.chip strong{font-size:21px}th:first-child{width:38%}th:nth-child(2){width:27%}}
+@media print{body{background:white}main{max-width:none;padding:0}a{color:inherit}details{display:block}section,.watch,tr{break-inside:avoid}h1{font-size:34px}}
+</style></head><body><main>
+{% macro citations(ids) -%}{% for id in ids %}<a class="cite" href="#evidence-{{ id }}">[{{ id }}]</a>{% endfor %}{%- endmacro %}
+{% macro paragraph(p) -%}<p><span class="label">{{ p.class }}</span> {{ p.text }} {{ citations(p.evidence_ids) }}</p>{% if p.uncertainty %}<p class="fine">Uncertainty: {{ p.uncertainty }}</p>{% endif %}{% if p.alternative %}<p class="fine">Alternative: {{ p.alternative }}</p>{% endif %}{%- endmacro %}
+<div class="masthead"><b>Market Brief</b><span>The pre-market edition</span></div>
+{% if mode == 'SAMPLE' %}<div class="notice sample">FICTIONAL SAMPLE / REPLAY · Not current market facts. No live model required.</div>{% endif %}
+<div class="edition">{{ session.date }} · Evidence cutoff {{ target }}</div>
+{% if mode == 'LIVE' and not session.meaningful_premarket %}<div class="notice">OUTSIDE PRE-MARKET WINDOW · Collection smoke test, not morning acceptance.</div>{% endif %}
+<h1>{{ banner.title }}</h1><div class="state"><span class="label">Interpretation</span><strong>{{ banner.label }}</strong></div>
+<p class="fine">{{ banner.limitation }} {{ citations(banner.evidence_ids) }}</p>
+<div class="chips">{% for chip in chips %}<div class="chip"><span class="label">Observed · {{ chip.topic }}</span><strong>{{ chip.display }}</strong><small>{{ chip.metric }} · {{ chip.observed_at }} · {{ chip.status }}</small></div>{% endfor %}</div>
+<p class="coverage">Coverage: <b>{{ coverage.status }}</b> · {{ coverage.horizon }}</p>
+<div class="lead">{% for p in summary %}{{ paragraph(p) }}{% endfor %}</div>
+{% for section in sections %}<section><h2>{{ section.title }}</h2>
+{% if section.facts %}<div class="label">Observed</div><table><thead><tr><th>Measure</th><th>Observation</th><th>Horizon / source</th></tr></thead><tbody>
+{% for row in section.facts %}<tr><td>{{ row.topic }}<small>{{ row.metric }}</small></td><td class="number">{{ row.display }}</td><td><small>{{ row.observed_at }} · {{ row.status }}</small>{{ citations([row.id]) }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+{% for p in section.paragraphs %}{{ paragraph(p) }}{% endfor %}
+{% for a in section.attention %}<h3><span class="label">Observed</span> · {{ a.symbol }}</h3><p>{{ a.reason }} {{ citations(a.evidence_ids) }}</p><p class="fine">{{ a.date }} · {{ a.horizon }} horizon · Attention, not qualification.</p>{% endfor %}
+{% for event in section.events %}<p><span class="label">Observed</span> {{ event.title }} — {{ event.scheduled_at }} {{ citations([event.id]) }}</p>{% endfor %}
+{% if section.key == 'cuttingboard' %}
+{% if cuttingboard.status == 'AVAILABLE' %}<p><span class="label">Source quotation</span> Outcome: <b>{{ cuttingboard.outcome or 'not exposed' }}</b> · permission: <b>{{ cuttingboard.permission or 'not exposed' }}</b>.</p><p class="fine">Generated {{ cuttingboard.generated_at }} · captured {{ cuttingboard.captured_at }} · {{ cuttingboard.schema_version }}. No override or recommendation.</p>
+{% else %}<p class="fine">{{ cuttingboard.status }} · {{ cuttingboard.reason }}</p>{% endif %}
+{% elif not section.facts and not section.paragraphs and not section.attention and not section.events %}<p class="fine">No admitted observations in this section; coverage is incomplete.</p>{% endif %}
+</section>{% endfor %}
+<section><h2>What to watch</h2>{% for w in watches %}<div class="watch"><span class="label">Watch · {{ w.horizon }}</span><p class="condition">{{ w.condition }}</p><p>Confirmation: {{ w.confirmation }}</p><p class="fine">Contradiction: {{ w.contradiction }} {{ citations(w.evidence_ids) }}</p></div>{% endfor %}</section>
+<section><h2>Sources & coverage</h2><details><summary>Coverage limitations</summary><ul>{% for item in coverage.limitations %}<li>{{ item }}</li>{% endfor %}</ul></details>
+<details><summary>Source ledger · {{ sources|length }} checked or declared sources</summary><ul class="sources">{% for s in sources %}<li><a href="{{ s.url }}">{{ s.name }}</a> · {{ s.kind }} · {{ s.status }}<br>Retrieved {{ s.retrieved_at }}{% if s.reason %} · {{ s.reason }}{% endif %}</li>{% endfor %}</ul></details>
+<details><summary>Evidence ledger · exact values and baselines</summary>{% for row in evidence %}<div class="ledger" id="evidence-{{ row.id }}"><b>{{ row.id }}</b> · {{ row.topic or row.title }} · {{ row.display }}<br>{{ row.baseline or 'Published / scheduled item' }}<br>Observed / published {{ row.observed_at or row.published_at or 'not exposed' }} · source {{ row.source_id }}</div>{% endfor %}</details></section>
+<footer>Market Brief · Model-assisted interpretation; factual rows are deterministic. Personal local edition. {% if mode == 'SAMPLE' %}Entire report is a fictional sample.{% endif %}</footer>
+</main></body></html>

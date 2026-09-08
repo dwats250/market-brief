@@ -1,0 +1,229 @@
+"""Explicit records, exchange clocks, and fail-closed factual normalization."""
+
+import copy
+import hashlib
+import json
+import math
+import re
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
+
+import exchange_calendars as xcals
+
+ROOT = Path(__file__).resolve().parents[2]
+ET = ZoneInfo("America/New_York")
+USABLE = {"AVAILABLE", "DELAYED", "BACKGROUND"}
+SCHEMA = "market-brief.evidence.v0"
+
+
+def timestamp(value):
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        raise ValueError("timezone required")
+    return dt.astimezone(timezone.utc)
+
+
+def finite(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False)
+
+
+def digest(value):
+    return hashlib.sha256(canonical(value).encode()).hexdigest()
+
+
+def read_json(path):
+    if Path(path).stat().st_size > 2_000_000:
+        raise ValueError("input exceeds two megabytes")
+    return json.loads(Path(path).read_text(), parse_constant=lambda _: None)
+
+
+def safe_url(value):
+    parsed = urlsplit(value)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username
+            or parsed.password or parsed.query or parsed.fragment):
+        raise ValueError("source URL must be plain HTTPS without credentials/query/fragment")
+    return value
+
+
+def session_info(now):
+    local = now.astimezone(ET)
+    cal = xcals.get_calendar("XNYS")
+    day = local.date().isoformat()
+    trading = cal.is_session(day)
+    session = cal.date_to_session(day, direction="next")
+    previous = cal.previous_session(session)
+    if trading and now >= cal.session_close(session).to_pydatetime():
+        previous = session
+    opening = cal.session_open(session).to_pydatetime()
+    closing = cal.session_close(session).to_pydatetime()
+    return dict(date=day, trading_day=bool(trading),
+                previous_session=previous.date().isoformat(),
+                open=opening.isoformat(), close=closing.isoformat(),
+                meaningful_premarket=bool(trading and local.hour >= 7 and now < opening))
+
+
+def normalize_observation(raw, now):
+    keys = ("id", "topic", "metric", "value", "unit", "baseline", "frequency",
+            "observed_at", "retrieved_at", "source_id", "status", "reason")
+    row = {key: raw.get(key) for key in keys}
+    row["reason"] = row["reason"] or ""
+
+    def reject(status, reason):
+        row.update(status=status, reason=reason, value=None)
+        return row
+
+    if not all(isinstance(row[k], str) and row[k] for k in
+               ("id", "topic", "metric", "unit", "baseline", "source_id")):
+        return reject("INVALID", "missing identity, unit, or baseline")
+    if row["value"] is None:
+        return reject("UNAVAILABLE", row["reason"] or "no observation supplied")
+    if not finite(row["value"]):
+        return reject("INVALID", "nonfinite or nonnumeric value")
+    if not row["observed_at"]:
+        return reject("UNKNOWN", "observation time absent")
+    try:
+        retrieved = timestamp(row["retrieved_at"])
+        if retrieved > now + timedelta(minutes=5):
+            return reject("INVALID", "retrieval time after collection window")
+        if row["frequency"] == "daily":
+            observed = date.fromisoformat(row["observed_at"])
+            if observed > min(now.astimezone(ET).date(), retrieved.astimezone(ET).date()):
+                return reject("INVALID", "future daily observation")
+            if (now.astimezone(ET).date() - observed).days > 7:
+                return reject("STALE", "daily background older than seven calendar days")
+            row["status"] = "BACKGROUND"
+        elif row["frequency"] == "intraday":
+            observed = timestamp(row["observed_at"])
+            if observed > now or observed > retrieved:
+                return reject("INVALID", "future observation")
+            age = (now - observed).total_seconds()
+            if age > 1200:
+                return reject("STALE", "intraday observation older than twenty minutes")
+            row["status"] = "DELAYED" if age > 60 else "AVAILABLE"
+        else:
+            return reject("INVALID", "unsupported frequency")
+    except (TypeError, ValueError):
+        return reject("INVALID", "malformed observation/retrieval clock")
+    return row
+
+
+def source_record(raw):
+    result = {key: raw.get(key) for key in (
+        "id", "name", "kind", "url", "retrieved_at", "status", "reason",
+        "llm_allowed", "retention_allowed", "coverage_date")}
+    if not all(isinstance(result[k], str) and result[k] for k in
+               ("id", "name", "kind", "url", "retrieved_at", "status")):
+        raise ValueError("malformed source record")
+    safe_url(result["url"])
+    timestamp(result["retrieved_at"])
+    return result
+
+
+def normalize_packet(raw, now, mode):
+    if raw.get("mode") != mode or mode not in {"LIVE", "SAMPLE"}:
+        raise ValueError("sample/live input mode mismatch")
+    sources = [source_record(s) for s in raw.get("sources", [])]
+    by_source = {s["id"]: s for s in sources}
+    if len(by_source) != len(sources):
+        raise ValueError("duplicate source ID")
+    packet = dict(schema_version=SCHEMA, run=dict(mode=mode, checkpoint="premarket",
+                  target_time=now.isoformat(), session=session_info(now)), sources=sources,
+                  observations=[], history=[], derived=[], events=[], context_items=[],
+                  attention=[], previous=None, cuttingboard=raw.get("cuttingboard", {
+                      "status": "UNAVAILABLE", "reason": "not requested"}))
+    for raw_row in raw.get("observations", []):
+        row = normalize_observation(raw_row, now)
+        source = by_source.get(row["source_id"])
+        if not source:
+            raise ValueError("observation references unknown source")
+        if source["retention_allowed"] is not True:
+            row.update(value=None, status="UNAVAILABLE", reason="retention not admitted")
+        packet["observations"].append(row)
+    for h in raw.get("history", []):
+        source = by_source.get(h.get("source_id"))
+        if not source:
+            raise ValueError("history references unknown source")
+        if source["retention_allowed"] is not True:
+            continue
+        packet["history"].append({key: h.get(key) for key in (
+            "id", "symbol", "dates", "closes", "adjustment", "session",
+            "source_id", "retrieved_at")})
+    for field in ("events", "context_items"):
+        for item in raw.get(field, []):
+            source = by_source.get(item.get("source_id"))
+            if not source:
+                raise ValueError("item references unknown source")
+            if source["retention_allowed"] is not True:
+                continue
+            required = ("id", "title", "source_id")
+            if not all(isinstance(item.get(k), str) and item[k] for k in required):
+                raise ValueError("malformed event/context item")
+            if item.get("published_at") and timestamp(item["published_at"]) > now:
+                continue
+            record = {k: item.get(k) for k in (*required, "published_at", "checked_at",
+                                               "scheduled_at", "status")}
+            if field == "events":
+                when = timestamp(record["scheduled_at"])
+                checked = timestamp(record["checked_at"] or source["retrieved_at"])
+                if not now - timedelta(hours=24) <= checked <= now + timedelta(minutes=5):
+                    continue
+                if when.astimezone(ET).date() != now.astimezone(ET).date():
+                    continue
+            elif now - timestamp(item["published_at"]) > timedelta(days=2):
+                continue
+            packet[field].append(record)
+    identities = [row.get("id") for key in ("observations", "history", "events", "context_items")
+                  for row in packet[key]]
+    if (len(set(identities)) != len(identities)
+            or any(not isinstance(i, str) or not re.fullmatch(r"[a-zA-Z][\w-]{0,79}", i)
+                   for i in identities)):
+        raise ValueError("invalid or duplicate evidence ID")
+    return packet
+
+
+def finalize_coverage(packet):
+    anchors = {r["topic"] for r in packet["derived"] if r["metric"] == "daily return"}
+    calendars = [s for s in packet["sources"] if s["kind"] == "calendar"]
+    missing = [f"{s} prior-close history unavailable" for s in ("SPY", "QQQ") if s not in anchors]
+    missing += [f"{s['name']}: {s['reason'] or s['status']}" for s in packet["sources"]
+                if s["status"] != "AVAILABLE"]
+    missing += [f"{r['topic']}: {r['reason']}" for r in packet["observations"]
+                if r["status"] not in USABLE]
+    missing += packet.get("history_errors", [])
+    has_current = any(r["frequency"] == "intraday" and r["status"] in USABLE
+                      for r in packet["observations"])
+    calendar_complete = {s["id"] for s in calendars if s["status"] == "AVAILABLE"
+                         and s["coverage_date"] == packet["run"]["session"]["date"]}
+    ready = {"SPY", "QQQ"} <= anchors and {"bls", "bea", "fed-calendar"} <= calendar_complete
+    usable = bool(packet["derived"] or packet["events"] or packet["context_items"]
+                  or any(r["status"] in USABLE for r in packet["observations"]))
+    packet["coverage"] = dict(status="READY" if ready else "PARTIAL" if usable else "INSUFFICIENT",
+        current_premarket=has_current, limitations=list(dict.fromkeys(missing)),
+        horizon=("Timestamped intraday observations available; see individual clocks."
+                 if has_current else "Previous-close / dated context only; current pre-market direction unavailable."))
+    return packet
+
+
+def evidence_catalog(packet):
+    return {r["id"]: r for key in ("observations", "derived", "events", "context_items")
+            for r in packet[key] if r.get("status", "AVAILABLE") in USABLE | {"SCHEDULED"}}
+
+
+def model_packet(packet):
+    result = copy.deepcopy(packet)
+    allowed = {s["id"] for s in packet["sources"] if s["llm_allowed"] is True}
+    result.pop("history", None)
+    for field in ("observations", "derived", "events", "context_items"):
+        result[field] = [r for r in result[field] if r.get("source_id") in allowed]
+    permitted_ids = set(evidence_catalog(result))
+    result["attention"] = [a for a in result["attention"]
+                           if set(a["evidence_ids"]) <= permitted_ids]
+    result["sources"] = [s for s in result["sources"] if s["id"] in allowed]
+    result["cuttingboard"] = {"status": "QUOTED_SEPARATELY_BY_RENDERER"}
+    return result

@@ -1,0 +1,14 @@
+{
+  "mirror_version": "v0",
+  "source_revision": "62e2f2dca6505e17de8ff3d3c3afbb8536585d6b",
+  "source_path": "cuttingboard/universe_registry.py",
+  "groups": {
+    "MARKET": ["SPY", "QQQ"],
+    "SECTORS": ["XLK", "XLF", "XLE", "XLI", "XLY", "XLP", "XLV", "XLU", "XLB", "XLRE", "XLC"],
+    "METALS": ["GLD", "SLV", "GDX"],
+    "MEGACAPS": ["AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG"]
+  },
+  "personal": ["SPY", "QQQ", "XLE", "GLD", "SLV", "GDX", "NVDA", "META", "AMZN", "GOOG", "UCO"],
+  "disabled": ["TSLA"],
+  "benchmarks": {"SPY": null, "QQQ": "SPY", "XLK": "SPY", "XLF": "SPY", "XLE": "SPY", "XLI": "SPY", "XLY": "SPY", "XLP": "SPY", "XLV": "SPY", "XLU": "SPY", "XLB": "SPY", "XLRE": "SPY", "XLC": "SPY", "GLD": null, "SLV": "GLD", "GDX": "GLD", "AAPL": "QQQ", "MSFT": "QQQ", "NVDA": "QQQ", "META": "QQQ", "AMZN": "QQQ", "GOOG": "QQQ"}
+}

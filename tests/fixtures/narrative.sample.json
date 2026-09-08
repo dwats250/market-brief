@@ -1,0 +1,111 @@
+{
+  "schema_version": "market-brief.narrative.v0",
+  "mode": "SAMPLE",
+  "banner": {
+    "title": "Growth has the lead. Confirmation is still missing.",
+    "label": "MIXED",
+    "class": "INTERPRETATION",
+    "evidence_ids": [
+      "QQQ-daily",
+      "SPY-daily",
+      "treasury-2y-change"
+    ],
+    "limitation": "A fictional prior-close map, with no current premarket prices or broad-market breadth."
+  },
+  "summary": [
+    {
+      "text": "In this fictional sample, growth has an edge over the broad equity benchmark. QQQ finished ahead of SPY, while the selected mega-cap's longer-window advance was stronger still. That is a useful place to start an opening watch, but a small basket cannot establish broad participation.",
+      "class": "INTERPRETATION",
+      "evidence_ids": [
+        "QQQ-daily",
+        "SPY-daily",
+        "NVDA-spread20"
+      ],
+      "uncertainty": "",
+      "alternative": ""
+    },
+    {
+      "text": "The useful tension is beneath the headline: front-end yields eased while the longer end rose, and the gold fund advanced while miners slipped. Those relationships argue for checking confirmation rather than compressing everything into a single risk-on story.",
+      "class": "INTERPRETATION",
+      "evidence_ids": [
+        "treasury-2y-change",
+        "treasury-10y-change",
+        "GLD-daily",
+        "GDX-daily"
+      ],
+      "uncertainty": "",
+      "alternative": ""
+    }
+  ],
+  "sections": {
+    "macro": [
+      {
+        "text": "The front-end move was {{treasury-2y-change}}, against {{treasury-10y-change}} at the longer end. Calling that simply lower rates would hide the curve's divergence. The gold fund and miners also moved in opposite directions.",
+        "class": "INTERPRETATION",
+        "evidence_ids": [
+          "treasury-2y-change",
+          "treasury-10y-change",
+          "GLD-daily",
+          "GDX-daily"
+        ],
+        "uncertainty": "These are dated daily observations, not evidence of a premarket reaction.",
+        "alternative": "Different duration exposure and company-specific effects may explain some of the contrast."
+      }
+    ],
+    "equities": [
+      {
+        "text": "QQQ's prior-session return was {{QQQ-daily}}, compared with {{SPY-daily}} for SPY. The sample suggests a growth preference, but neither exchange breadth nor index weights are available. Relative returns do not establish actual index contribution.",
+        "class": "INTERPRETATION",
+        "evidence_ids": [
+          "QQQ-daily",
+          "SPY-daily"
+        ],
+        "uncertainty": "",
+        "alternative": ""
+      }
+    ],
+    "attention": [],
+    "cuttingboard": [],
+    "events": [
+      {
+        "text": "The fictional survey is a scheduled observation point. Its result and survey consensus are absent, so there is no basis to characterize a surprise or to assign it a price effect.",
+        "class": "INTERPRETATION",
+        "evidence_ids": [
+          "sample-event"
+        ],
+        "uncertainty": "",
+        "alternative": ""
+      }
+    ]
+  },
+  "attention_ids": [
+    "attention-NVDA-spread",
+    "attention-XLI-cross"
+  ],
+  "watches": [
+    {
+      "class": "WATCH",
+      "condition": "If growth retains its lead after regular trading begins, check whether participation extends beyond the selected mega-cap.",
+      "confirmation": "More independently observed sectors improve on synchronized comparisons.",
+      "contradiction": "The benchmark lead persists while participation narrows.",
+      "horizon": "The sample session's opening hour",
+      "evidence_ids": [
+        "QQQ-daily",
+        "SPY-daily",
+        "NVDA-spread20"
+      ]
+    },
+    {
+      "class": "WATCH",
+      "condition": "Revisit the gold fund and miners on the same return horizon.",
+      "confirmation": "Miners join the metal fund's strength.",
+      "contradiction": "Miner weakness persists despite firmness in the gold fund.",
+      "horizon": "A subsequent regular-session observation",
+      "evidence_ids": [
+        "GLD-daily",
+        "GDX-daily"
+      ]
+    }
+  ],
+  "changes": []
+}

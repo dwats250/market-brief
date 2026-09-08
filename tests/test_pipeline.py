@@ -228,3 +228,13 @@ def test_open_command_reports_missing_latest(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "ROOT", tmp_path)
     assert cli.main(["open"]) == 2
     assert "No latest brief exists" in capsys.readouterr().err
+
+
+def test_publish_copies_only_human_facing_latest(tmp_path):
+    latest = tmp_path / "output/latest.html"
+    latest.parent.mkdir()
+    latest.write_text("<html>shareable brief</html>")
+    result = cli.publish_latest(tmp_path)
+    assert result == tmp_path / "publish/index.html"
+    assert result.read_text() == latest.read_text()
+    assert [path.name for path in result.parent.iterdir()] == ["index.html"]

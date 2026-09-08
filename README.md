@@ -10,6 +10,7 @@ The pre-market pipeline supports live collection, fixture replay, deterministic 
 
 ```bash
 python -m market_brief premarket --replay
+python -m market_brief publish
 python -m market_brief open
 python -m pytest
 ```
@@ -18,7 +19,7 @@ The replay uses fictional evidence and is labeled in the generated brief.
 
 ## Output
 
-The latest rendered brief is at `output/latest.html`. Timestamped session artifacts remain under ignored `runs/`.
+The latest rendered brief is at `output/latest.html`. `python -m market_brief publish` copies only that human-facing HTML to `publish/index.html` for a static host. Timestamped session artifacts remain under ignored `runs/`.
 
 ## Core principles
 

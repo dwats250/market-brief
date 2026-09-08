@@ -66,6 +66,24 @@ def open_latest(root=None, opener=None):
     return 0
 
 
+def publish_latest(root=None):
+    root = Path(ROOT if root is None else root).resolve()
+    latest = latest_output_path(root)
+    if not latest.is_file():
+        raise ValueError(f"No latest brief exists at {latest}; render a brief before publishing")
+    publish = root / "publish"
+    if publish.exists() and publish.is_symlink():
+        raise ValueError("publish directory must not be a symlink")
+    publish.mkdir(exist_ok=True)
+    index = publish / "index.html"
+    if index.is_symlink():
+        raise ValueError("published index cannot be a symlink")
+    temporary = publish / f"index-{uuid.uuid4().hex}.tmp"
+    temporary.write_text(latest.read_text())
+    temporary.replace(index)
+    return index
+
+
 def merge_input(collected, supplied):
     if supplied.get("mode") != "LIVE":
         raise ValueError("sample input cannot be relabeled as a live run")
@@ -150,7 +168,7 @@ def run(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="One local pre-market briefing, grounded in evidence")
-    parser.add_argument("command", choices=["premarket", "open"])
+    parser.add_argument("command", choices=["premarket", "open", "publish"])
     parser.add_argument("--replay", action="store_true", help="offline fictional evidence + narrative")
     parser.add_argument("--input", type=Path, help="sourced input JSON; SAMPLE for replay, LIVE otherwise")
     parser.add_argument("--synthesize", action="store_true", help="call Claude even for SAMPLE evidence")
@@ -159,6 +177,9 @@ def main(argv=None):
     try:
         if args.command == "open":
             return open_latest()
+        if args.command == "publish":
+            print(publish_latest())
+            return 0
         return run(args)
     except (ValueError, OSError, KeyError, TypeError) as exc:
         # Input/provider/model contents and credential-bearing exceptions never enter logs.

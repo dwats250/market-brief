@@ -157,6 +157,10 @@ def _openrouter_post(payload, api_key, timeout=180):
 def _openrouter_diagnostic(response, message=None, content=None):
     choice = (response.get("choices") or [{}])[0] if isinstance(response, dict) else {}
     message = message if isinstance(message, dict) else (choice.get("message") or {})
+    if content is None and isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, list):
+            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
     transport = response.get("_market_brief_transport", {}) if isinstance(response, dict) else {}
     return canonical({
         "http_status": transport.get("http_status", "unknown"),
@@ -210,7 +214,7 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
         raise ValueError("OpenRouter credentials are not configured")
     system, user = construct_prompt(packet)
     requested_at = datetime.now(timezone.utc).isoformat()
-    payload = dict(model=OPENROUTER_MODEL, temperature=0, max_tokens=6000,
+    payload = dict(model=OPENROUTER_MODEL, temperature=0, max_tokens=10000,
                    messages=[{"role": "system", "content": system},
                              {"role": "user", "content": user}],
                    plugins=[{"id": "response-healing"}],

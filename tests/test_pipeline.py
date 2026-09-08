@@ -190,6 +190,7 @@ def test_cli_replay_and_invalid_model_leave_no_latest_pointer(tmp_path, monkeypa
     original = cli.output_directory
     monkeypatch.setattr(cli, "output_directory", lambda root, mode, target:
                         original(tmp_path, mode, target))
+    monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
     assert cli.main(["premarket", "--replay"]) == 0
     directories = list((tmp_path / "runs").glob("*/*"))
     assert len(directories) == 1
@@ -209,3 +210,21 @@ def test_output_symlink_escape_rejected(tmp_path):
     (root / "runs").symlink_to(destination, target_is_directory=True)
     with pytest.raises(ValueError, match="symlink"):
         cli.output_directory(root, "SAMPLE", timestamp("2026-09-08T12:45:00Z"))
+
+
+def test_latest_output_is_stable_and_openable(tmp_path, monkeypatch):
+    cli.update_latest(tmp_path, "<html>first</html>")
+    cli.update_latest(tmp_path, "<html>second</html>")
+    latest = tmp_path / "output/latest.html"
+    assert latest.read_text() == "<html>second</html>"
+    opened = []
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(cli.webbrowser, "open", lambda url: opened.append(url))
+    assert cli.main(["open"]) == 0
+    assert opened == [latest.resolve().as_uri()]
+
+
+def test_open_command_reports_missing_latest(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    assert cli.main(["open"]) == 2
+    assert "No latest brief exists" in capsys.readouterr().err

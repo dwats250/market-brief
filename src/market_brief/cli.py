@@ -1,10 +1,11 @@
-"""Thin local entry point; all report writes confined to this project's runs directory."""
+"""Thin local entry point for local brief generation and inspection."""
 
 import argparse
 import json
 import subprocess
 import sys
 import uuid
+import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,6 +32,38 @@ def output_directory(root, mode, target):
 
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
+
+
+def latest_output_path(root=None):
+    return Path(ROOT if root is None else root).resolve() / "output" / "latest.html"
+
+
+def update_latest(root, page):
+    output = Path(root).resolve() / "output"
+    if output.exists() and output.is_symlink():
+        raise ValueError("output directory must not be a symlink")
+    output.mkdir(exist_ok=True)
+    latest = output / "latest.html"
+    if latest.is_symlink():
+        raise ValueError("latest output cannot be a symlink")
+    temporary = output / f"latest-{uuid.uuid4().hex}.tmp"
+    temporary.write_text(page)
+    temporary.replace(latest)
+
+
+def open_latest(root=None, opener=None):
+    if root is None:
+        root = ROOT
+    if opener is None:
+        opener = webbrowser.open
+    latest = latest_output_path(root)
+    if not latest.is_file():
+        print(f"No latest brief exists at {latest}; run 'python -m market_brief premarket --replay' first.",
+              file=sys.stderr)
+        return 2
+    opener(latest.as_uri())
+    print(latest)
+    return 0
 
 
 def merge_input(collected, supplied):
@@ -93,6 +126,7 @@ def run(args):
         markdown, page = render(packet, narrative)
         (folder / "brief.md").write_text(markdown)
         (folder / "brief.html").write_text(page)
+        update_latest(ROOT, page)
         write_json(folder / "narrative.json", narrative)
         metadata.update(validation="PASS", model_route=model["route"], model=model,
                         markdown_hash=digest(markdown), html_hash=digest(page))
@@ -116,13 +150,15 @@ def run(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="One local pre-market briefing, grounded in evidence")
-    parser.add_argument("checkpoint", choices=["premarket"])
+    parser.add_argument("command", choices=["premarket", "open"])
     parser.add_argument("--replay", action="store_true", help="offline fictional evidence + narrative")
     parser.add_argument("--input", type=Path, help="sourced input JSON; SAMPLE for replay, LIVE otherwise")
     parser.add_argument("--synthesize", action="store_true", help="call Claude even for SAMPLE evidence")
     parser.add_argument("--cuttingboard", action="store_true", help="optional public GET-only quotation")
     args = parser.parse_args(argv)
     try:
+        if args.command == "open":
+            return open_latest()
         return run(args)
     except (ValueError, OSError, KeyError, TypeError) as exc:
         # Input/provider/model contents and credential-bearing exceptions never enter logs.

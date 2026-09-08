@@ -86,6 +86,44 @@ def test_prompt_removes_raw_history_and_unpermitted_facts():
     assert "history-SPY" not in data
 
 
+def test_full_universe_synthesis_projection_is_bounded_and_history_stays_internal():
+    packet = fixture_packet()
+    source = packet["sources"][0]["id"]
+    packet["history"] = []
+    for index in range(21):
+        symbol = f"S{index:02d}"
+        packet["history"].append(dict(
+            id=f"history-{symbol}", symbol=symbol,
+            dates=[f"2026-06-{day:02d}" for day in range(1, 66)],
+            closes=[100 + day / 100 for day in range(65)], adjustment="split",
+            session="regular_close", source_id=source, retrieved_at="2026-09-08T12:00:00+00:00"))
+    packet["derived"] = [dict(packet["derived"][0], id=f"derived-{index:03d}",
+                               topic=f"S{index % 21:02d}") for index in range(105)]
+    original_history = json.loads(json.dumps(packet["history"]))
+    _, prompt = construct_prompt(packet)
+    assert len(prompt.encode()) < 120_000
+    assert packet["history"] == original_history and len(packet["history"]) == 21
+    projected = model_packet(packet)
+    assert "history" not in projected
+    assert all("retrieved_at" not in row for row in projected["derived"])
+
+
+def test_synthesis_projection_excludes_stale_and_unavailable_rows():
+    packet = fixture_packet()
+    source = packet["sources"][0]["id"]
+    stale = dict(packet["derived"][0], id="stale-row", source_id=source, status="STALE")
+    unavailable = dict(packet["derived"][0], id="unavailable-row", source_id=source, status="UNAVAILABLE")
+    packet["derived"].extend([stale, unavailable])
+    projected = model_packet(packet)
+    ids = {row["id"] for row in projected["derived"]}
+    assert "stale-row" not in ids and "unavailable-row" not in ids
+
+
+def test_synthesis_projection_is_deterministic():
+    packet = fixture_packet()
+    assert model_packet(packet) == model_packet(packet)
+
+
 def test_claude_is_single_isolated_tools_off_route(monkeypatch):
     monkeypatch.setattr("market_brief.synthesize.shutil.which", lambda _: "/usr/bin/claude")
     calls = []

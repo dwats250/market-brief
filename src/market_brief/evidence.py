@@ -270,20 +270,42 @@ def evidence_catalog(packet):
             for r in packet[key] if r.get("status", "AVAILABLE") in USABLE | {"SCHEDULED"}}
 
 
+MODEL_RECORD_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at",
+                       "source_id", "status", "reason", "frequency", "freshness",
+                       "expected_freshness", "magnitude")
+
+
+def compact_model_record(row):
+    """Keep editorial facts and freshness while dropping repeated collection plumbing."""
+    return {key: row[key] for key in MODEL_RECORD_FIELDS if key in row}
+
+
 def model_packet(packet):
     result = copy.deepcopy(packet)
     allowed = {s["id"] for s in packet["sources"] if s["llm_allowed"] is True}
     result.pop("history", None)
     for field in ("observations", "derived", "events", "context_items"):
-        result[field] = [r for r in result[field] if r.get("source_id") in allowed]
+        result[field] = [compact_model_record(r) for r in result[field]
+                         if r.get("source_id") in allowed and r.get("status") in USABLE | {"SCHEDULED"}]
     result["sector_leadership"] = dict(
-        top=[r for r in result.get("sector_leadership", {}).get("top", [])
-             if r.get("source_id") in allowed],
-        bottom=[r for r in result.get("sector_leadership", {}).get("bottom", [])
-                if r.get("source_id") in allowed])
+        top=[compact_model_record(r) for r in result.get("sector_leadership", {}).get("top", [])
+             if r.get("source_id") in allowed and r.get("status") in USABLE | {"SCHEDULED"}],
+        bottom=[compact_model_record(r) for r in result.get("sector_leadership", {}).get("bottom", [])
+                if r.get("source_id") in allowed and r.get("status") in USABLE | {"SCHEDULED"}])
     permitted_ids = set(evidence_catalog(result))
-    result["attention"] = [a for a in result["attention"]
+    result["attention"] = [{key: a[key] for key in
+                             ("id", "symbol", "reason", "evidence_ids", "horizon", "date")
+                             if key in a} for a in result["attention"]
                            if set(a["evidence_ids"]) <= permitted_ids]
-    result["sources"] = [s for s in result["sources"] if s["id"] in allowed]
+    result["sources"] = [{key: s[key] for key in
+                           ("id", "name", "kind", "status", "reason", "expected_freshness",
+                            "provider", "feed", "plan", "data_delay", "coverage_date",
+                            "coverage_symbols") if key in s}
+                          for s in result["sources"] if s["id"] in allowed]
+    result["run"] = {key: result["run"][key] for key in
+                      ("mode", "checkpoint", "target_time", "session") if key in result["run"]}
+    result["coverage"] = {key: result["coverage"][key] for key in
+                           ("status", "bootstrap", "current_premarket", "basis", "missing_domains",
+                            "horizon") if key in result["coverage"]}
     result["cuttingboard"] = {"status": "QUOTED_SEPARATELY_BY_RENDERER"}
     return result

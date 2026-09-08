@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 from jsonschema import Draft202012Validator
 
-from .evidence import ROOT, canonical, digest, evidence_catalog, model_packet
+from .evidence import ROOT, canonical, compact_model_record, digest, evidence_catalog, model_packet
 
 TEXT = {"type": "string", "minLength": 1, "maxLength": 1800}
 REFS = {"type": "array", "items": {"type": "string"}, "minItems": 1,
@@ -110,9 +110,15 @@ def validate_narrative(narrative, packet):
 def construct_prompt(packet):
     projected = model_packet(packet)
     instructions = (ROOT / "prompts/synthesis.md").read_text()
-    user = canonical(dict(evidence=projected, catalog=evidence_catalog(projected),
+    catalog = {ident: compact_model_record(row) for ident, row in evidence_catalog(projected).items()}
+    user = canonical(dict(evidence=projected, catalog=catalog,
                           output_schema=NARRATIVE_SCHEMA))
-    if len(user.encode()) > 120_000:
+    size = len(user.encode())
+    sections = {key: len(canonical(value).encode()) for key, value in projected.items()}
+    largest = ", ".join(f"{key}={value}" for key, value in
+                         sorted(sections.items(), key=lambda item: item[1], reverse=True)[:3])
+    print(f"Synthesis packet: {size} bytes; largest sections: {largest}", flush=True)
+    if size > 120_000:
         raise ValueError("bounded synthesis packet exceeds size limit")
     return instructions, user
 

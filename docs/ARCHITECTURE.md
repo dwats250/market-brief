@@ -200,7 +200,12 @@ evidence can only be `unresolved`; `reversed` retires it; a passed horizon expir
 three watches and three relationships carry forward.
 
 A post-close edition classifies its closing data: `COMPLETED_SESSION`, `PROVISIONAL_NEAR_CLOSE`
-(labeled), `EARLIER_HISTORY_ONLY`, or `NONE`. Only the first two produce a close handoff; the
+(labeled), `EARLIER_HISTORY_ONLY`, or `NONE`. Because the provider's completed daily bar is
+admitted only from the next day and the scheduler fires 30–40 minutes late, a CLOSE_1M run may
+admit one labeled `PROVISIONAL` print per instrument: an intraday trade from the final fifteen
+minutes before the exchange close, collected within ninety minutes after it. It is rendered,
+cited, and carried with that status and never presented as an official closing bar. Only the
+first two classifications produce a close handoff; the
 bundle's close pointer and edition pointers are separate, so a premarket never overwrites the
 previous close and a run without session observations leaves the last close untouched.
 

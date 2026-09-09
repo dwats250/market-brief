@@ -285,3 +285,24 @@ def test_markdown_tables_keep_shared_clocks_out_of_header_rows():
         if line.startswith("|"):
             assert line.rstrip().endswith("|"), line
     assert "**METALS STRUCTURE** · as of 12:59 PM PT" in md
+
+
+def test_provisional_session_ending_prints_are_labeled_in_the_brief():
+    from market_brief.evidence import finalize_coverage, normalize_observation
+    late = utc("2026-09-08T20:38:00+00:00")
+    packet = packet_at(late, checkpoint="CLOSE_1M", intraday=False)
+    for symbol, value in (("SPY", 0.4), ("XLI", -0.3)):
+        raw = dict(id=f"{symbol}-intraday", topic=symbol, metric="premarket return", value=value, unit="%",
+                   baseline="latest trade versus previous regular close", frequency="intraday",
+                   observed_at="2026-09-08T19:59:58+00:00", retrieved_at=late.isoformat(),
+                   source_id="sample-prices", status="AVAILABLE", reason="")
+        row = normalize_observation(raw, late, utc("2026-09-08T20:00:00+00:00"))
+        row["expected_freshness"] = "LIVE"
+        packet["observations"].append(row)
+    finalize_coverage(packet)
+    view = presentation(packet, narrative())
+    assert view["sectors"]["change_label"] == "Session-ending print vs prior close · provisional"
+    assert view["chips"][0]["status"] == "PROVISIONAL"
+    md, page = render(packet, narrative())
+    assert "provisional" in page and "PROVISIONAL" in page
+    assert "not official closing bars" in page

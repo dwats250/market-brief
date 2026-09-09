@@ -474,3 +474,41 @@ def test_replay_admits_the_sample_close_fixture_and_assesses_carried_watches(tmp
                 for p in (tmp_path / "runs").glob("*/*") if (p / "evidence.json").exists()]
     cold = next(c for c in contexts if c["prior_state"]["status"] == "cold_start")
     assert cold["prior_state"]["reason"] == "close continuity unavailable: absent; no continuity bundle"
+
+
+
+# --- a cron-delayed close still hands off, explicitly provisional ---------------------------------
+
+def test_cron_delayed_close_hands_off_provisionally_and_the_next_premarket_admits_it():
+    from datetime import timedelta
+    _, handoff = friday_close()
+    bundle = advance_bundle(empty_bundle(), _, handoff, utc(CLOSE_FRI))
+    late = utc("2026-09-08T20:38:00+00:00")  # thirty-eight minutes after the close
+    close = packet_at(late, checkpoint="CLOSE_1M", intraday=False)
+    close["run"]["run_id"] = "sample-close_1m-203800-tue"
+    raw_print = dict(id="SPY-intraday", topic="SPY", metric="premarket return", value=0.4, unit="%",
+                     baseline="Alpaca IEX latest trade versus previous regular close", frequency="intraday",
+                     observed_at=(utc("2026-09-08T20:00:00+00:00") - timedelta(seconds=2)).isoformat(),
+                     retrieved_at=late.isoformat(), source_id="sample-prices", status="AVAILABLE", reason="")
+    from market_brief.evidence import finalize_coverage, normalize_observation
+    row = normalize_observation(raw_print, late, utc("2026-09-08T20:00:00+00:00"))
+    row["expected_freshness"] = "LIVE"
+    close["observations"].append(row)
+    finalize_coverage(close)
+    assert row["status"] == "PROVISIONAL" and close["history_lag"]
+    assert "provisional session-ending prints" in close["coverage"]["basis"]
+    assert any("not official closing bars" in item for item in close["coverage"]["limitations"])
+    prior, comparisons, context, state = accept(close, bundle)
+    assert state["observed"]["data_status"]["status"] == "PROVISIONAL_NEAR_CLOSE"
+    handoff_tue, reason = session_handoff(state)
+    assert handoff_tue is not None and handoff_tue["assessment"]["closing_character"]["provisional"] is True
+    assert handoff_tue["observed"]["snapshots"]["SPY-intraday"]["status"] == "PROVISIONAL"
+    bundle = advance_bundle(bundle, state, handoff_tue, late)
+    wednesday = run_packet(PREMARKET_WED, "sample-premarket-124500-wed", last_history_date="2026-09-08",
+                           intraday=False)
+    assert admit_prior_state(bundle, wednesday)["status"] == "available"
+    # Without any session print the same late run still does not advance the close.
+    bare = packet_at(late, checkpoint="CLOSE_1M", intraday=False)
+    bare["run"]["run_id"] = "sample-close_1m-203800-bare"
+    _, _, _, state = accept(bare, advance_bundle(empty_bundle(), _, handoff, utc(CLOSE_FRI)))
+    assert session_handoff(state)[0] is None

@@ -24,10 +24,10 @@ recorded live response used 2,794 completion tokens under the smaller v0 contrac
 ## Next
 
 Run one bounded commissioning check of the runner-boundary restore (`gh workflow run schedule.yml
--f continuity_check=true` after merge) and then observe scheduled editions. Watch whether late CLOSE_1M runs
-ever hold session prints: with a 30–40 minute cron drift and 20-minute print staleness, most post-close runs
-classify as EARLIER_HISTORY_ONLY and do not advance the close handoff, so the next premarket cold-starts
-by design. If that is too strict, the decision is whether to admit labeled provisional near-close prints.
+-f continuity_check=true` after merge) and then observe scheduled editions. Confirm on real runs that a
+cron-delayed CLOSE_1M admits PROVISIONAL session-ending prints (IEX latest trade inside the final fifteen
+minutes before the close) and hands off; if IEX's latest trade after the close is an extended-hours print,
+the run has no session print and the next premarket cold-starts, which is the honest outcome.
 
 ## Later
 

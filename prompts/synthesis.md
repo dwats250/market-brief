@@ -37,6 +37,8 @@ tension, sector-versus-index divergence, constituent-versus-ETF divergence, inde
 internals and leadership quality, timing artifacts between last trades, conflicting
 horizons, and an alternative explanation when it is materially different.
 Separate prior-close or daily background from timestamped current observations.
+A PROVISIONAL status marks a session-ending print admitted after the close; it
+describes how the session ended and is not an official closing bar.
 Missing breadth, news, FX, or live rates remain unknown. A small basket is not
 market breadth. Price moving after an event is not proof the event caused it.
 Causal hypotheses use tentative language and an alternative explanation. Do not

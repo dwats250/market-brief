@@ -117,7 +117,7 @@ def cell(row, bare=False):
     return dict(display=(formatted(row).removesuffix(" USD") if bare else formatted(row)) if row else "n/a",
                 value=row.get("value") if row else None,
                 direction=direction(row) if row else "neutral",
-                id=row.get("id") if row else None,
+                id=row.get("id") if row else None, status=row.get("status") if row else None,
                 observed=observed_label(row.get("observed_at")) if row else "",
                 observed_at=row.get("observed_at") if row else None)
 
@@ -174,7 +174,9 @@ def change_column(rows):
     if not filled:
         return "Change", None
     if all(row["current_is_intraday"] for row in filled):
-        return "Intraday vs prior close", collapse_shared_clock(rows)
+        label = ("Session-ending print vs prior close · provisional"
+                 if all(row["today"]["status"] == "PROVISIONAL" for row in filled) else "Intraday vs prior close")
+        return label, collapse_shared_clock(rows)
     dates = {row["today"]["observed_at"] for row in filled}
     if len(dates) == 1 and all(not row["current_is_intraday"] for row in filled):
         for row in rows:

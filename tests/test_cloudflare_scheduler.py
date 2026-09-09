@@ -22,12 +22,9 @@ def test_cloudflare_worker_dispatches_only_a_wakeup():
 def test_cloudflare_crons_include_both_dst_candidates_and_early_close_candidates():
     config = (ROOT / "cloudflare/wrangler.toml").read_text()
     for cron in (
-        '"0 13 * * 1-5"',
-        '"0 14 * * 1-5"',
-        '"7 19 * * 1-5"',
-        '"1 17 * * 1-5"',
-        '"1 18 * * 1-5"',
-        '"1 20 * * 1-5"',
-        '"1 21 * * 1-5"',
+        '"0 13-15 * * MON-FRI"',
+        '"31 13-14 * * MON-FRI"',
+        '"7 19-20 * * MON-FRI"',
+        '"1 17,18,20,21 * * MON-FRI"',
     ):
         assert cron in config

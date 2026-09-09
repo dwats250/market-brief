@@ -7,6 +7,30 @@ permissions:
   contents: read
 
 jobs:
+  github-dispatch-probe:
+    runs-on: ubuntu-latest
+    env:
+      GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
+    steps:
+      - name: Probe GitHub workflow dispatch API
+        run: |
+          test -n "$GH_DISPATCH_TOKEN"
+          status=$(curl --silent --show-error \
+            -o /tmp/github-response \
+            -w "%{http_code}" \
+            -X POST "https://api.github.com/repos/dwats250/market-brief/actions/workflows/schedule.yml/dispatches" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_DISPATCH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: market-brief-dispatch-probe" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --data '{"ref":"__market_brief_dispatch_probe_invalid_ref__","inputs":{"cloudflare_wakeup":"true","cloudflare_smoke":"true"}}')
+          echo "GitHub dispatch HTTP status: $status"
+          echo "GitHub dispatch response:"
+          head -c 1000 /tmp/github-response
+          echo
+          test "$status" = "422"
+
   tail:
     runs-on: ubuntu-latest
     env:

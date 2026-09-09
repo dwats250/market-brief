@@ -368,6 +368,11 @@ def test_horizons_resolve_from_the_exchange_calendar_not_from_tomorrow():
     assert resolve_horizon("SESSION", after_close)["phrase"] == "Into the next session"
     friday = utc(CLOSE_FRI)
     assert resolve_horizon("OPENING_HOUR", friday)["expires_session"] == "2026-09-08"  # Labor Day skipped
+    # After today's opening hour but before the close, the horizon is the next session's opening hour.
+    afternoon = resolve_horizon("OPENING_HOUR", utc(AFTERNOON_TUE))
+    assert afternoon["expires_session"] == "2026-09-09" and afternoon["expires_at"] == "2026-09-09T14:30:00+00:00"
+    holiday = resolve_horizon("OPENING_HOUR", utc("2026-09-07T15:00:00+00:00"))
+    assert holiday["expires_session"] == "2026-09-08"
     early = utc("2026-11-27T15:00:00+00:00")
     assert resolve_horizon("SESSION", early)["expires_at"] == "2026-11-27T18:00:00+00:00"
     assert resolve_horizon("NEXT_BRIEF", utc("2026-11-27T17:30:00+00:00"))["next_checkpoint"] == "CLOSE_1M"

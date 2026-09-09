@@ -95,12 +95,14 @@ def analyst_model(config=None, environ=None):
                 cli_model=config["analyst"].get("cli_model", "sonnet"))
 
 
-def validate_narrative(narrative, packet, context=None):
+def validate_narrative(narrative, packet, context=None, schema=None):
     """Mechanical grounding: schema, mode, references that exist in admitted evidence and were
     actually supplied in the analyst context, numeric placeholders, and trade/current-language rules.
+
+    `schema` is the contract actually advertised to the model; by default the edition's profile-bounded one.
     """
     profile = (context or {}).get("edition") or edition_profile(packet["run"]["checkpoint"])
-    errors = list(Draft202012Validator(narrative_schema(profile)).iter_errors(narrative))
+    errors = list(Draft202012Validator(schema or narrative_schema(profile)).iter_errors(narrative))
     if errors:
         raise ValueError("malformed narrative at " + ".".join(map(str, errors[0].absolute_path)))
     if narrative["mode"] != packet["run"]["mode"]:
@@ -312,7 +314,7 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
             sleeper(2 ** attempt)
     narrative = _openrouter_narrative(response)
     try:
-        narrative = validate_narrative(narrative, packet, None if full else context)
+        narrative = validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)
     except ValueError as exc:
         diagnostic = _openrouter_diagnostic(response)
         raise ValueError(f"{exc}; diagnostic={diagnostic}") from None
@@ -372,7 +374,7 @@ def synthesize(packet, runner=subprocess.run, full=False, context=None):
         narrative = envelope.get("structured_output")
         if narrative is None:
             narrative = json.loads(envelope.get("result", ""))
-        validated = validate_narrative(narrative, packet, None if full else context)
+        validated = validate_narrative(narrative, packet, None if full else context, schema)
     except (json.JSONDecodeError, TypeError, AttributeError):
         raise ValueError("Claude did not return a structured narrative") from None
     models = list(envelope.get("modelUsage", {}).keys())

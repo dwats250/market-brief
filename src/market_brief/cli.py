@@ -31,7 +31,7 @@ from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_js
 from .metrics import annotate_magnitude, derive
 from .render import render
 from .schedule import CHECKPOINTS, checkpoint_session, current_phase, due, scheduled_checkpoint
-from .synthesize import construct_prompt, synthesize, validate_narrative
+from .synthesize import NARRATIVE_SCHEMA, construct_prompt, synthesize, validate_narrative
 
 # Assets (prompt, config, templates) come from ROOT; generated state lives under RUN_ROOT.
 RUN_ROOT = ROOT
@@ -219,7 +219,7 @@ def run(args):
         if args.replay and not args.synthesize:
             fixture = "narrative.continuity.json" if prior["status"] == "available" else "narrative.sample.json"
             narrative = read_json(ROOT / "tests/fixtures" / fixture)
-            validate_narrative(narrative, packet, None if full else context)
+            validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)
             system, prompt = construct_prompt(packet, full=full, context=context)
             model = dict(route="fixture-replay", resolved_models=[],
                          prompt_hash=digest(dict(system=system, user=prompt)),

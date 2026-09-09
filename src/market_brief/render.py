@@ -513,8 +513,8 @@ def markdown(view):
     cross = view["cross_asset"]
     if cross["rows"]:
         asof = f" · {esc(cross['asof'])}" if cross["asof"] else ""
-        lines += ["## Cross-asset structure", "",
-                  f"| Instrument | {esc(cross['change_label'])} | 20D | vs benchmark · 20s | vs 50DMA |{asof}",
+        lines += ["## Cross-asset structure", "", f"**METALS STRUCTURE**{asof}", "",
+                  f"| Instrument | {esc(cross['change_label'])} | 20D | vs benchmark · 20s | vs 50DMA |",
                   "|---|---:|---:|---:|---:|"]
         for row in cross["rows"]:
             lines.append(f"| {esc(row['label'])} ({row['symbol']}) | {row['today']['display']} | "

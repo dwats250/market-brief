@@ -238,9 +238,8 @@ def metric_identity(row):
     metric = row.get("metric") or ""
     benchmark = metric.removeprefix("relative to ") if metric.startswith("relative to ") else None
     window = "20s" if benchmark else WINDOWS.get(metric, row.get("frequency") or "unknown")
-    basis = row.get("adjustment") or row.get("baseline") or "unspecified"
-    if row.get("adjustment"):
-        basis = f"{row['adjustment']}/regular_close"
+    basis = (f"{row['adjustment']}/regular_close" if row.get("adjustment")
+             else row.get("baseline") or "unspecified")
     identity = dict(instrument=row.get("topic"), metric=metric, window=window,
                     benchmark=benchmark, basis=basis)
     identity["key"] = "|".join(str(identity[k] or "-")

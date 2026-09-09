@@ -72,8 +72,10 @@ def resolve_horizon(horizon, now, events=(), current_checkpoint=None):
         if trading_today and now < end:
             return dict(declared=horizon, expires_at=end.isoformat(), expires_session=day,
                         phrase=HORIZON_PHRASES[horizon])
-        later = cal.session_open(following).to_pydatetime() + timedelta(minutes=60)
-        return dict(declared=horizon, expires_at=later.isoformat(), expires_session=following,
+        # Today's opening hour has passed (or today is closed): the next session's opening hour.
+        next_open = cal.next_session(session).date().isoformat() if trading_today else following
+        later = cal.session_open(next_open).to_pydatetime() + timedelta(minutes=60)
+        return dict(declared=horizon, expires_at=later.isoformat(), expires_session=next_open,
                     phrase="Through the next opening hour")
     if horizon in {"SESSION", "NEXT_CLOSE"}:
         if trading_today and now < closing:

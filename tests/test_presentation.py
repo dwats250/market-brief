@@ -274,3 +274,14 @@ def test_carried_watches_and_changes_render_from_the_saved_context():
     assert "SPY moved from -0.53 % to +0.21 % since the premarket." in page
     assert "Carried watch · weakened" in page
     assert "## Since the premarket edition" in md and "CARRIED WATCH · weakened" in md
+
+
+def test_markdown_tables_keep_shared_clocks_out_of_header_rows():
+    packet = packet_at(utc("2026-09-08T20:03:00+00:00"))
+    packet["observations"] += [intraday("GLD", -1.74, "2026-09-08T19:59:57+00:00"),
+                               intraday("GDX", -2.10, "2026-09-08T19:59:58+00:00")]
+    md, _ = render(packet, narrative())
+    for line in md.splitlines():
+        if line.startswith("|"):
+            assert line.rstrip().endswith("|"), line
+    assert "**METALS STRUCTURE** · as of 12:59 PM PT" in md

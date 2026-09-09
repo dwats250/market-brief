@@ -158,11 +158,6 @@ jobs:
           elif [ "$COMMISSIONING" = "true" ]; then
             python -m market_brief premarket --commissioning
           else
-            # One-time production recovery: permit at most one synthesis request.
-            if [ "${{ steps.checkpoint.outputs.checkpoint }}" = "CLOSE_1M" ]; then
-              sed -i 's/for attempt in range(3):/for attempt in range(1):/' src/market_brief/synthesize.py
-              trap 'git checkout -- src/market_brief/synthesize.py' EXIT
-            fi
             python -m market_brief premarket --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
           fi
       - name: Collect, synthesize, validate, and render from Cloudflare wake-up

@@ -32,12 +32,12 @@ def test_utc_candidates_resolve_each_pacific_checkpoint_in_pdt_and_pst():
     assert scheduled_checkpoint(utc("2026-07-06T13:00:00+00:00")) == "PREMARKET"
     assert scheduled_checkpoint(utc("2026-07-06T13:31:00+00:00")) == "OPEN_1M"
     assert scheduled_checkpoint(utc("2026-07-06T14:00:00+00:00")) == "OPEN_30M"
-    assert scheduled_checkpoint(utc("2026-07-06T19:07:00+00:00")) == "AFTERNOON"
+    assert scheduled_checkpoint(utc("2026-07-06T19:00:00+00:00")) == "AFTERNOON"
     assert scheduled_checkpoint(utc("2026-07-06T20:01:00+00:00")) == "CLOSE_1M"
     assert scheduled_checkpoint(utc("2026-01-12T14:00:00+00:00")) == "PREMARKET"
     assert scheduled_checkpoint(utc("2026-01-12T14:31:00+00:00")) == "OPEN_1M"
     assert scheduled_checkpoint(utc("2026-01-12T15:00:00+00:00")) == "OPEN_30M"
-    assert scheduled_checkpoint(utc("2026-01-12T20:07:00+00:00")) == "AFTERNOON"
+    assert scheduled_checkpoint(utc("2026-01-12T20:00:00+00:00")) == "AFTERNOON"
     assert scheduled_checkpoint(utc("2026-01-12T21:01:00+00:00")) == "CLOSE_1M"
 
 

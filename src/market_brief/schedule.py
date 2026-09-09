@@ -14,7 +14,7 @@ STATIC_LOCAL_TIMES = {
     "PREMARKET": (6, 0),
     "OPEN_1M": (6, 31),
     "OPEN_30M": (7, 0),
-    "AFTERNOON": (12, 7),
+    "AFTERNOON": (12, 0),
 }
 
 

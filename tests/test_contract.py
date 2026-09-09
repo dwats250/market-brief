@@ -117,7 +117,8 @@ def test_each_edition_validates_a_complete_response_within_its_budget(now, check
     assert payload["edition"]["checkpoint"] == checkpoint and payload["edition"]["profile"] == profile["profile"]
     assert payload["output_schema"]["properties"]["watches"]["maxItems"] == profile["watches"]
     assert len(user.encode()) <= profile["input_limit_bytes"]
-    assert len(canonical(value).encode()) < profile["max_output_tokens"] * 4
+    final_token_reserve = profile["max_output_tokens"] - profile["reasoning_max_tokens"]
+    assert len(canonical(value).encode()) < final_token_reserve * 4
     if profile["profile"] == "light":
         assert payload["selection"]["mode"] == "changed" and payload["selection"]["omitted_count"] > 0
 

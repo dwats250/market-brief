@@ -220,3 +220,38 @@ No shared storage or writable mount with Cuttingboard. New report writes must
 resolve under this project's local run root, with symlink escapes rejected. The
 optional Cuttingboard collector uses an allowlisted HTTPS GET or an explicitly
 provided snapshot file; no repository path traversal or callback can write back.
+
+
+## Structured synthesis output budgets
+
+`config/editions.json` separates the total generation ceiling (`max_output_tokens`)
+from the reasoning allocation (`reasoning_max_tokens`). The OpenRouter request sends
+these as top-level `max_tokens` and `reasoning.max_tokens`, with `reasoning.exclude=true`.
+Rich editions use 5,524 total tokens including up to 1,024 reasoning tokens, leaving
+4,500 tokens for final JSON at the reasoning limit. Light editions use 3,524 total,
+including the same 1,024 reasoning allowance, leaving 2,500 for JSON. The final
+allowances preserve the previous output budgets: prose word targets alone do not
+cover JSON keys, evidence references, watches, and continuity assessments. No word
+targets or schema constraints change. Fixture byte/token estimates are sanity checks,
+not proof that every valid narrative fits or that a live provider obeys the allocation.
+
+[OpenRouter's reasoning documentation](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
+documents a minimum direct Anthropic reasoning budget of 1,024 tokens. Excluding
+reasoning only hides it; it remains billable output. Both editions therefore use
+this minimum, with smaller final-output capacity for light editions. No reasoning
+text is persisted; successful metadata records the requested caps and reported usage.
+These exact reasoning allocations rely on the provider's support for Anthropic's
+direct budget mechanism; overrides to other model families may translate budgets
+into effort levels instead. A live paid verification remains an owner-authorized step.
+
+A `finish_reason=length` response fails as an output-budget exhaustion before JSON
+parsing or semantic validation, even if response healing produced parseable JSON.
+Sanitized diagnostics include finish reason, usage, provider, and content byte count,
+not reasoning or narrative text. Length failures never enter the transport retry loop.
+
+Per request, maximum requested paid output is 5,524 tokens (rich) or 3,524 (light),
+including hidden reasoning. At an output rate of R dollars per million tokens,
+output exposure is 0.005524 * R or 0.003524 * R dollars, plus input charges. Existing
+transient transport retries are unchanged (at most three requests); if every attempt
+were billable at its ceiling, aggregate output exposure would be 16,572 or 10,572
+tokens. There is no added retry for truncation or semantic validation failure.

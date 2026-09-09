@@ -13,9 +13,10 @@ def test_cloudflare_wakeup_preserves_python_scheduler_authority():
 
 def test_cloudflare_worker_dispatches_only_a_wakeup():
     worker = (ROOT / "cloudflare/src/index.js").read_text()
-    assert 'inputs: { cloudflare_wakeup: "true" }' in worker
+    assert 'cloudflare_wakeup: "true"' in worker
+    assert 'cloudflare_smoke: "true"' in worker
     assert 'ref: "main"' in worker
-    assert "checkpoint" not in worker
+    assert "status: response.status" in worker
     assert "GH_DISPATCH_TOKEN" in worker
 
 

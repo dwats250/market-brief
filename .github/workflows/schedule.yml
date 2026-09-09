@@ -18,8 +18,9 @@ on:
   workflow_dispatch:
     inputs:
       checkpoint:
-        description: Checkpoint to run (ignored when commissioning is true)
-        required: true
+        description: Checkpoint to run (ignored when commissioning or continuity_check is true)
+        required: false
+        default: PREMARKET
         type: choice
         options:
           - PREMARKET

@@ -29,3 +29,6 @@ jobs:
       - name: Configure GitHub dispatch credential
         run: |
           printf '%s' "$GH_DISPATCH_TOKEN" | npx wrangler secret put GH_DISPATCH_TOKEN --config cloudflare/wrangler.toml
+      - name: Verify GitHub dispatch credential binding
+        run: |
+          npx wrangler secret list --config cloudflare/wrangler.toml | grep -Eq '"name"[[:space:]]*:[[:space:]]*"GH_DISPATCH_TOKEN"'

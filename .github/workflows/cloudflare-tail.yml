@@ -21,10 +21,10 @@ jobs:
           NOW_MS=$(date +%s%3N)
           FROM_MS=$((NOW_MS - 86400000))
           curl --fail-with-body --silent --show-error \
-            -X POST "https://api.cloudflare.com/client/v4/accounts/\${CLOUDFLARE_ACCOUNT_ID}/workers/observability/telemetry/query" \
-            -H "Authorization: Bearer \${CLOUDFLARE_API_TOKEN}" \
+            -X POST "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/observability/telemetry/query" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            --data "$(jq -n --argjson from "\$FROM_MS" --argjson to "\$NOW_MS" '{
+            --data "$(jq -n --argjson from "$FROM_MS" --argjson to "$NOW_MS" '{
               queryId: "market-brief-scheduler-diagnostic",
               timeframe: {from: $from, to: $to},
               view: "events",

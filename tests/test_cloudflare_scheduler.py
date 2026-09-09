@@ -24,7 +24,7 @@ def test_cloudflare_crons_include_both_dst_candidates_and_early_close_candidates
     for cron in (
         '"0 13-15 * * MON-FRI"',
         '"31 13-14 * * MON-FRI"',
-        '"7 19-20 * * MON-FRI"',
+        '"0 19-20 * * MON-FRI"',
         '"1 17,18,20,21 * * MON-FRI"',
     ):
         assert cron in config

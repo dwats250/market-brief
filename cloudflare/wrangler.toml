@@ -12,6 +12,6 @@ GITHUB_REPOSITORY = "dwats250/market-brief"
 crons = [
   "0 13-15 * * MON-FRI",
   "31 13-14 * * MON-FRI",
-  "7 19-20 * * MON-FRI",
+  "0 19-20 * * MON-FRI",
   "1 17,18,20,21 * * MON-FRI",
 ]

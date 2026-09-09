@@ -29,6 +29,22 @@ cron-delayed CLOSE_1M admits PROVISIONAL session-ending prints (IEX latest trade
 minutes before the close) and hands off; if IEX's latest trade after the close is an extended-hours print,
 the run has no session print and the next premarket cold-starts, which is the honest outcome.
 
+## Direction after v0.1
+
+v0.1 freezes after merge except for defects found in live use. Future work favors reduction, clarity,
+and signal amplification over feature growth.
+
+- PREMARKET and POST-CLOSE are the rich analytical editions. OPEN +1M is focused and responsive.
+  OPENING STRUCTURE and AFTERNOON are normally compact continuity updates that become materially
+  louder only when the market itself materially changes.
+- Prompt refinement should strengthen dominant supported drivers, relationships, contradictions, and
+  changes from prior state, not manufacture more signals.
+- Weekly continuity, later: Friday post-close weekly handoff → Sunday Week Ahead → Monday premarket.
+- Compute experiment, later: intermediate editions may use deterministic delta artifacts and lightweight
+  polishing, escalating to the frontier analyst only when warranted.
+
+None of the future items is authorized for implementation now.
+
 ## Later
 
 Provider caching under clear licenses, additional providers, charts from the typed tenor/yield rows,

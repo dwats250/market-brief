@@ -15,11 +15,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      GITHUB_DISPATCH_TOKEN: ${{ secrets.GITHUB_DISPATCH_TOKEN }}
+      GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Require GitHub dispatch credential
-        run: test -n "$GITHUB_DISPATCH_TOKEN"
+        run: test -n "$GH_DISPATCH_TOKEN"
       - name: Deploy scheduler Worker
         uses: cloudflare/wrangler-action@v3
         with:
@@ -28,4 +28,4 @@ jobs:
           command: deploy --config cloudflare/wrangler.toml
       - name: Configure GitHub dispatch credential
         run: |
-          printf '%s' "$GITHUB_DISPATCH_TOKEN" | npx wrangler secret put GITHUB_DISPATCH_TOKEN --config cloudflare/wrangler.toml
+          printf '%s' "$GH_DISPATCH_TOKEN" | npx wrangler secret put GH_DISPATCH_TOKEN --config cloudflare/wrangler.toml

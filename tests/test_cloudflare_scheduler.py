@@ -16,6 +16,7 @@ def test_cloudflare_worker_dispatches_only_a_wakeup():
     assert 'inputs: { cloudflare_wakeup: "true" }' in worker
     assert 'ref: "main"' in worker
     assert "checkpoint" not in worker
+    assert "GH_DISPATCH_TOKEN" in worker
 
 
 def test_cloudflare_crons_include_both_dst_candidates_and_early_close_candidates():

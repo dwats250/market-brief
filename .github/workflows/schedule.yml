@@ -48,6 +48,11 @@ on:
         required: false
         default: false
         type: boolean
+      cloudflare_smoke:
+        description: Non-publishing Cloudflare dispatch smoke test
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -88,7 +93,7 @@ jobs:
           retention-days: 7
 
   brief:
-    if: inputs.continuity_check != true
+    if: inputs.continuity_check != true && inputs.cloudflare_smoke != true
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -220,3 +225,12 @@ jobs:
         if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
         id: deployment
         uses: actions/deploy-pages@v4
+
+  cloudflare-smoke:
+    if: inputs.cloudflare_smoke == true && inputs.cloudflare_wakeup == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm non-publishing Cloudflare wake-up dispatch
+        run: |
+          echo "Cloudflare wake-up dispatch received by GitHub Actions."
+          echo "No collection, synthesis, validation, rendering, or publication was run."

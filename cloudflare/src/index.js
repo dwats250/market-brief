@@ -3,7 +3,7 @@ const WORKFLOW = "schedule.yml";
 export default {
   async scheduled(controller, env) {
     const repository = env.GITHUB_REPOSITORY;
-    const token = env.GITHUB_DISPATCH_TOKEN;
+    const token = env.GH_DISPATCH_TOKEN;
     if (!repository || !token) {
       throw new Error("Cloudflare scheduler is missing its GitHub dispatch configuration");
     }

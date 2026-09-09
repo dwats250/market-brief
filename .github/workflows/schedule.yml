@@ -55,7 +55,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  continuity-check:
+    # Isolated: no Pages environment, no collection, no synthesis, no publishing. Proves the
+    # runner-boundary restore and re-uploads whatever it restored under a separate artifact name.
+    if: inputs.continuity_check == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Market Brief
+        run: python -m pip install -e .
+      - name: Restore continuity bundle from the last accepted production run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m market_brief continuity-restore --repository "$GITHUB_REPOSITORY" --branch main
+      - name: Re-upload under an isolated name
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-brief-continuity-check
+          path: runs/continuity/bundle.json
+          if-no-files-found: warn
+          retention-days: 7
+
   brief:
+    if: inputs.continuity_check != true
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -78,11 +106,7 @@ jobs:
           INPUT_CHECKPOINT: ${{ inputs.checkpoint }}
           INPUT_COMMISSIONING: ${{ inputs.commissioning }}
         run: |
-          if [ "${{ inputs.continuity_check }}" = "true" ]; then
-            checkpoint=CHECK
-            label="CONTINUITY CHECK"
-            run=false
-          elif [ "$INPUT_COMMISSIONING" = "true" ]; then
+          if [ "$INPUT_COMMISSIONING" = "true" ]; then
             # The application resolves the market phase from the clock at collection time.
             checkpoint=CURRENT
             label="LIVE COMMISSIONING"
@@ -107,18 +131,10 @@ jobs:
       - name: Restore continuity bundle from the last accepted production run
         # Short-horizon operational continuity: the newest unexpired bundle uploaded by a
         # successful main-branch run of this workflow. Anything else is an explicit cold start.
-        if: steps.checkpoint.outputs.run == 'true' || inputs.continuity_check == true
+        if: steps.checkpoint.outputs.run == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python -m market_brief continuity-restore --repository "$GITHUB_REPOSITORY" --branch main
-      - name: Isolated continuity check
-        if: inputs.continuity_check == true
-        uses: actions/upload-artifact@v4
-        with:
-          name: market-brief-continuity-check
-          path: runs/continuity/bundle.json
-          if-no-files-found: warn
-          retention-days: 7
       - name: Alpaca commissioning probe
         if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief alpaca-probe

@@ -1,20 +1,6 @@
 name: Scheduled Market Brief
 
 on:
-  schedule:
-    # UTC candidates for both PDT and PST. The application calendar guard
-    # selects the due Pacific checkpoint and skips the other season's candidate.
-    - cron: "0 13 * * 1-5"   # 06:00 PDT / 05:00 PST
-    - cron: "31 13 * * 1-5"  # 06:31 PDT / 05:31 PST
-    - cron: "0 14 * * 1-5"   # 07:00 PDT / 06:00 PST
-    - cron: "31 14 * * 1-5"  # 07:31 PDT / 06:31 PST
-    - cron: "0 15 * * 1-5"   # 08:00 PDT / 07:00 PST
-    - cron: "7 19 * * 1-5"   # 12:07 PDT / 11:07 PST
-    - cron: "1 17 * * 1-5"   # 10:01 PDT early close
-    - cron: "1 18 * * 1-5"   # 10:01 PST early close
-    - cron: "1 20 * * 1-5"   # 13:01 PDT full close
-    - cron: "7 20 * * 1-5"   # 12:07 PDT / 12:07 PST candidate
-    - cron: "1 21 * * 1-5"   # 13:01 PST full close
   workflow_dispatch:
     inputs:
       checkpoint:
@@ -40,6 +26,16 @@ on:
         type: boolean
       continuity_check:
         description: Restore the production continuity bundle across a runner boundary and re-upload it under an isolated name; no collection, synthesis, or publishing
+        required: false
+        default: false
+        type: boolean
+      cloudflare_wakeup:
+        description: Cloudflare Cron wake-up; resolve the checkpoint in the Python scheduler
+        required: false
+        default: false
+        type: boolean
+      cloudflare_smoke:
+        description: Non-publishing Cloudflare dispatch smoke test
         required: false
         default: false
         type: boolean
@@ -83,7 +79,7 @@ jobs:
           retention-days: 7
 
   brief:
-    if: inputs.continuity_check != true
+    if: inputs.continuity_check != true && inputs.cloudflare_smoke != true
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -105,12 +101,22 @@ jobs:
           EVENT_SCHEDULE: ${{ github.event.schedule }}
           INPUT_CHECKPOINT: ${{ inputs.checkpoint }}
           INPUT_COMMISSIONING: ${{ inputs.commissioning }}
+          INPUT_CLOUDFLARE_WAKEUP: ${{ inputs.cloudflare_wakeup }}
         run: |
           if [ "$INPUT_COMMISSIONING" = "true" ]; then
             # The application resolves the market phase from the clock at collection time.
             checkpoint=CURRENT
             label="LIVE COMMISSIONING"
             run=true
+          elif [ "$INPUT_CLOUDFLARE_WAKEUP" = "true" ]; then
+            checkpoint=$(python -m market_brief resolve-scheduled)
+            if [ "$checkpoint" = "SKIP" ]; then
+              run=false
+              label=SKIP
+            else
+              run=true
+              label="$checkpoint"
+            fi
           elif [ -n "$INPUT_CHECKPOINT" ]; then
             checkpoint="$INPUT_CHECKPOINT"
             label="$checkpoint"
@@ -136,13 +142,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python -m market_brief continuity-restore --repository "$GITHUB_REPOSITORY" --branch main
       - name: Alpaca commissioning probe
-        if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
+        if: github.event_name == 'workflow_dispatch' && inputs.cloudflare_wakeup != true && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief alpaca-probe
       - name: Full Alpaca coverage probe
-        if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
+        if: github.event_name == 'workflow_dispatch' && inputs.cloudflare_wakeup != true && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief alpaca-probe --full
       - name: Collect, synthesize, validate, and render manually
-        if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
+        if: github.event_name == 'workflow_dispatch' && inputs.cloudflare_wakeup != true && steps.checkpoint.outputs.run == 'true'
         env:
           COMMISSIONING: ${{ inputs.commissioning }}
           EXPERIMENT: ${{ inputs.experiment }}
@@ -154,7 +160,10 @@ jobs:
           else
             python -m market_brief premarket --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
           fi
-      - name: Collect, synthesize, validate, and render on schedule
+      - name: Collect, synthesize, validate, and render from Cloudflare wake-up
+        if: inputs.cloudflare_wakeup == true && steps.checkpoint.outputs.run == 'true'
+        run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
+      - name: Collect, synthesize, validate, and render on GitHub schedule
         if: github.event_name != 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
       - name: Archive this run's evidence, context, narrative, and metadata
@@ -202,3 +211,12 @@ jobs:
         if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
         id: deployment
         uses: actions/deploy-pages@v4
+
+  cloudflare-smoke:
+    if: inputs.cloudflare_smoke == true && inputs.cloudflare_wakeup == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm non-publishing Cloudflare wake-up dispatch
+        run: |
+          echo "Cloudflare wake-up dispatch received by GitHub Actions."
+          echo "No collection, synthesis, validation, rendering, or publication was run."

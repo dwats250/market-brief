@@ -1,6 +1,27 @@
 {
-  "version": "v0",
-  "wired": ["Treasury daily yield XML", "BLS release-calendar ICS", "Federal Reserve press-release RSS", "sourced local input", "optional published Cuttingboard contract"],
-  "deferred": ["authenticated equities/ETF API", "BEA calendar", "Fed calendar", "live yields", "DXY", "USDJPY", "crude futures", "gold/silver futures", "VIX", "comprehensive breadth", "automated earnings", "general news search"],
-  "policy": "Only normalized records with explicit retention permission persist; only llm_allowed facts enter synthesis. Public government factual extracts are admitted. No account or credential discovery."
+  "version": "v1",
+  "wired": [
+    "Treasury daily yield XML",
+    "BLS release-calendar ICS (current and next exchange session)",
+    "Federal Reserve press-release RSS",
+    "Alpaca historical daily bars (IEX, split-adjusted)",
+    "Alpaca IEX current snapshots",
+    "sourced local input",
+    "optional published Cuttingboard contract"
+  ],
+  "deferred": [
+    "BEA calendar",
+    "Fed calendar",
+    "live yields",
+    "DXY",
+    "USDJPY",
+    "crude futures",
+    "gold/silver futures",
+    "SLV history",
+    "VIX",
+    "comprehensive breadth",
+    "automated earnings",
+    "general news search"
+  ],
+  "policy": "Only normalized records with explicit retention permission persist; only llm_allowed facts enter synthesis. Public government factual extracts are admitted. No account or credential discovery. Continuity carries structured prior state (watches, relationships, snapshots) for at most one exchange session between close and premarket; retention of run archives is thirty days in Actions artifacts."
 }

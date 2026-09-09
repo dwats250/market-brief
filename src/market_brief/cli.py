@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import __version__
 from .collect import ALPACA_UNIVERSE, alpaca_probe, collect_live, cuttingboard_record
-from .context import analyst_context
+from .context import analyst_context, edition_profile
 from .continuity import (
     ARTIFACT_NAME,
     admit_prior_state,
@@ -195,7 +195,8 @@ def run(args):
     write_json(folder / "evidence.json", packet)
     evidence_hash = digest(packet)
     # The analyst reads exactly this saved projection; the validator checks references against it.
-    context = dict(analyst_context(packet), **continuity_context(prior, comparisons))
+    profile = edition_profile(checkpoint)
+    context = dict(analyst_context(packet, profile, comparisons, prior), **continuity_context(prior, comparisons))
     write_json(folder / "analyst_context.json", context)
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                               capture_output=True, text=True, check=False).stdout.strip()

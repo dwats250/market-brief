@@ -8,7 +8,7 @@ from test_history_admission import packet_at, utc
 from test_pipeline import fixture_packet, freeze_clock, narrative
 
 from market_brief import cli
-from market_brief.context import CONTEXT_SCHEMA, analyst_context, supplied_ids
+from market_brief.context import CONTEXT_SCHEMA, analyst_context, edition_profile, supplied_ids
 from market_brief.evidence import ROOT, digest, evidence_catalog, model_packet, read_json
 from market_brief.synthesize import (
     construct_prompt,
@@ -236,7 +236,7 @@ def test_replay_persists_context_that_hashes_to_the_saved_evidence(tmp_path, mon
     assert metadata["context_schema"] == CONTEXT_SCHEMA
     # Replaying the saved evidence rebuilds the identical current-evidence projection; the
     # continuity portion is reproduced from the saved evidence's deterministic comparisons.
-    rebuilt = analyst_context(evidence)
+    rebuilt = analyst_context(evidence, edition_profile("PREMARKET"))
     assert {k: v for k, v in context.items() if k not in ("prior_state", "comparisons")} == rebuilt
     assert [c["id"] for c in context["comparisons"]] == [c["id"] for c in evidence["continuity"]["comparisons"]]
     assert set(supplied_ids(context)) == set(evidence_catalog(model_packet(evidence)))

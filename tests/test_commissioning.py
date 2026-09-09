@@ -86,8 +86,8 @@ def test_live_commissioning_header_names_the_phase():
     assert "Afternoon edition" in head
     assert "pre-market edition" not in head.lower()
     assert 'data-checkpoint="COMMISSIONING"' in head
-    assert "Collected at 5:45 AM PT" in head
-    assert "AFTERNOON" in md
+    assert "as of 5:45 AM PT" in head and "collected 5:45 AM PT" in head
+    assert "Afternoon edition" in md
 
 
 def test_scheduled_header_uses_human_checkpoint_labels():
@@ -101,6 +101,5 @@ def test_scheduled_header_uses_human_checkpoint_labels():
     head = page.split("<h1>", 1)[0]
     visible = head.split("<body>", 1)[1]
     assert "Opening structure edition" in visible
-    assert "OPENING STRUCTURE" in visible
-    assert "OPEN_30M" not in visible
+    assert "OPEN_30M" not in visible and "OPEN 30M" not in visible
     assert 'data-checkpoint="OPEN_30M"' in head

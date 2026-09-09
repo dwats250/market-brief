@@ -111,13 +111,11 @@ def test_lagged_daily_return_never_fills_today_without_current_prints():
     assert row["today"]["display"] == "n/a"
     assert row["r20"]["display"] != "n/a"
     view = presentation(packet, narrative())
-    equities = next(s for s in view["sections"] if s["key"] == "equities")
-    assert all(r["today"]["display"] == "n/a" for r in equities["mega_rows"] + equities["sector_rows"])
+    assert all(r["today"]["display"] == "n/a" for r in view["equities"]["rows"] + view["sectors"]["rows"])
 
 
 def test_daily_return_still_fills_today_before_the_open():
     packet = packet_at(utc("2026-09-08T12:45:00+00:00"), intraday=False)
     assert not packet.get("history_lag")
     view = presentation(packet, narrative())
-    equities = next(s for s in view["sections"] if s["key"] == "equities")
-    assert any(r["today"]["display"] != "n/a" for r in equities["mega_rows"])
+    assert any(r["today"]["display"] != "n/a" for r in view["equities"]["rows"])

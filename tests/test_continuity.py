@@ -8,7 +8,7 @@ from test_history_admission import packet_at, utc
 from test_pipeline import narrative
 
 from market_brief import continuity
-from market_brief.context import analyst_context
+from market_brief.context import analyst_context, edition_profile
 from market_brief.continuity import (
     BUNDLE_SCHEMA,
     admit_prior_state,
@@ -46,11 +46,21 @@ def accept(packet, bundle, value=None):
     comparisons = compare_all(prior, packet)
     packet["continuity"] = dict(status=prior["status"], reason=prior["reason"], anchors=prior["anchors"],
                                 comparisons=comparisons)
-    context = dict(analyst_context(packet), **continuity_context(prior, comparisons))
-    value = value or narrative()
+    profile = edition_profile(packet["run"]["checkpoint"])
+    context = dict(analyst_context(packet, profile, comparisons, prior), **continuity_context(prior, comparisons))
+    value = trimmed(value or narrative(), profile)
     validate_narrative(value, packet, context)
     state = edition_state(packet, value, prior, comparisons, digest(context), digest(value), "test")
     return prior, comparisons, context, state
+
+
+def trimmed(value, profile):
+    """A light edition answers with fewer paragraphs, watches, and attention items."""
+    value["summary"] = value["summary"][:profile["summary_paragraphs"]]
+    value["watches"] = value["watches"][:profile["watches"]]
+    value["attention_ids"] = value["attention_ids"][:profile["attention_items"]]
+    value["attention"] = [a for a in value["attention"] if a["id"] in value["attention_ids"]]
+    return value
 
 
 def friday_close():
@@ -262,7 +272,8 @@ def carried_setup():
     afternoon = run_packet(AFTERNOON_TUE, "sample-afternoon-191000-tue", checkpoint="AFTERNOON", intraday_value=0.21)
     prior = admit_prior_state(bundle, afternoon)
     comparisons = compare_all(prior, afternoon)
-    context = dict(analyst_context(afternoon), **continuity_context(prior, comparisons))
+    profile = edition_profile("AFTERNOON")
+    context = dict(analyst_context(afternoon, profile, comparisons, prior), **continuity_context(prior, comparisons))
     return afternoon, context, bundle
 
 
@@ -271,7 +282,7 @@ def carried_setup():
                                       "renamed-carried-watch"])
 def test_invalid_continuity_records_are_rejected(mutation):
     packet, context, bundle = carried_setup()
-    value = narrative()
+    value = trimmed(narrative(), edition_profile("AFTERNOON"))
     if mutation == "unknown-watch":
         value["watch_updates"] = [dict(carried_id="watch-invented", assessment="weakened", reason="x",
                                        evidence_ids=["SPY-intraday"])]
@@ -299,7 +310,7 @@ def test_invalid_continuity_records_are_rejected(mutation):
 
 def test_valid_change_interpretation_cites_the_deterministic_comparison():
     packet, context, bundle = carried_setup()
-    value = narrative()
+    value = trimmed(narrative(), edition_profile("AFTERNOON"))
     value["changes"] = [dict(comparison_id="cmp-premarket-SPY-intraday",
                              text="SPY moved from {{premarket:SPY-intraday}} to {{SPY-intraday}} since the premarket.",
                              evidence_ids=["SPY-intraday", "premarket:SPY-intraday"])]

@@ -106,3 +106,10 @@ Numeric placeholders may use a prior ref exactly like a current one.
 - `changes`: up to three, each naming a `changed` comparison `id` and saying why the
   move matters, not just the arithmetic.
 On a cold start these arrays stay empty except new relationships and watches.
+
+EDITION: the packet's `edition` names the checkpoint, its budget profile, a word
+range for visible analysis, and short guidance. The range is editorial guidance,
+not a fill target. A light edition (`selection.mode` = changed) receives anchors,
+changed facts, leadership extremes, and carried dependencies; `selection` names
+what was omitted, and omitted facts cannot be cited. Rendered tables still carry
+every admitted row.

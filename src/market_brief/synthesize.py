@@ -13,9 +13,9 @@ from urllib.request import Request, urlopen
 
 from jsonschema import Draft202012Validator
 
-from .context import analyst_context, supplied_ids
+from .context import analyst_context, edition_profile, supplied_ids
 from .continuity import ASSESSMENTS, CARRIED_ASSESSMENTS, prior_values, validate_state
-from .evidence import ROOT, canonical, compact_model_record, digest, evidence_catalog, model_packet
+from .evidence import ROOT, canonical, compact_model_record, digest, evidence_catalog, model_packet, read_json
 
 TEXT = {"type": "string", "minLength": 1, "maxLength": 1800}
 # One claim of roughly eight to twelve words; the bound is a backstop, not the target.
@@ -73,11 +73,34 @@ NARRATIVE_SCHEMA = obj({
 TOKEN = re.compile(r"\{\{([a-zA-Z][\w-]*(?::[a-zA-Z][\w-]*)?)\}\}")
 
 
+def narrative_schema(profile=None):
+    """The one contract, with the edition's smaller bounds applied for light checkpoints."""
+    if not profile:
+        return NARRATIVE_SCHEMA
+    schema = json.loads(json.dumps(NARRATIVE_SCHEMA))
+    schema["properties"]["summary"]["maxItems"] = profile["summary_paragraphs"]
+    schema["properties"]["attention_ids"]["maxItems"] = profile["attention_items"]
+    schema["properties"]["attention"]["maxItems"] = profile["attention_items"]
+    schema["properties"]["watches"]["maxItems"] = profile["watches"]
+    return schema
+
+
+def analyst_model(config=None, environ=None):
+    """Configured analyst identity: one model for every edition, overridable by environment."""
+    environ = os.environ if environ is None else environ
+    config = config or read_json(ROOT / "config/editions.json")
+    configured = config["analyst"]["model"]
+    override = environ.get("MARKET_BRIEF_MODEL")
+    return dict(model=override or configured, source="environment" if override else "config/editions.json",
+                cli_model=config["analyst"].get("cli_model", "sonnet"))
+
+
 def validate_narrative(narrative, packet, context=None):
     """Mechanical grounding: schema, mode, references that exist in admitted evidence and were
     actually supplied in the analyst context, numeric placeholders, and trade/current-language rules.
     """
-    errors = list(Draft202012Validator(NARRATIVE_SCHEMA).iter_errors(narrative))
+    profile = (context or {}).get("edition") or edition_profile(packet["run"]["checkpoint"])
+    errors = list(Draft202012Validator(narrative_schema(profile)).iter_errors(narrative))
     if errors:
         raise ValueError("malformed narrative at " + ".".join(map(str, errors[0].absolute_path)))
     if narrative["mode"] != packet["run"]["mode"]:
@@ -153,21 +176,26 @@ def construct_prompt(packet, full=False, context=None):
     `output_schema` in context: the transport alone did not enforce the response shape.
     """
     instructions = (ROOT / "prompts/synthesis.md").read_text()
+    profile = edition_profile(packet["run"]["checkpoint"])
     if full:
         model_view = model_packet(packet)
         catalog = {ident: compact_model_record(row) for ident, row in evidence_catalog(model_view).items()}
         projected = dict(evidence=model_view, catalog=catalog, output_schema=NARRATIVE_SCHEMA)
+        limit = 120_000
     else:
-        projected = dict(context if context is not None else analyst_context(packet),
-                         output_schema=NARRATIVE_SCHEMA)
+        context = context if context is not None else analyst_context(packet, profile)
+        projected = dict(context, output_schema=narrative_schema(context.get("edition") or profile))
+        limit = min(120_000, profile["input_limit_bytes"])
     user = canonical(projected)
     size = len(user.encode())
     sections = {key: len(canonical(value).encode()) for key, value in projected.items()}
     largest = ", ".join(f"{key}={value}" for key, value in
                          sorted(sections.items(), key=lambda item: item[1], reverse=True)[:3])
     print(f"Synthesis packet: {size} bytes; largest sections: {largest}", flush=True)
-    if size > 120_000:
-        raise ValueError("bounded synthesis packet exceeds size limit")
+    if size > limit:
+        # Never truncate: a context that cannot fit its edition budget fails with diagnostics.
+        raise ValueError(f"bounded synthesis packet exceeds the {profile['profile']} edition budget: "
+                         f"{size} bytes > {limit}; largest sections: {largest}")
     return instructions, user
 
 
@@ -262,13 +290,16 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     if not api_key:
         raise ValueError("OpenRouter credentials are not configured")
     system, user = construct_prompt(packet, full=full, context=context)
+    profile = edition_profile(packet["run"]["checkpoint"])
+    analyst = analyst_model()
+    schema = NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile)
     requested_at = datetime.now(timezone.utc).isoformat()
-    payload = dict(model=OPENROUTER_MODEL, temperature=0, max_tokens=10000,
+    payload = dict(model=analyst["model"], temperature=0, max_tokens=profile["max_output_tokens"],
                    messages=[{"role": "system", "content": system},
                              {"role": "user", "content": user}],
                    plugins=[{"id": "response-healing"}],
                    response_format={"type": "json_schema", "json_schema": {
-                       "name": "market_brief_narrative", "strict": True, "schema": NARRATIVE_SCHEMA}},
+                       "name": "market_brief_narrative", "strict": True, "schema": schema}},
                    reasoning={"exclude": True})
     response = None
     for attempt in range(3):
@@ -292,13 +323,16 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     choice = (response.get("choices") or [{}])[0]
     finish_reason = choice.get("finish_reason", "unknown") if isinstance(choice, dict) else "unknown"
     provider_route = response.get("provider", "unknown")
-    resolved_model = response.get("model", OPENROUTER_MODEL)
+    resolved_model = response.get("model", analyst["model"])
     if safe_usage:
         print("Synthesis usage: " + " ".join(f"{key}={value}" for key, value in safe_usage.items())
               + f" finish={finish_reason} provider={provider_route} model={resolved_model}", flush=True)
     else:
         print(f"Synthesis usage: unavailable finish={finish_reason} provider={provider_route}", flush=True)
-    return narrative, dict(route="openrouter", provider="OpenRouter", model=OPENROUTER_MODEL,
+    return narrative, dict(route="openrouter", provider="OpenRouter", model=analyst["model"],
+                           model_source=analyst["source"], profile=profile["profile"],
+                           max_output_tokens=profile["max_output_tokens"], attempts=attempt + 1,
+                           input_bytes=len(user.encode()), output_bytes=len(canonical(narrative).encode()),
                            resolved_model=resolved_model, provider_route=provider_route,
                            finish_reason=finish_reason,
                            requested_at=requested_at, response_id=response.get("id"), usage=safe_usage,
@@ -312,11 +346,14 @@ def synthesize(packet, runner=subprocess.run, full=False, context=None):
     if not executable:
         raise ValueError("Claude CLI is not installed")
     system, user = construct_prompt(packet, full=full, context=context)
+    analyst = analyst_model()
+    profile = edition_profile(packet["run"]["checkpoint"])
+    schema = NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile)
     argv = [executable, "--print", "--safe-mode", "--tools", "", "--strict-mcp-config",
             "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands",
             "--no-session-persistence", "--setting-sources", "", "--output-format", "json",
-            "--model", "sonnet", "--system-prompt", system,
-            "--json-schema", canonical(NARRATIVE_SCHEMA)]
+            "--model", analyst["cli_model"], "--system-prompt", system,
+            "--json-schema", canonical(schema)]
     # Retain existing auth location, not unrelated provider credentials or project environment.
     env = {k: v for k, v in os.environ.items() if k in
            {"HOME", "PATH", "LANG", "USER", "SHELL", "XDG_CONFIG_HOME", "SSL_CERT_FILE"}}
@@ -339,7 +376,7 @@ def synthesize(packet, runner=subprocess.run, full=False, context=None):
     except (json.JSONDecodeError, TypeError, AttributeError):
         raise ValueError("Claude did not return a structured narrative") from None
     models = list(envelope.get("modelUsage", {}).keys())
-    return validated, dict(route="claude-cli", requested_model="sonnet",
+    return validated, dict(route="claude-cli", requested_model=analyst["cli_model"], profile=profile["profile"],
                            resolved_models=models or ["not exposed"],
                            prompt_hash=digest(dict(system=system, user=user)),
                            evidence_hash=digest(packet))

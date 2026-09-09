@@ -34,7 +34,7 @@ def test_markdown_html_same_facts_mode_and_literal_halt():
     assert set(parsed.refs) <= parsed.ids
     assert "Content-Security-Policy" in page
     assert 'id="theme-choice"' in page
-    assert page.index("What to watch") < page.index("Macro &amp; cross-asset")
+    assert page.index("What matters next") < page.index("Equity structure") < page.index("Macro &amp; rates")
     assert "direction-positive" in page and "direction-negative" in page
     assert 'class="number direction-neutral">3.86 % yield' in page
 
@@ -61,9 +61,8 @@ def test_live_header_uses_pacific_time_and_hides_plumbing():
     value["mode"] = "LIVE"
     _, page = render(packet, value)
     header = page.split("<h1>", 1)[0]
-    assert "LIVE" in header
-    assert "Tuesday, Sep 8 · 6:31 AM PT" in header
-    assert "Last updated: 5:45 AM PT" in header
+    assert "LIVE · Open +1M edition · Tuesday, Sep 8 · as of 5:45 AM PT" in header
+    assert header.count("PT") == 1  # one status/date/as-of line
     assert "Evidence cutoff" not in header
     assert "Generated 2026-" not in header
     assert "+00:00" not in header
@@ -85,7 +84,8 @@ def test_sample_commissioning_status_is_plain_language():
     md, page = render(packet, value)
     header = page.split("<h1>", 1)[0]
     assert "SAMPLE" in header and "COMMISSIONING RUN" in header
-    assert "commissioning test, not the scheduled pre-market brief" in page
+    assert "commissioning test, not the scheduled brief" in page
+    assert page.count("COMMISSIONING RUN") == 1
     assert "collection smoke test" not in page
     assert "COMMISSIONING RUN" in md
 

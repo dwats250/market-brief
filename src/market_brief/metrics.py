@@ -45,6 +45,22 @@ def yield_bps(current, baseline):
     return (current - baseline) * 100
 
 
+def dma_distance(close, average):
+    """`100 × (last completed close / SMA50 − 1)`; a current print is never mixed into it."""
+    if not finite(close) or not finite(average) or average <= 0:
+        raise ValueError("invalid average baseline")
+    return 100 * (close / average - 1)
+
+
+def rank_by_spread(rows, order):
+    """Strongest to weakest by the labeled twenty-session spread; missing last; stable ties."""
+    present = [row for row in rows if row.get("relative") and row["relative"].get("value") is not None]
+    missing = [row for row in rows if row not in present]
+    present.sort(key=lambda row: (-row["relative"]["value"], order.index(row["symbol"])))
+    missing.sort(key=lambda row: order.index(row["symbol"]))
+    return present + missing
+
+
 def history_metrics(closes):
     if not closes or any(not finite(c) or c <= 0 for c in closes):
         raise ValueError("history contains invalid close")
@@ -124,6 +140,9 @@ def derive(packet, universe, thresholds=None):
         if m["sma_50"] is not None:
             avg_id = add(sym, "sma50", "fifty-session average", m["sma_50"], "USD",
                          "fifty completed regular closes", h)
+            # Reader-facing distance, from the same admitted history and adjustment as the average.
+            add(sym, "dma50", "distance from 50DMA", dma_distance(h["closes"][-1], m["sma_50"]), "%",
+                "last completed close versus fifty-session average", h)
             if m["cross_50"]:
                 close_id = add(sym, "close", "regular close", h["closes"][-1], "USD",
                                "last completed session", h)

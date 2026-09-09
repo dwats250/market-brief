@@ -150,6 +150,50 @@ def advance_bundle(bundle, state, handoff, now):
     return updated
 
 
+# --- restore across runners -------------------------------------------------------------------
+
+ARTIFACT_NAME = "market-brief-continuity"
+WORKFLOW_PATH = ".github/workflows/schedule.yml"
+
+
+def select_artifact(artifacts, run_lookup, branch="main", workflow_path=WORKFLOW_PATH):
+    """Pick the newest unexpired bundle artifact from a successful run of the expected workflow.
+
+    The artifact name alone proves nothing; branch, workflow, and conclusion are checked.
+    """
+    candidates = [a for a in artifacts if isinstance(a, dict) and not a.get("expired")
+                  and isinstance(a.get("workflow_run"), dict)
+                  and a["workflow_run"].get("head_branch") == branch and a.get("created_at")]
+    for artifact in sorted(candidates, key=lambda a: a["created_at"], reverse=True):
+        run = run_lookup(artifact["workflow_run"]["id"]) or {}
+        if run.get("conclusion") == "success" and run.get("path") == workflow_path:
+            return artifact
+    return None
+
+
+def restore_bundle(source, destination, mode="LIVE"):
+    """Validate a downloaded bundle and install it as this workspace's continuity state.
+
+    Returns (bundle, note). Records from the wrong mode or from commissioning/experiment
+    origins are dropped before anything is written; nothing valid means an explicit cold start.
+    """
+    bundle, note = load_bundle(source)
+    dropped = []
+    for slot in ("close", "premarket", "latest"):
+        record = bundle.get(slot)
+        if record is None:
+            continue
+        origin = record.get("origin", {})
+        if origin.get("mode") != mode or origin.get("commissioning") or origin.get("experiment"):
+            bundle[slot] = None
+            dropped.append(slot)
+    if dropped:
+        note = "; ".join(filter(None, [note, "non-production records dropped: " + ", ".join(dropped)]))
+    if any(bundle[slot] for slot in ("close", "premarket", "latest")):
+        write_bundle(destination, bundle)
+    return bundle, note
+
+
 # --- admission ----------------------------------------------------------------------------------
 
 def _origin_reason(record, packet, kind):

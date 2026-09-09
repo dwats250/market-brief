@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import uuid
@@ -13,6 +14,7 @@ from . import __version__
 from .collect import ALPACA_UNIVERSE, alpaca_probe, collect_live, cuttingboard_record
 from .context import analyst_context
 from .continuity import (
+    ARTIFACT_NAME,
     admit_prior_state,
     advance_bundle,
     bundle_path,
@@ -20,6 +22,8 @@ from .continuity import (
     continuity_context,
     edition_state,
     load_bundle,
+    restore_bundle,
+    select_artifact,
     session_handoff,
     write_bundle,
 )
@@ -34,7 +38,7 @@ RUN_ROOT = ROOT
 SAMPLE_CONTINUITY = ROOT / "tests/fixtures/continuity.sample.json"
 
 
-def output_directory(root, mode, target):
+def output_directory(root, mode, target, checkpoint="PREMARKET"):
     root = Path(root).resolve()
     base = root / "runs"
     if base.resolve() != base:
@@ -42,7 +46,8 @@ def output_directory(root, mode, target):
     folder = base / target.strftime("%Y-%m-%d")
     if folder.resolve() != folder:
         raise ValueError("session directory must not be a symlink")
-    folder = folder / f"{mode.lower()}-premarket-{target.strftime('%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    # Named by the resolved checkpoint: a commissioning run carries the phase it collected in.
+    folder = folder / f"{mode.lower()}-{checkpoint.lower()}-{target.strftime('%H%M%S')}-{uuid.uuid4().hex[:8]}"
     folder.mkdir(parents=True, exist_ok=False)
     return folder
 
@@ -174,7 +179,7 @@ def run(args):
                          scheduled_checkpoint_at=checkpoint_data["scheduled_at"],
                          app_version=__version__, universe_hash=digest(universe),
                          sources_config_hash=digest(config), manual_input=bool(args.input))
-    folder = output_directory(RUN_ROOT, mode, target)
+    folder = output_directory(RUN_ROOT, mode, target, checkpoint)
     # The folder name is the run identity every artifact of this run carries.
     packet["run"]["run_id"] = folder.name
     # Structured prior state: admitted by exchange session, compared deterministically.
@@ -264,6 +269,56 @@ def run(args):
     return 0
 
 
+def _gh_json(args, runner=subprocess.run):
+    result = runner(["gh", "api", *args], capture_output=True, text=True, check=False, timeout=60)
+    if result.returncode != 0:
+        raise ValueError("GitHub API request failed")
+    return json.loads(result.stdout)
+
+
+def restore_continuity(args, runner=subprocess.run):
+    """Install the newest accepted production bundle from a prior runner, or cold start explicitly.
+
+    Never fails the job: an absent, foreign, or corrupt bundle produces a current-only brief.
+    """
+    destination = bundle_path(RUN_ROOT)
+    try:
+        if args.from_file:
+            source = Path(args.from_file)
+            origin = f"file {source}"
+        else:
+            repository = args.repository or os.environ.get("GITHUB_REPOSITORY")
+            if not repository:
+                raise ValueError("repository not configured")
+            listing = _gh_json([f"repos/{repository}/actions/artifacts?name={ARTIFACT_NAME}&per_page=50"], runner)
+            artifact = select_artifact(listing.get("artifacts", []),
+                                       lambda run_id: _gh_json([f"repos/{repository}/actions/runs/{run_id}"], runner),
+                                       branch=args.branch)
+            if artifact is None:
+                print("Continuity: cold start; no accepted bundle from a successful main-branch run.")
+                return 0
+            download = RUN_ROOT / "runs" / "continuity" / "restore"
+            download.mkdir(parents=True, exist_ok=True)
+            result = runner(["gh", "run", "download", str(artifact["workflow_run"]["id"]), "-n", ARTIFACT_NAME,
+                             "-D", str(download), "-R", repository],
+                            capture_output=True, text=True, check=False, timeout=120)
+            if result.returncode != 0:
+                raise ValueError("artifact download failed")
+            source = download / "bundle.json"
+            origin = f"artifact {artifact.get('id')} from run {artifact['workflow_run']['id']}"
+        bundle, note = restore_bundle(source, destination)
+        slots = {slot: (bundle[slot]["origin"]["run_id"] if bundle.get(slot) else None)
+                 for slot in ("close", "premarket", "latest")}
+        if any(slots.values()):
+            print(f"Continuity: restored {origin}; " + ", ".join(f"{k}={v}" for k, v in slots.items())
+                  + (f"; {note}" if note else ""))
+        else:
+            print(f"Continuity: cold start; {origin} held no usable production state" + (f" ({note})" if note else ""))
+    except (ValueError, OSError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
+        print(f"Continuity: cold start; restore failed ({type(exc).__name__}).")
+    return 0
+
+
 def scheduled(args):
     now = datetime.now(timezone.utc)
     ready, info = due(now, args.checkpoint)
@@ -291,7 +346,7 @@ def scheduled(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="One local pre-market briefing, grounded in evidence")
     parser.add_argument("command", choices=["premarket", "schedule", "resolve-scheduled",
-                                             "alpaca-probe", "open", "publish"])
+                                             "alpaca-probe", "open", "publish", "continuity-restore"])
     parser.add_argument("--replay", action="store_true", help="offline fictional evidence + narrative")
     parser.add_argument("--input", type=Path, help="sourced input JSON; SAMPLE for replay, LIVE otherwise")
     parser.add_argument("--synthesize", action="store_true", help="call Claude even for SAMPLE evidence")
@@ -307,6 +362,9 @@ def main(argv=None):
                         help="label a manual live run by its actual collection time and market phase")
     parser.add_argument("--continuity", type=Path,
                         help="replay only: continuity bundle to admit instead of the sample fixture")
+    parser.add_argument("--from-file", type=Path, help="continuity-restore: install this bundle file")
+    parser.add_argument("--repository", help="continuity-restore: owner/repo (default GITHUB_REPOSITORY)")
+    parser.add_argument("--branch", default="main", help="continuity-restore: expected artifact branch")
     args = parser.parse_args(argv)
     try:
         if args.command == "alpaca-probe":
@@ -318,6 +376,8 @@ def main(argv=None):
         if args.command == "publish":
             print(publish_latest(RUN_ROOT))
             return 0
+        if args.command == "continuity-restore":
+            return restore_continuity(args)
         if args.command == "resolve-scheduled":
             print(scheduled_checkpoint(datetime.now(timezone.utc)) or "SKIP")
             return 0

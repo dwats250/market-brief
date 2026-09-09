@@ -238,8 +238,8 @@ END:VCALENDAR'''
 def test_cli_replay_and_invalid_model_leave_no_latest_pointer(tmp_path, monkeypatch):
     # Assets are read from this repo, but the generated output is confined to a temporary test root.
     original = cli.output_directory
-    monkeypatch.setattr(cli, "output_directory", lambda root, mode, target:
-                        original(tmp_path, mode, target))
+    monkeypatch.setattr(cli, "output_directory", lambda root, *rest:
+                        original(tmp_path, *rest))
     monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
     assert cli.main(["premarket", "--replay"]) == 0
     directories = list((tmp_path / "runs").glob("*/*"))
@@ -288,3 +288,108 @@ def test_publish_copies_only_human_facing_latest(tmp_path):
     assert result == tmp_path / "publish/index.html"
     assert result.read_text() == latest.read_text()
     assert [path.name for path in result.parent.iterdir()] == ["index.html"]
+
+
+# --- continuity across runner boundaries ------------------------------------------------------
+
+def test_fresh_workspace_restores_a_valid_bundle_and_rejects_foreign_state(tmp_path, monkeypatch):
+    from test_continuity import live_cli
+
+    from market_brief.continuity import bundle_path, load_bundle
+    first = tmp_path / "runner-a"
+    first.mkdir()
+    runner = live_cli(monkeypatch, first, "2026-09-04T20:03:00+00:00", "CLOSE_1M")
+    assert runner.main(["premarket", "--checkpoint", "CLOSE_1M"]) == 0
+    exported = bundle_path(first)
+    folder = next(p for p in (first / "runs/2026-09-04").iterdir() if (p / "evidence.json").exists())
+    assert folder.name.startswith("live-close_1m-")
+    # A second, empty workspace restores from the file the first runner uploaded.
+    second = tmp_path / "runner-b"
+    second.mkdir()
+    monkeypatch.setattr(cli, "RUN_ROOT", second)
+    assert cli.main(["continuity-restore", "--from-file", str(exported)]) == 0
+    restored, note = load_bundle(bundle_path(second))
+    assert note == "" and restored["close"]["content_hash"] == load_bundle(exported)[0]["close"]["content_hash"]
+    runner = live_cli(monkeypatch, second, "2026-09-08T12:45:00+00:00", "PREMARKET", intraday=False)
+    assert runner.main(["premarket", "--checkpoint", "PREMARKET"]) == 0
+    folder = next(p for p in (second / "runs/2026-09-08").iterdir() if (p / "evidence.json").exists())
+    assert folder.name.startswith("live-premarket-")
+    context = json.loads((folder / "analyst_context.json").read_text())
+    assert context["prior_state"]["status"] == "available"
+    # A bundle written by a SAMPLE, experiment, or commissioning origin never installs.
+    foreign = json.loads(exported.read_text())
+    for slot in ("close", "premarket", "latest"):
+        if foreign[slot]:
+            foreign[slot]["origin"]["mode"] = "SAMPLE"
+            foreign[slot]["content_hash"] = cli.digest({k: v for k, v in foreign[slot].items() if k != "content_hash"})
+    (tmp_path / "foreign.json").write_text(json.dumps(foreign))
+    third = tmp_path / "runner-c"
+    third.mkdir()
+    monkeypatch.setattr(cli, "RUN_ROOT", third)
+    assert cli.main(["continuity-restore", "--from-file", str(tmp_path / "foreign.json")]) == 0
+    assert not bundle_path(third).exists()
+    assert cli.main(["continuity-restore", "--from-file", str(tmp_path / "absent.json")]) == 0
+    assert not bundle_path(third).exists()
+
+
+def test_artifact_selection_requires_main_branch_successful_expected_workflow():
+    from market_brief.continuity import select_artifact
+    runs = {
+        1: {"conclusion": "success", "path": ".github/workflows/schedule.yml"},
+        2: {"conclusion": "failure", "path": ".github/workflows/schedule.yml"},
+        3: {"conclusion": "success", "path": ".github/workflows/pages.yml"},
+        4: {"conclusion": "success", "path": ".github/workflows/schedule.yml"},
+    }
+    def artifact(ident, run, branch, created, expired=False):
+        return {"id": ident, "expired": expired, "created_at": created,
+                "workflow_run": {"id": run, "head_branch": branch}}
+    artifacts = [
+        artifact(10, 2, "main", "2026-09-08T20:10:00Z"),       # failed run
+        artifact(11, 3, "main", "2026-09-08T19:10:00Z"),       # other workflow
+        artifact(12, 4, "feature", "2026-09-08T18:10:00Z"),    # wrong branch
+        artifact(13, 1, "main", "2026-09-08T17:10:00Z", True),  # expired
+        artifact(14, 1, "main", "2026-09-08T13:10:00Z"),       # acceptable
+    ]
+    assert select_artifact(artifacts, runs.get)["id"] == 14
+    assert select_artifact(artifacts[:4], runs.get) is None
+    assert select_artifact([], runs.get) is None
+
+
+def test_restore_uses_gh_only_for_listing_run_lookup_and_download(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from market_brief.continuity import bundle_path, load_bundle
+    exported = ROOT / "tests/fixtures/continuity.sample.json"
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        if argv[:2] == ["gh", "api"] and "artifacts" in argv[2]:
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"artifacts": [
+                {"id": 7, "expired": False, "created_at": "2026-09-04T20:10:00Z",
+                 "workflow_run": {"id": 99, "head_branch": "main"}}]}))
+        if argv[:2] == ["gh", "api"]:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(
+                {"conclusion": "success", "path": ".github/workflows/schedule.yml"}))
+        assert argv[:3] == ["gh", "run", "download"] and argv[3] == "99"
+        target = Path(argv[argv.index("-D") + 1])
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "bundle.json").write_text(exported.read_text())
+        return SimpleNamespace(returncode=0, stdout="")
+    monkeypatch.setattr(cli, "RUN_ROOT", tmp_path)
+    args = SimpleNamespace(from_file=None, repository="owner/repo", branch="main")
+    assert cli.restore_continuity(args, runner=runner) == 0
+    assert [c[:2] for c in calls] == [["gh", "api"], ["gh", "api"], ["gh", "run"]]
+    # The sample fixture is SAMPLE-origin state: a production restore drops it and cold starts.
+    assert not bundle_path(tmp_path).exists()
+    assert load_bundle(bundle_path(tmp_path))[1] == "no continuity bundle"
+
+
+def test_pages_payload_is_only_the_human_brief_and_archives_stay_outside():
+    workflow = (ROOT / ".github/workflows/schedule.yml").read_text()
+    pages_step = workflow.split("Upload Pages artifact", 1)[1].split("uses: actions/deploy-pages", 1)[0]
+    assert "path: publish" in pages_step and "runs" not in pages_step
+    assert "actions: read" in workflow
+    assert "name: market-brief-continuity\n" in workflow
+    assert "inputs.experiment != true && inputs.commissioning != true" in workflow
+    assert "!runs/continuity/" in workflow

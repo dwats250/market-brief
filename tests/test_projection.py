@@ -157,7 +157,7 @@ def test_experiment_run_never_publishes_or_records_success(tmp_path, monkeypatch
     value["mode"] = "LIVE"
     monkeypatch.setattr(cli, "synthesize", lambda packet, **kwargs: (value, {"route": "test"}))
     original = cli.output_directory
-    monkeypatch.setattr(cli, "output_directory", lambda root, mode, target: original(tmp_path, mode, target))
+    monkeypatch.setattr(cli, "output_directory", lambda root, *rest: original(tmp_path, *rest))
     monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
     published = []
     monkeypatch.setattr(cli, "publish_latest", lambda root: published.append(root))
@@ -223,7 +223,7 @@ def test_context_for_a_different_evidence_record_is_rejected():
 
 def test_replay_persists_context_that_hashes_to_the_saved_evidence(tmp_path, monkeypatch):
     original = cli.output_directory
-    monkeypatch.setattr(cli, "output_directory", lambda root, mode, target: original(tmp_path, mode, target))
+    monkeypatch.setattr(cli, "output_directory", lambda root, *rest: original(tmp_path, *rest))
     monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
     assert cli.main(["premarket", "--replay"]) == 0
     folder = next((tmp_path / "runs").glob("*/*"))

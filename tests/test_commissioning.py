@@ -43,7 +43,7 @@ def test_commissioning_run_resolves_phase_from_clock(tmp_path, monkeypatch):
     fixture = tmp_path / "postclose.json"
     fixture.write_text(json.dumps(raw))
     original = cli.output_directory
-    monkeypatch.setattr(cli, "output_directory", lambda root, mode, target: original(tmp_path, mode, target))
+    monkeypatch.setattr(cli, "output_directory", lambda root, *rest: original(tmp_path, *rest))
     monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
     monkeypatch.setattr(cli, "publish_latest", lambda root: None)
     assert cli.main(["premarket", "--replay", "--commissioning", "--input", str(fixture)]) == 0
@@ -60,7 +60,7 @@ def test_commissioning_run_resolves_phase_from_clock(tmp_path, monkeypatch):
 
 def test_replay_commissioning_stays_sample_and_never_publishes(tmp_path, monkeypatch):
     original = cli.output_directory
-    monkeypatch.setattr(cli, "output_directory", lambda root, mode, target: original(tmp_path, mode, target))
+    monkeypatch.setattr(cli, "output_directory", lambda root, *rest: original(tmp_path, *rest))
     monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
     published = []
     monkeypatch.setattr(cli, "publish_latest", lambda root: published.append(root))

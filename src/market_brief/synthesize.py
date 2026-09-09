@@ -265,6 +265,10 @@ def _openrouter_narrative(response):
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices:
         raise ValueError("OpenRouter returned no synthesis choice")
+    if choices[0].get("finish_reason") == "length":
+        diagnostic = _openrouter_diagnostic(response)
+        raise ValueError("OpenRouter synthesis output budget exhausted (finish_reason=length); "
+                         f"structured output rejected before validation; diagnostic={diagnostic}")
     message = choices[0].get("message") or {}
     if message.get("refusal"):
         raise ValueError("OpenRouter refused synthesis")
@@ -302,7 +306,7 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
                    plugins=[{"id": "response-healing"}],
                    response_format={"type": "json_schema", "json_schema": {
                        "name": "market_brief_narrative", "strict": True, "schema": schema}},
-                   reasoning={"exclude": True})
+                   reasoning={"max_tokens": profile["reasoning_max_tokens"], "exclude": True})
     response = None
     for attempt in range(3):
         try:
@@ -333,7 +337,8 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
         print(f"Synthesis usage: unavailable finish={finish_reason} provider={provider_route}", flush=True)
     return narrative, dict(route="openrouter", provider="OpenRouter", model=analyst["model"],
                            model_source=analyst["source"], profile=profile["profile"],
-                           max_output_tokens=profile["max_output_tokens"], attempts=attempt + 1,
+                           max_output_tokens=profile["max_output_tokens"],
+                           reasoning_max_tokens=profile["reasoning_max_tokens"], attempts=attempt + 1,
                            input_bytes=len(user.encode()), output_bytes=len(canonical(narrative).encode()),
                            resolved_model=resolved_model, provider_route=provider_route,
                            finish_reason=finish_reason,

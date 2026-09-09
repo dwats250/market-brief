@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
 
-from .schedule import CHECKPOINT_TITLES, CHECKPOINTS, checkpoint_session, session_relation
+from .schedule import CHECKPOINT_TITLES, CHECKPOINTS, checkpoint_session, next_session_date, session_relation
 
 ROOT = Path(__file__).resolve().parents[2]
 ET = ZoneInfo("America/New_York")
@@ -68,6 +68,7 @@ def session_info(now, checkpoint="PREMARKET"):
     checkpoint_data = checkpoint_session(now, checkpoint)
     return dict(date=day, trading_day=bool(trading),
                 previous_session=previous.date().isoformat(),
+                next_session=next_session_date(now),
                 open=opening.isoformat(), close=closing.isoformat(),
                 meaningful_premarket=bool(trading and local.hour >= 7 and now < opening),
                 session_gap=not trading,
@@ -196,14 +197,18 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
                 checked = timestamp(record["checked_at"] or source["retrieved_at"])
                 if not now - timedelta(hours=24) <= checked <= now + timedelta(minutes=5):
                     continue
-                if when.astimezone(ET).date() != now.astimezone(ET).date():
+                session = packet["run"]["session"]
+                event_date = when.astimezone(ET).date().isoformat()
+                if event_date not in {now.astimezone(ET).date().isoformat(), session["next_session"]}:
                     continue
                 record["freshness"] = "DATED"
                 record["expected_freshness"] = source["expected_freshness"]
-                session = packet["run"]["session"]
                 record["scheduled_at_et"] = when.astimezone(ET).isoformat()
-                record["session_relation"] = session_relation(
-                    when, timestamp(session["open"]), timestamp(session["close"]))
+                record["session_date"] = event_date
+                # Next-session items are carried for continuity; they are never "today".
+                record["session_relation"] = ("NEXT SESSION" if event_date != now.astimezone(ET).date().isoformat()
+                                              else session_relation(when, timestamp(session["open"]),
+                                                                    timestamp(session["close"])))
             elif now - timestamp(item["published_at"]) > timedelta(days=2):
                 continue
             else:
@@ -219,7 +224,39 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
     return packet
 
 
+WINDOWS = {"daily return": "1s", "twenty-session return": "20s", "fifty-session average": "50s",
+           "distance from 50DMA": "50s", "regular close": "1s", "daily par yield": "1d",
+           "daily yield change": "1d", "premarket return": "intraday", "intraday return": "intraday"}
+
+
+def metric_identity(row):
+    """Stable identity for comparisons across runs: instrument, metric, window, benchmark, basis.
+
+    Evidence IDs such as `SPY-daily` are unique only within a run; this identity is what
+    makes a later observation of the same measurement mathematically comparable.
+    """
+    metric = row.get("metric") or ""
+    benchmark = metric.removeprefix("relative to ") if metric.startswith("relative to ") else None
+    window = "20s" if benchmark else WINDOWS.get(metric, row.get("frequency") or "unknown")
+    basis = row.get("adjustment") or row.get("baseline") or "unspecified"
+    if row.get("adjustment"):
+        basis = f"{row['adjustment']}/regular_close"
+    identity = dict(instrument=row.get("topic"), metric=metric, window=window,
+                    benchmark=benchmark, basis=basis)
+    identity["key"] = "|".join(str(identity[k] or "-")
+                               for k in ("instrument", "metric", "window", "benchmark", "basis"))
+    return identity
+
+
+def annotate_identity(packet):
+    for field in ("observations", "derived"):
+        for row in packet[field]:
+            row["identity"] = metric_identity(row)
+    return packet
+
+
 def finalize_coverage(packet):
+    annotate_identity(packet)
     anchors = {r["topic"] for r in packet["derived"] if r["metric"] == "daily return"}
     calendars = [s for s in packet["sources"] if s["kind"] == "calendar"]
     missing = [f"{s} prior-close history unavailable" for s in ("SPY", "QQQ") if s not in anchors]
@@ -277,7 +314,7 @@ def evidence_catalog(packet):
 
 MODEL_RECORD_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at",
                        "source_id", "status", "reason", "frequency", "freshness",
-                       "expected_freshness", "magnitude")
+                       "expected_freshness", "magnitude", "identity")
 
 
 def compact_model_record(row):

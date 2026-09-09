@@ -234,6 +234,9 @@ def test_replay_persists_context_that_hashes_to_the_saved_evidence(tmp_path, mon
     assert context["evidence_hash"] == digest(evidence) == metadata["evidence_hash"]
     assert metadata["context_hash"] == digest(context)
     assert metadata["context_schema"] == CONTEXT_SCHEMA
-    # Replaying the saved evidence rebuilds the identical context.
-    assert digest(analyst_context(evidence)) == metadata["context_hash"]
+    # Replaying the saved evidence rebuilds the identical current-evidence projection; the
+    # continuity portion is reproduced from the saved evidence's deterministic comparisons.
+    rebuilt = analyst_context(evidence)
+    assert {k: v for k, v in context.items() if k not in ("prior_state", "comparisons")} == rebuilt
+    assert [c["id"] for c in context["comparisons"]] == [c["id"] for c in evidence["continuity"]["comparisons"]]
     assert set(supplied_ids(context)) == set(evidence_catalog(model_packet(evidence)))

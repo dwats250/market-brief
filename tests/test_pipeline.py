@@ -268,14 +268,14 @@ def test_latest_output_is_stable_and_openable(tmp_path, monkeypatch):
     latest = tmp_path / "output/latest.html"
     assert latest.read_text() == "<html>second</html>"
     opened = []
-    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(cli, "RUN_ROOT", tmp_path)
     monkeypatch.setattr(cli.webbrowser, "open", lambda url: opened.append(url))
     assert cli.main(["open"]) == 0
     assert opened == [latest.resolve().as_uri()]
 
 
 def test_open_command_reports_missing_latest(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(cli, "RUN_ROOT", tmp_path)
     assert cli.main(["open"]) == 2
     assert "No latest brief exists" in capsys.readouterr().err
 

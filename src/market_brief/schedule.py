@@ -94,3 +94,27 @@ def session_relation(when, exchange_open, exchange_close):
     if when <= exchange_close:
         return "DURING SESSION"
     return "AFTER CLOSE"
+
+
+def next_session_date(now):
+    """The exchange session after the one `now` belongs to (holiday and weekend aware)."""
+    cal = xcals.get_calendar("XNYS")
+    day = now.astimezone(ET).date().isoformat()
+    session = cal.date_to_session(day, direction="next")
+    if not cal.is_session(day) or now < cal.session_close(session).to_pydatetime():
+        return session.date().isoformat()
+    return cal.next_session(session).date().isoformat()
+
+
+def next_checkpoint(now, current=None):
+    """The next scheduled checkpoint after `now`: later today, or the next session's premarket.
+
+    `current` is the checkpoint of the running edition, which is never its own next update.
+    """
+    later = [checkpoint_session(now, checkpoint) for checkpoint in CHECKPOINTS if checkpoint != current]
+    later = [info for info in later if info["trading_day"] and datetime.fromisoformat(info["scheduled_at"]) > now]
+    if later:
+        return min(later, key=lambda info: info["scheduled_at"])
+    # Nothing later today: the next session's premarket, probed at a time inside that day.
+    probe = datetime.fromisoformat(next_session_date(now) + "T12:00:00+00:00")
+    return checkpoint_session(probe, "PREMARKET")

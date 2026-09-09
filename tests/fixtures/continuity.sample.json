@@ -1,0 +1,619 @@
+{
+  "schema_version": "market-brief.continuity-bundle.v1",
+  "close": {
+    "schema_version": "market-brief.continuity.v1",
+    "kind": "session_handoff",
+    "origin": {
+      "run_id": "sample-close_1m-200300-fixture",
+      "mode": "SAMPLE",
+      "checkpoint": "CLOSE_1M",
+      "session_date": "2026-09-04",
+      "target_time": "2026-09-04T20:03:00+00:00",
+      "evidence_hash": "dacb19ffa6b3f49dc56909cb8810ef896eb380927d122da490ab4df7c0ecc5fb",
+      "context_hash": "4025ac50d80ce1329e47ccdabc790e82de9df83a5b45c056ac4fc46c147269b9",
+      "narrative_hash": "df8d1578821efe2034e6215c93fbbf93352bbf8841710842e16b062485256889",
+      "app_version": "test",
+      "commissioning": false,
+      "experiment": false
+    },
+    "session": {
+      "date": "2026-09-04",
+      "previous_session": "2026-09-04",
+      "next_session": "2026-09-08",
+      "close": "2026-09-04T20:00:00+00:00",
+      "evidence_cutoff": "2026-09-04T20:03:00+00:00"
+    },
+    "observed": {
+      "data_status": {
+        "status": "COMPLETED_SESSION",
+        "reason": "completed-session daily bars admitted"
+      },
+      "anchors": {},
+      "continuity": "cold_start",
+      "continuity_reason": "same-session continuity unavailable: premarket: absent; latest: absent",
+      "comparisons": [],
+      "snapshots": {
+        "GDX-daily": {
+          "id": "GDX-daily",
+          "topic": "GDX",
+          "metric": "daily return",
+          "value": -0.0408,
+          "unit": "%",
+          "baseline": "prior regular close / price return",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "SMALL",
+          "identity": {
+            "instrument": "GDX",
+            "metric": "daily return",
+            "window": "1s",
+            "benchmark": null,
+            "basis": "split/regular_close",
+            "key": "GDX|daily return|1s|-|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "GDX-spread20": {
+          "id": "GDX-spread20",
+          "topic": "GDX",
+          "metric": "relative to GLD",
+          "value": -3.126319,
+          "unit": "pp",
+          "baseline": "twenty-session price return minus GLD",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "LARGE",
+          "identity": {
+            "instrument": "GDX",
+            "metric": "relative to GLD",
+            "window": "20s",
+            "benchmark": "GLD",
+            "basis": "split/regular_close",
+            "key": "GDX|relative to GLD|20s|GLD|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "GLD-daily": {
+          "id": "GLD-daily",
+          "topic": "GLD",
+          "metric": "daily return",
+          "value": 0.113336,
+          "unit": "%",
+          "baseline": "prior regular close / price return",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "SMALL",
+          "identity": {
+            "instrument": "GLD",
+            "metric": "daily return",
+            "window": "1s",
+            "benchmark": null,
+            "basis": "split/regular_close",
+            "key": "GLD|daily return|1s|-|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "GLD-r20": {
+          "id": "GLD-r20",
+          "topic": "GLD",
+          "metric": "twenty-session return",
+          "value": 2.316602,
+          "unit": "%",
+          "baseline": "twenty completed sessions / price return",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "LARGE",
+          "identity": {
+            "instrument": "GLD",
+            "metric": "twenty-session return",
+            "window": "20s",
+            "benchmark": null,
+            "basis": "split/regular_close",
+            "key": "GLD|twenty-session return|20s|-|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "GLD-sma50": {
+          "id": "GLD-sma50",
+          "topic": "GLD",
+          "metric": "fifty-session average",
+          "value": 103.06,
+          "unit": "USD",
+          "baseline": "fifty completed regular closes",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "NEUTRAL",
+          "identity": {
+            "instrument": "GLD",
+            "metric": "fifty-session average",
+            "window": "50s",
+            "benchmark": null,
+            "basis": "split/regular_close",
+            "key": "GLD|fifty-session average|50s|-|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "NVDA-spread20": {
+          "id": "NVDA-spread20",
+          "topic": "NVDA",
+          "metric": "relative to QQQ",
+          "value": 6.388625,
+          "unit": "pp",
+          "baseline": "twenty-session price return minus QQQ",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "LARGE",
+          "identity": {
+            "instrument": "NVDA",
+            "metric": "relative to QQQ",
+            "window": "20s",
+            "benchmark": "QQQ",
+            "basis": "split/regular_close",
+            "key": "NVDA|relative to QQQ|20s|QQQ|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "QQQ-daily": {
+          "id": "QQQ-daily",
+          "topic": "QQQ",
+          "metric": "daily return",
+          "value": 0.148368,
+          "unit": "%",
+          "baseline": "prior regular close / price return",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "SMALL",
+          "identity": {
+            "instrument": "QQQ",
+            "metric": "daily return",
+            "window": "1s",
+            "benchmark": null,
+            "basis": "split/regular_close",
+            "key": "QQQ|daily return|1s|-|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "QQQ-r20": {
+          "id": "QQQ-r20",
+          "topic": "QQQ",
+          "metric": "twenty-session return",
+          "value": 3.053435,
+          "unit": "%",
+          "baseline": "twenty completed sessions / price return",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "LARGE",
+          "identity": {
+            "instrument": "QQQ",
+            "metric": "twenty-session return",
+            "window": "20s",
+            "benchmark": null,
+            "basis": "split/regular_close",
+            "key": "QQQ|twenty-session return|20s|-|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "QQQ-sma50": {
+          "id": "QQQ-sma50",
+          "topic": "QQQ",
+          "metric": "fifty-session average",
+          "value": 104.08,
+          "unit": "USD",
+          "baseline": "fifty completed regular closes",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "NEUTRAL",
+          "identity": {
+            "instrument": "QQQ",
+            "metric": "fifty-session average",
+            "window": "50s",
+            "benchmark": null,
+            "basis": "split/regular_close",
+            "key": "QQQ|fifty-session average|50s|-|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "QQQ-spread20": {
+          "id": "QQQ-spread20",
+          "topic": "QQQ",
+          "metric": "relative to SPY",
+          "value": 1.874653,
+          "unit": "pp",
+          "baseline": "twenty-session price return minus SPY",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "LARGE",
+          "identity": {
+            "instrument": "QQQ",
+            "metric": "relative to SPY",
+            "window": "20s",
+            "benchmark": "SPY",
+            "basis": "split/regular_close",
+            "key": "QQQ|relative to SPY|20s|SPY|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "SPY-daily": {
+          "id": "SPY-daily",
+          "topic": "SPY",
+          "metric": "daily return",
+          "value": 0.058286,
+          "unit": "%",
+          "baseline": "prior regular close / price return",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "SMALL",
+          "identity": {
+            "instrument": "SPY",
+            "metric": "daily return",
+            "window": "1s",
+            "benchmark": null,
+            "basis": "split/regular_close",
+            "key": "SPY|daily return|1s|-|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "SPY-intraday": {
+          "id": "SPY-intraday",
+          "topic": "SPY",
+          "metric": "premarket return",
+          "value": -0.53,
+          "unit": "%",
+          "baseline": "latest trade versus previous regular close",
+          "observed_at": "2026-09-04T19:59:00+00:00",
+          "frequency": "intraday",
+          "status": "DELAYED",
+          "identity": {
+            "instrument": "SPY",
+            "metric": "premarket return",
+            "window": "intraday",
+            "benchmark": null,
+            "basis": "latest trade versus previous regular close",
+            "key": "SPY|premarket return|intraday|-|latest trade versus previous regular close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "SPY-r20": {
+          "id": "SPY-r20",
+          "topic": "SPY",
+          "metric": "twenty-session return",
+          "value": 1.178782,
+          "unit": "%",
+          "baseline": "twenty completed sessions / price return",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "LARGE",
+          "identity": {
+            "instrument": "SPY",
+            "metric": "twenty-session return",
+            "window": "20s",
+            "benchmark": null,
+            "basis": "split/regular_close",
+            "key": "SPY|twenty-session return|20s|-|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "SPY-sma50": {
+          "id": "SPY-sma50",
+          "topic": "SPY",
+          "metric": "fifty-session average",
+          "value": 101.53,
+          "unit": "USD",
+          "baseline": "fifty completed regular closes",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "magnitude": "NEUTRAL",
+          "identity": {
+            "instrument": "SPY",
+            "metric": "fifty-session average",
+            "window": "50s",
+            "benchmark": null,
+            "basis": "split/regular_close",
+            "key": "SPY|fifty-session average|50s|-|split/regular_close"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "treasury-10y": {
+          "id": "treasury-10y",
+          "topic": "US 10Y",
+          "metric": "daily par yield",
+          "value": 4.12,
+          "unit": "% yield",
+          "baseline": "previous daily Treasury-style observation",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "identity": {
+            "instrument": "US 10Y",
+            "metric": "daily par yield",
+            "window": "1d",
+            "benchmark": null,
+            "basis": "previous daily Treasury-style observation",
+            "key": "US 10Y|daily par yield|1d|-|previous daily Treasury-style observation"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "treasury-10y-change": {
+          "id": "treasury-10y-change",
+          "topic": "US 10Y",
+          "metric": "daily yield change",
+          "value": 1,
+          "unit": "bp",
+          "baseline": "previous daily Treasury-style observation",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "identity": {
+            "instrument": "US 10Y",
+            "metric": "daily yield change",
+            "window": "1d",
+            "benchmark": null,
+            "basis": "previous daily Treasury-style observation",
+            "key": "US 10Y|daily yield change|1d|-|previous daily Treasury-style observation"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "treasury-2y": {
+          "id": "treasury-2y",
+          "topic": "US 2Y",
+          "metric": "daily par yield",
+          "value": 3.86,
+          "unit": "% yield",
+          "baseline": "previous daily Treasury-style observation",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "identity": {
+            "instrument": "US 2Y",
+            "metric": "daily par yield",
+            "window": "1d",
+            "benchmark": null,
+            "basis": "previous daily Treasury-style observation",
+            "key": "US 2Y|daily par yield|1d|-|previous daily Treasury-style observation"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        },
+        "treasury-2y-change": {
+          "id": "treasury-2y-change",
+          "topic": "US 2Y",
+          "metric": "daily yield change",
+          "value": -4,
+          "unit": "bp",
+          "baseline": "previous daily Treasury-style observation",
+          "observed_at": "2026-09-04",
+          "frequency": "daily",
+          "status": "BACKGROUND",
+          "identity": {
+            "instrument": "US 2Y",
+            "metric": "daily yield change",
+            "window": "1d",
+            "benchmark": null,
+            "basis": "previous daily Treasury-style observation",
+            "key": "US 2Y|daily yield change|1d|-|previous daily Treasury-style observation"
+          },
+          "run_id": "sample-close_1m-200300-fixture"
+        }
+      },
+      "closing_data": {
+        "status": "COMPLETED_SESSION",
+        "reason": "completed-session daily bars admitted"
+      }
+    },
+    "assessment": {
+      "class": "INTERPRETATION",
+      "origin": "analyst",
+      "character": {
+        "text": "A growth-led, mixed fictional map: the benchmark edge sits with QQQ while the curve and metals send conflicting signals.",
+        "label": "MIXED",
+        "evidence_refs": [
+          "QQQ-daily",
+          "SPY-daily",
+          "treasury-2y-change",
+          "treasury-10y-change"
+        ]
+      },
+      "relationships": [
+        {
+          "id": "rel-sample-close_1m-200300-fixture-1",
+          "origin_run_id": "sample-close_1m-200300-fixture",
+          "first_observed_at": "2026-09-04T20:03:00+00:00",
+          "instruments": [
+            "QQQ",
+            "SPY"
+          ],
+          "statement": "Growth leads the broad benchmark on the prior session and the twenty-session window.",
+          "evidence_refs": [
+            "QQQ-daily",
+            "SPY-daily",
+            "QQQ-spread20"
+          ],
+          "assessments": [
+            {
+              "status": "new",
+              "run_id": "sample-close_1m-200300-fixture",
+              "assessed_at": "2026-09-04T20:03:00+00:00",
+              "current_refs": [
+                "QQQ-daily",
+                "SPY-daily",
+                "QQQ-spread20"
+              ],
+              "previous_refs": [],
+              "reason": "",
+              "origin": "analyst"
+            }
+          ]
+        },
+        {
+          "id": "rel-sample-close_1m-200300-fixture-2",
+          "origin_run_id": "sample-close_1m-200300-fixture",
+          "first_observed_at": "2026-09-04T20:03:00+00:00",
+          "instruments": [
+            "GLD",
+            "GDX"
+          ],
+          "statement": "Miners are not confirming the metal fund's strength.",
+          "evidence_refs": [
+            "GLD-daily",
+            "GDX-daily",
+            "GDX-spread20"
+          ],
+          "assessments": [
+            {
+              "status": "new",
+              "run_id": "sample-close_1m-200300-fixture",
+              "assessed_at": "2026-09-04T20:03:00+00:00",
+              "current_refs": [
+                "GLD-daily",
+                "GDX-daily",
+                "GDX-spread20"
+              ],
+              "previous_refs": [],
+              "reason": "",
+              "origin": "analyst"
+            }
+          ]
+        }
+      ],
+      "watches": [
+        {
+          "id": "watch-sample-close_1m-200300-fixture-1",
+          "version": 1,
+          "supersedes": null,
+          "origin_run_id": "sample-close_1m-200300-fixture",
+          "first_observed_at": "2026-09-04T20:03:00+00:00",
+          "checkpoint": "CLOSE_1M",
+          "instruments": [
+            "NVDA",
+            "QQQ",
+            "SPY"
+          ],
+          "metric_keys": [
+            "NVDA|relative to QQQ|20s|QQQ|split/regular_close",
+            "QQQ|daily return|1s|-|split/regular_close",
+            "SPY|daily return|1s|-|split/regular_close"
+          ],
+          "hypothesis": "If growth retains its lead after regular trading begins, check whether participation extends beyond the selected mega-cap.",
+          "confirmation": "More independently observed sectors improve on synchronized comparisons.",
+          "contradiction": "The benchmark lead persists while participation narrows.",
+          "horizon": {
+            "declared": "OPENING_HOUR",
+            "expires_at": "2026-09-08T14:30:00+00:00",
+            "expires_session": "2026-09-08",
+            "phrase": "Through the next opening hour"
+          },
+          "evidence_refs": [
+            "QQQ-daily",
+            "SPY-daily",
+            "NVDA-spread20"
+          ],
+          "lifecycle": "active",
+          "evaluability": "assessable",
+          "criteria_version": 1,
+          "assessments": [
+            {
+              "status": "new",
+              "run_id": "sample-close_1m-200300-fixture",
+              "assessed_at": "2026-09-04T20:03:00+00:00",
+              "current_refs": [
+                "QQQ-daily",
+                "SPY-daily",
+                "NVDA-spread20"
+              ],
+              "previous_refs": [],
+              "reason": "",
+              "origin": "analyst"
+            }
+          ]
+        },
+        {
+          "id": "watch-sample-close_1m-200300-fixture-2",
+          "version": 1,
+          "supersedes": null,
+          "origin_run_id": "sample-close_1m-200300-fixture",
+          "first_observed_at": "2026-09-04T20:03:00+00:00",
+          "checkpoint": "CLOSE_1M",
+          "instruments": [
+            "GDX",
+            "GLD"
+          ],
+          "metric_keys": [
+            "GDX|daily return|1s|-|split/regular_close",
+            "GDX|relative to GLD|20s|GLD|split/regular_close",
+            "GLD|daily return|1s|-|split/regular_close"
+          ],
+          "hypothesis": "Revisit the gold fund and miners on the same return horizon.",
+          "confirmation": "Miners join the metal fund's strength.",
+          "contradiction": "Miner weakness persists despite firmness in the gold fund.",
+          "horizon": {
+            "declared": "NEXT_CLOSE",
+            "expires_at": "2026-09-08T20:00:00+00:00",
+            "expires_session": "2026-09-08",
+            "phrase": "Into the next session"
+          },
+          "evidence_refs": [
+            "GLD-daily",
+            "GDX-daily",
+            "GDX-spread20"
+          ],
+          "lifecycle": "active",
+          "evaluability": "assessable",
+          "criteria_version": 1,
+          "assessments": [
+            {
+              "status": "new",
+              "run_id": "sample-close_1m-200300-fixture",
+              "assessed_at": "2026-09-04T20:03:00+00:00",
+              "current_refs": [
+                "GLD-daily",
+                "GDX-daily",
+                "GDX-spread20"
+              ],
+              "previous_refs": [],
+              "reason": "",
+              "origin": "analyst"
+            }
+          ]
+        }
+      ],
+      "retired": [],
+      "changes": [],
+      "closing_character": {
+        "text": "A growth-led, mixed fictional map: the benchmark edge sits with QQQ while the curve and metals send conflicting signals.",
+        "label": "MIXED",
+        "evidence_refs": [
+          "QQQ-daily",
+          "SPY-daily",
+          "treasury-2y-change",
+          "treasury-10y-change"
+        ],
+        "provisional": false
+      }
+    },
+    "next_events": [
+      {
+        "id": "sample-event",
+        "title": "Fictional manufacturing survey",
+        "scheduled_at": "2026-09-08T14:00:00+00:00",
+        "session_date": "2026-09-08"
+      }
+    ],
+    "content_hash": "bd0a4c5e4a1751eb05e6296cd4a5178910e5a2037b9c4777cd09ffe57ce92789"
+  },
+  "premarket": null,
+  "latest": null,
+  "updated_at": "2026-09-04T20:03:00+00:00",
+  "updated_by_run": "sample-close_1m-200300-fixture"
+}

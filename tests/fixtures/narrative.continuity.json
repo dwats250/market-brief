@@ -14,7 +14,7 @@
   },
   "summary": [
     {
-      "text": "In this fictional sample, growth has an edge over the broad equity benchmark. QQQ finished ahead of SPY, while the selected mega-cap's longer-window advance was stronger still. That is a useful place to start an opening watch, while breadth remains unmeasured.",
+      "text": "In this fictional sample, growth still has an edge over the broad equity benchmark on the prior session, and the previous close's read carries into this session unchanged: QQQ finished ahead of SPY, while the selected mega-cap's longer-window advance was stronger still. Breadth remains unmeasured.",
       "class": "INTERPRETATION",
       "evidence_ids": [
         "QQQ-daily",
@@ -130,35 +130,55 @@
   },
   "relationships": [
     {
-      "carried_id": null,
+      "carried_id": "rel-sample-close_1m-200300-fixture-1",
       "instruments": [
         "QQQ",
         "SPY"
       ],
       "statement": "Growth leads the broad benchmark on the prior session and the twenty-session window.",
-      "assessment": "new",
-      "reason": "",
+      "assessment": "unresolved",
+      "reason": "Repeated prior-close observations; nothing new to test the lead.",
       "evidence_ids": [
         "QQQ-daily",
         "SPY-daily",
-        "QQQ-spread20"
+        "previous_close:SPY-daily"
       ]
     },
     {
       "carried_id": null,
       "instruments": [
-        "GLD",
-        "GDX"
+        "US 2Y",
+        "US 10Y"
       ],
-      "statement": "Miners are not confirming the metal fund's strength.",
+      "statement": "The curve steepened on the dated observation: the front end eased while the long end rose.",
       "assessment": "new",
       "reason": "",
       "evidence_ids": [
-        "GLD-daily",
-        "GDX-daily",
-        "GDX-spread20"
+        "treasury-2y-change",
+        "treasury-10y-change"
       ]
     }
   ],
-  "watch_updates": []
+  "watch_updates": [
+    {
+      "carried_id": "watch-sample-close_1m-200300-fixture-1",
+      "assessment": "unresolved",
+      "reason": "No new session prints since the prior close; the growth-participation question is untested.",
+      "evidence_ids": [
+        "QQQ-daily",
+        "SPY-daily",
+        "previous_close:QQQ-daily"
+      ]
+    },
+    {
+      "carried_id": "watch-sample-close_1m-200300-fixture-2",
+      "assessment": "unresolved",
+      "reason": "The metal fund and miners repeat the prior close's observation, so the divergence is untested.",
+      "evidence_ids": [
+        "GLD-daily",
+        "GDX-daily",
+        "previous_close:GDX-daily"
+      ]
+    }
+  ]
 }

@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from jsonschema import Draft202012Validator
 
 from .context import analyst_context, supplied_ids
+from .continuity import ASSESSMENTS, CARRIED_ASSESSMENTS, prior_values, validate_state
 from .evidence import ROOT, canonical, compact_model_record, digest, evidence_catalog, model_packet
 
 TEXT = {"type": "string", "minLength": 1, "maxLength": 1800}
@@ -39,7 +40,7 @@ PARAGRAPH = obj({"text": TEXT, "class": {"enum": ["OBSERVED", "INTERPRETATION"]}
                  "evidence_ids": REFS, "uncertainty": {"type": "string", "maxLength": 500},
                  "alternative": {"type": "string", "maxLength": 500}})
 NARRATIVE_SCHEMA = obj({
-    "schema_version": {"const": "market-brief.narrative.v0"},
+    "schema_version": {"const": "market-brief.narrative.v1"},
     "mode": {"enum": ["LIVE", "SAMPLE"]},
     "banner": obj({"title": HEADLINE, "label": {"enum": ["RISK-ON", "RISK-OFF", "MIXED", "INDETERMINATE"]},
                    "class": {"const": "INTERPRETATION"}, "evidence_ids": REFS,
@@ -55,9 +56,21 @@ NARRATIVE_SCHEMA = obj({
         "class": {"const": "WATCH"}, "condition": TEXT, "confirmation": TEXT,
         "contradiction": TEXT, "horizon": {"oneOf": [{"enum": HORIZONS},
             {"pattern": EVENT_HORIZON.pattern}]}, "evidence_ids": REFS})},
-    "changes": {"type": "array", "maxItems": 0},
+    # Continuity records. The analyst assesses; deterministic code owns every persistent ID.
+    "character": obj({"text": TEXT, "evidence_ids": REFS}),
+    "relationships": {"type": "array", "maxItems": 3, "items": obj({
+        "carried_id": {"type": ["string", "null"]},
+        "instruments": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 4,
+                        "uniqueItems": True},
+        "statement": TEXT, "assessment": {"enum": list(ASSESSMENTS)},
+        "reason": {"type": "string", "maxLength": 500}, "evidence_ids": REFS})},
+    "watch_updates": {"type": "array", "maxItems": 3, "items": obj({
+        "carried_id": {"type": "string"}, "assessment": {"enum": list(CARRIED_ASSESSMENTS)},
+        "reason": TEXT, "evidence_ids": REFS})},
+    "changes": {"type": "array", "maxItems": 3, "items": obj({
+        "comparison_id": {"type": "string"}, "text": TEXT, "evidence_ids": REFS})},
 })
-TOKEN = re.compile(r"\{\{([a-zA-Z][\w-]*)\}\}")
+TOKEN = re.compile(r"\{\{([a-zA-Z][\w-]*(?::[a-zA-Z][\w-]*)?)\}\}")
 
 
 def validate_narrative(narrative, packet, context=None):
@@ -77,17 +90,24 @@ def validate_narrative(narrative, packet, context=None):
             raise ValueError("analyst context does not match the evidence record")
         shown = supplied_ids(context)
         catalog = {ident: row for ident, row in catalog.items() if ident in shown}
-    records = [narrative["banner"], *narrative["summary"], *narrative["watches"]]
+    # Current-condition records cite current evidence only; continuity records may add prior refs.
+    records = [narrative["banner"], *narrative["summary"], *narrative["watches"], narrative["character"]]
     records += [p for section in narrative["sections"].values() for p in section]
     for record in records:
         refs = set(record["evidence_ids"])
         if not refs <= catalog.keys():
             raise ValueError("unknown, unavailable, or unsupplied evidence reference")
+    validate_state(narrative, context, set(catalog), {row["topic"] for row in catalog.values() if "topic" in row})
+    values = {ident: row for ident, row in catalog.items()}
+    values.update(prior_values(context))
+    records += [*narrative["relationships"], *narrative["watch_updates"], *narrative["changes"]]
+    for record in records:
+        refs = set(record["evidence_ids"])
         for key in ("title", "text", "limitation", "uncertainty", "alternative", "condition",
-                    "confirmation", "contradiction", "horizon"):
+                    "confirmation", "contradiction", "horizon", "statement", "reason"):
             text = record.get(key, "")
             for ident in TOKEN.findall(text):
-                if ident not in refs or not isinstance(catalog[ident].get("value"), (int, float)):
+                if ident not in refs or not isinstance(values.get(ident, {}).get("value"), (int, float)):
                     raise ValueError("numeric placeholder not grounded in cited observation")
             plain = TOKEN.sub("", text)
             plain = ALLOWED_LABELS.sub("", plain)

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from .continuity import prior_values
 from .evidence import ROOT, USABLE, evidence_catalog, timestamp
 from .synthesize import TOKEN
 
@@ -148,15 +149,16 @@ def formatted(row):
     return f"{number} {row['unit']}"
 
 
-def presentation(packet, narrative):
+def presentation(packet, narrative, context=None):
     catalog = evidence_catalog(packet)
+    values = dict(catalog, **prior_values(context))
     actual_started_at = packet["run"].get("actual_started_at", packet["run"]["target_time"])
     status = status_for(packet)
     commissioning = (status == "SAMPLE" and packet["run"]["mode"] == "LIVE")
     live_commissioning = status == "LIVE COMMISSIONING"
 
     def expand(text):
-        return TOKEN.sub(lambda m: formatted(catalog[m[1]]), text)
+        return TOKEN.sub(lambda m: formatted(values[m[1]]), text)
 
     def paragraph(p):
         return {**p, "text": expand(p["text"]), "uncertainty": expand(p["uncertainty"]),
@@ -385,8 +387,8 @@ def markdown(view):
     return "\n".join(lines)
 
 
-def render(packet, narrative):
-    view = presentation(packet, narrative)
+def render(packet, narrative, context=None):
+    view = presentation(packet, narrative, context)
     env = Environment(loader=FileSystemLoader(ROOT / "templates"),
                       autoescape=select_autoescape(default=True))
     return markdown(view), env.get_template("brief.html.j2").render(**view)

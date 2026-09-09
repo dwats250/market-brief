@@ -8,6 +8,7 @@ export default {
       throw new Error("Cloudflare scheduler is missing its GitHub dispatch configuration");
     }
 
+    const diagnostic = controller.cron === env.DIAGNOSTIC_CRON;
     const response = await fetch(
       `https://api.github.com/repos/${repository}/actions/workflows/${WORKFLOW}/dispatches`,
       {
@@ -21,12 +22,21 @@ export default {
         },
         body: JSON.stringify({
           ref: "main",
-          inputs: { cloudflare_wakeup: "true" },
+          inputs: {
+            cloudflare_wakeup: "true",
+            ...(diagnostic ? { cloudflare_smoke: "true" } : {}),
+          },
         }),
       },
     );
 
     if (!response.ok) {
+      const body = (await response.text()).slice(0, 1000);
+      console.error(JSON.stringify({
+        error: "github_workflow_dispatch_rejected",
+        status: response.status,
+        body,
+      }));
       throw new Error(`GitHub workflow dispatch failed with HTTP ${response.status}`);
     }
   },

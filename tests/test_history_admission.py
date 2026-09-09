@@ -16,9 +16,13 @@ def utc(value):
     return datetime.fromisoformat(value).astimezone(timezone.utc)
 
 
-def packet_at(now, last_history_date="2026-09-04", intraday=True):
+def packet_at(now, last_history_date="2026-09-04", intraday=True, checkpoint="PREMARKET",
+              intraday_value=-0.53, events=()):
     raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
     raw["target_time"] = now.isoformat()
+    raw["events"].extend(events)
+    for row in raw["events"]:
+        row["checked_at"] = now.isoformat()
     for row in raw["history"]:
         row["retrieved_at"] = now.isoformat()
         shift = (datetime.fromisoformat(last_history_date) - datetime.fromisoformat(row["dates"][-1])).days
@@ -31,11 +35,11 @@ def packet_at(now, last_history_date="2026-09-04", intraday=True):
         row["retrieved_at"] = now.isoformat()
     if intraday:
         raw["observations"].append(dict(
-            id="SPY-intraday", topic="SPY", metric="premarket return", value=-0.53, unit="%",
+            id="SPY-intraday", topic="SPY", metric="premarket return", value=intraday_value, unit="%",
             baseline="latest trade versus previous regular close", frequency="intraday",
             observed_at=(now - timedelta(minutes=4)).isoformat(),
             retrieved_at=now.isoformat(), source_id="sample-prices", status="AVAILABLE", reason=""))
-    packet = normalize_packet(raw, now, "SAMPLE")
+    packet = normalize_packet(raw, now, "SAMPLE", checkpoint)
     derive(packet, UNIVERSE)
     return finalize_coverage(packet)
 
@@ -107,13 +111,11 @@ def test_lagged_daily_return_never_fills_today_without_current_prints():
     assert row["today"]["display"] == "n/a"
     assert row["r20"]["display"] != "n/a"
     view = presentation(packet, narrative())
-    equities = next(s for s in view["sections"] if s["key"] == "equities")
-    assert all(r["today"]["display"] == "n/a" for r in equities["mega_rows"] + equities["sector_rows"])
+    assert all(r["today"]["display"] == "n/a" for r in view["equities"]["rows"] + view["sectors"]["rows"])
 
 
 def test_daily_return_still_fills_today_before_the_open():
     packet = packet_at(utc("2026-09-08T12:45:00+00:00"), intraday=False)
     assert not packet.get("history_lag")
     view = presentation(packet, narrative())
-    equities = next(s for s in view["sections"] if s["key"] == "equities")
-    assert any(r["today"]["display"] != "n/a" for r in equities["mega_rows"])
+    assert any(r["today"]["display"] != "n/a" for r in view["equities"]["rows"])

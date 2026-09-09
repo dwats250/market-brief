@@ -12,13 +12,18 @@ from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
 
-from .schedule import CHECKPOINT_TITLES, CHECKPOINTS, checkpoint_session, session_relation
+from .schedule import CHECKPOINT_TITLES, CHECKPOINTS, checkpoint_session, next_session_date, session_relation
 
 ROOT = Path(__file__).resolve().parents[2]
 ET = ZoneInfo("America/New_York")
-USABLE = {"AVAILABLE", "DELAYED", "BACKGROUND"}
-FRESHNESS = {"LIVE", "DELAYED", "PRIOR_CLOSE", "DATED", "STALE", "UNAVAILABLE", "INVALID"}
+USABLE = {"AVAILABLE", "DELAYED", "BACKGROUND", "PROVISIONAL"}
+FRESHNESS = {"LIVE", "DELAYED", "NEAR_CLOSE", "PRIOR_CLOSE", "DATED", "STALE", "UNAVAILABLE", "INVALID"}
 SCHEMA = "market-brief.evidence.v0"
+# A post-close run may admit one labeled session-ending print per instrument: an intraday trade
+# from the final minutes before the exchange close, collected within a bounded grace period.
+# It is never an official closing bar; the provider's completed daily bar arrives the next day.
+NEAR_CLOSE_WINDOW = timedelta(minutes=15)
+NEAR_CLOSE_GRACE = timedelta(minutes=90)
 
 
 def timestamp(value):
@@ -68,6 +73,7 @@ def session_info(now, checkpoint="PREMARKET"):
     checkpoint_data = checkpoint_session(now, checkpoint)
     return dict(date=day, trading_day=bool(trading),
                 previous_session=previous.date().isoformat(),
+                next_session=next_session_date(now),
                 open=opening.isoformat(), close=closing.isoformat(),
                 meaningful_premarket=bool(trading and local.hour >= 7 and now < opening),
                 session_gap=not trading,
@@ -75,7 +81,8 @@ def session_info(now, checkpoint="PREMARKET"):
                 scheduled_checkpoint_at=checkpoint_data["scheduled_at"])
 
 
-def normalize_observation(raw, now):
+def normalize_observation(raw, now, near_close=None):
+    """`near_close` is the exchange close for a post-close checkpoint; otherwise None."""
     keys = ("id", "topic", "metric", "value", "unit", "baseline", "frequency",
             "observed_at", "retrieved_at", "source_id", "status", "reason")
     row = {key: raw.get(key) for key in keys}
@@ -114,6 +121,12 @@ def normalize_observation(raw, now):
                 return reject("INVALID", "future observation")
             age = (now - observed).total_seconds()
             if age > 1200:
+                if (near_close is not None and near_close - NEAR_CLOSE_WINDOW <= observed <= near_close
+                        and now - near_close <= NEAR_CLOSE_GRACE):
+                    row["status"], row["freshness"] = "PROVISIONAL", "NEAR_CLOSE"
+                    row["reason"] = ("session-ending print from the final minutes before the close; "
+                                     "provisional, not an official closing bar")
+                    return row
                 return reject("STALE", "intraday observation older than twenty minutes")
             row["status"] = "DELAYED" if age > 60 else "AVAILABLE"
             row["freshness"] = "DELAYED" if age > 60 else "LIVE"
@@ -158,8 +171,9 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
                   observations=[], history=[], derived=[], events=[], context_items=[],
                   attention=[], previous=None, cuttingboard=raw.get("cuttingboard", {
                       "status": "UNAVAILABLE", "reason": "not requested"}))
+    near_close = timestamp(packet["run"]["session"]["close"]) if checkpoint == "CLOSE_1M" else None
     for raw_row in raw.get("observations", []):
-        row = normalize_observation(raw_row, now)
+        row = normalize_observation(raw_row, now, near_close)
         source = by_source.get(row["source_id"])
         if not source:
             raise ValueError("observation references unknown source")
@@ -196,14 +210,18 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
                 checked = timestamp(record["checked_at"] or source["retrieved_at"])
                 if not now - timedelta(hours=24) <= checked <= now + timedelta(minutes=5):
                     continue
-                if when.astimezone(ET).date() != now.astimezone(ET).date():
+                session = packet["run"]["session"]
+                event_date = when.astimezone(ET).date().isoformat()
+                if event_date not in {now.astimezone(ET).date().isoformat(), session["next_session"]}:
                     continue
                 record["freshness"] = "DATED"
                 record["expected_freshness"] = source["expected_freshness"]
-                session = packet["run"]["session"]
                 record["scheduled_at_et"] = when.astimezone(ET).isoformat()
-                record["session_relation"] = session_relation(
-                    when, timestamp(session["open"]), timestamp(session["close"]))
+                record["session_date"] = event_date
+                # Next-session items are carried for continuity; they are never "today".
+                record["session_relation"] = ("NEXT SESSION" if event_date != now.astimezone(ET).date().isoformat()
+                                              else session_relation(when, timestamp(session["open"]),
+                                                                    timestamp(session["close"])))
             elif now - timestamp(item["published_at"]) > timedelta(days=2):
                 continue
             else:
@@ -219,7 +237,38 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
     return packet
 
 
+WINDOWS = {"daily return": "1s", "twenty-session return": "20s", "fifty-session average": "50s",
+           "distance from 50DMA": "50s", "regular close": "1s", "daily par yield": "1d",
+           "daily yield change": "1d", "premarket return": "intraday", "intraday return": "intraday"}
+
+
+def metric_identity(row):
+    """Stable identity for comparisons across runs: instrument, metric, window, benchmark, basis.
+
+    Evidence IDs such as `SPY-daily` are unique only within a run; this identity is what
+    makes a later observation of the same measurement mathematically comparable.
+    """
+    metric = row.get("metric") or ""
+    benchmark = metric.removeprefix("relative to ") if metric.startswith("relative to ") else None
+    window = "20s" if benchmark else WINDOWS.get(metric, row.get("frequency") or "unknown")
+    basis = (f"{row['adjustment']}/regular_close" if row.get("adjustment")
+             else row.get("baseline") or "unspecified")
+    identity = dict(instrument=row.get("topic"), metric=metric, window=window,
+                    benchmark=benchmark, basis=basis)
+    identity["key"] = "|".join(str(identity[k] or "-")
+                               for k in ("instrument", "metric", "window", "benchmark", "basis"))
+    return identity
+
+
+def annotate_identity(packet):
+    for field in ("observations", "derived"):
+        for row in packet[field]:
+            row["identity"] = metric_identity(row)
+    return packet
+
+
 def finalize_coverage(packet):
+    annotate_identity(packet)
     anchors = {r["topic"] for r in packet["derived"] if r["metric"] == "daily return"}
     calendars = [s for s in packet["sources"] if s["kind"] == "calendar"]
     missing = [f"{s} prior-close history unavailable" for s in ("SPY", "QQQ") if s not in anchors]
@@ -233,8 +282,12 @@ def finalize_coverage(packet):
         missing.append(f"Daily history through {lag['history_through']}: the completed "
                        f"{lag['completed_session']} daily bar was not yet published, so 20D, "
                        "relative, and 50D context lag one session")
-    has_current = any(r["frequency"] == "intraday" and r["status"] in USABLE
-                      for r in packet["observations"])
+    intraday = [r for r in packet["observations"] if r["frequency"] == "intraday" and r["status"] in USABLE]
+    has_current = bool(intraday)
+    provisional = bool(intraday) and all(r["status"] == "PROVISIONAL" for r in intraday)
+    if provisional:
+        missing.append(f"Session-ending prints are provisional trades from the final "
+                       f"{NEAR_CLOSE_WINDOW.seconds // 60} minutes before the close, not official closing bars")
     calendar_complete = {s["id"] for s in calendars if s["status"] == "AVAILABLE"
                          and s["coverage_date"] == packet["run"]["session"]["date"]}
     ready = {"SPY", "QQQ"} <= anchors and {"bls", "bea", "fed-calendar"} <= calendar_complete
@@ -253,12 +306,14 @@ def finalize_coverage(packet):
         missing_domains.append("current Treasury change")
     packet["coverage"] = dict(status=status, bootstrap=bootstrap, current_premarket=has_current,
         limitations=list(dict.fromkeys(missing)), missing_domains=missing_domains,
-        horizon=("Timestamped intraday observations available; see individual clocks."
+        horizon=("Provisional session-ending prints available; not official closing bars."
+                 if provisional else "Timestamped intraday observations available; see individual clocks."
                  if has_current else "Previous-close / dated context only; no timestamped current prints."))
     checkpoint = packet["run"]["checkpoint"]
     basis = [CHECKPOINT_TITLES.get(checkpoint, checkpoint.replace("_", " ").title()),
              "prior close", "Treasury prior-close/current as available",
-             "current prints available" if has_current else "current prints unavailable",
+             "provisional session-ending prints" if provisional
+             else "current prints available" if has_current else "current prints unavailable",
              "breadth available" if any(r.get("topic") in {"XLI", "XLK", "XLF"} for r in packet["derived"])
              else "breadth unavailable"]
     if packet["run"]["session"].get("session_gap"):
@@ -277,7 +332,7 @@ def evidence_catalog(packet):
 
 MODEL_RECORD_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at",
                        "source_id", "status", "reason", "frequency", "freshness",
-                       "expected_freshness", "magnitude")
+                       "expected_freshness", "magnitude", "identity")
 
 
 def compact_model_record(row):

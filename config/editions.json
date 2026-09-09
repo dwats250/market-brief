@@ -1,0 +1,41 @@
+{
+  "version": "v1",
+  "analyst": {
+    "route": "openrouter",
+    "model": "anthropic/claude-fable-5.1",
+    "cli_model": "sonnet",
+    "note": "One configured frontier analyst for every edition. MARKET_BRIEF_MODEL overrides the OpenRouter model ID; the resolved identity, route, and usage are recorded per run."
+  },
+  "profiles": {
+    "rich": {
+      "context": "full",
+      "input_target_tokens": 8000,
+      "input_limit_bytes": 64000,
+      "max_output_tokens": 4500,
+      "summary_paragraphs": 2,
+      "attention_items": 3,
+      "watches": 3
+    },
+    "light": {
+      "context": "changed",
+      "input_target_tokens": 4000,
+      "input_limit_bytes": 40000,
+      "max_output_tokens": 2500,
+      "summary_paragraphs": 1,
+      "attention_items": 2,
+      "watches": 2
+    }
+  },
+  "editions": {
+    "PREMARKET": {"profile": "rich", "words": [350, 500],
+                  "guidance": "Prior close, overnight and current evidence, today's events, and the open questions carried from the previous close."},
+    "OPEN_1M": {"profile": "light", "words": [80, 140],
+                "guidance": "Immediate changes versus the available premarket evidence; distinguish opening noise from a changed read."},
+    "OPEN_30M": {"profile": "light", "words": [140, 220],
+                 "guidance": "What persisted after the opening noise, using actual comparable evidence only."},
+    "AFTERNOON": {"profile": "light", "words": [120, 200],
+                  "guidance": "What is holding, fading, or reversing versus the premarket anchor and the latest edition."},
+    "CLOSE_1M": {"profile": "rich", "words": [350, 500],
+                 "guidance": "Session character, which relationships persisted or changed, and the handoff for the next session."}
+  }
+}

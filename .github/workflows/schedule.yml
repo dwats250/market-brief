@@ -37,11 +37,17 @@ on:
         required: false
         default: false
         type: boolean
+      continuity_check:
+        description: Restore the production continuity bundle across a runner boundary and re-upload it under an isolated name; no collection, synthesis, or publishing
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
   pages: write
   id-token: write
+  actions: read
 
 concurrency:
   group: market-brief-pages
@@ -71,7 +77,11 @@ jobs:
           INPUT_CHECKPOINT: ${{ inputs.checkpoint }}
           INPUT_COMMISSIONING: ${{ inputs.commissioning }}
         run: |
-          if [ "$INPUT_COMMISSIONING" = "true" ]; then
+          if [ "${{ inputs.continuity_check }}" = "true" ]; then
+            checkpoint=CHECK
+            label="CONTINUITY CHECK"
+            run=false
+          elif [ "$INPUT_COMMISSIONING" = "true" ]; then
             # The application resolves the market phase from the clock at collection time.
             checkpoint=CURRENT
             label="LIVE COMMISSIONING"
@@ -93,6 +103,21 @@ jobs:
           echo "checkpoint=$checkpoint" >> "$GITHUB_OUTPUT"
           echo "label=$label" >> "$GITHUB_OUTPUT"
           echo "run=$run" >> "$GITHUB_OUTPUT"
+      - name: Restore continuity bundle from the last accepted production run
+        # Short-horizon operational continuity: the newest unexpired bundle uploaded by a
+        # successful main-branch run of this workflow. Anything else is an explicit cold start.
+        if: steps.checkpoint.outputs.run == 'true' || inputs.continuity_check == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m market_brief continuity-restore --repository "$GITHUB_REPOSITORY" --branch main
+      - name: Isolated continuity check
+        if: inputs.continuity_check == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-brief-continuity-check
+          path: runs/continuity/bundle.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Alpaca commissioning probe
         if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief alpaca-probe
@@ -115,13 +140,27 @@ jobs:
       - name: Collect, synthesize, validate, and render on schedule
         if: github.event_name != 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
-      - name: Retain experiment run
-        if: always() && inputs.experiment == true
+      - name: Archive this run's evidence, context, narrative, and metadata
+        # Outside the Pages payload and Git history; thirty-day retention, not a historical store.
+        if: always() && steps.checkpoint.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: synthesis-experiment
-          path: runs/
-          retention-days: 14
+          name: market-brief-run-${{ steps.checkpoint.outputs.checkpoint }}-${{ github.run_id }}
+          path: |
+            runs/
+            !runs/continuity/
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload accepted continuity bundle
+        # Only after local acceptance: the bundle is written solely by accepted LIVE, non-experiment,
+        # non-commissioning runs. A failed run reaches this step only if the pipeline succeeded.
+        if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true && inputs.commissioning != true
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-brief-continuity
+          path: runs/continuity/bundle.json
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Publish latest successful brief
         if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
         run: |

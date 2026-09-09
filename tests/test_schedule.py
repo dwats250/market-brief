@@ -56,7 +56,7 @@ def test_scheduler_prefers_nearest_checkpoint_when_candidate_windows_overlap():
 
 
 def test_scheduled_checkpoint_is_idempotent(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(cli, "RUN_ROOT", tmp_path)
     monkeypatch.setattr(cli, "due", lambda now, checkpoint: (True, {
         "trading_day": True, "session_date": "2026-09-08", "scheduled_at": now.isoformat()
     }))

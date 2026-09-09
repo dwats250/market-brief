@@ -22,3 +22,17 @@ def test_windows_and_cross():
 def test_bad_prices_rejected(closes):
     with pytest.raises(ValueError):
         history_metrics(closes)
+
+
+def test_dma_distance_and_spread_ranking_are_deterministic():
+    from market_brief.metrics import dma_distance, rank_by_spread
+    assert dma_distance(102, 100) == pytest.approx(2)
+    assert dma_distance(98, 100) == pytest.approx(-2)
+    with pytest.raises(ValueError):
+        dma_distance(100, 0)
+    order = ["XLK", "XLF", "XLE", "XLI"]
+    rows = [dict(symbol="XLK", relative=dict(value=1.0)), dict(symbol="XLF", relative=dict(value=None)),
+            dict(symbol="XLE", relative=dict(value=4.0)), dict(symbol="XLI", relative=dict(value=1.0))]
+    ranked = [row["symbol"] for row in rank_by_spread(rows, order)]
+    assert ranked == ["XLE", "XLK", "XLI", "XLF"]  # strongest first, stable tie, missing last
+    assert rank_by_spread(rows, order) == rank_by_spread(list(reversed(rows)), order)

@@ -16,14 +16,22 @@ permitted feeds + local sourced inputs + optional published Cuttingboard
                             |
            deterministic metrics + coverage checks
                             |
-                 immutable evidence.json
+   evidence.json (full record, stable metric identity, deterministic comparisons)
                             |
-              one isolated model synthesis
+   analyst_context.json (bounded projection + prior structured state + comparisons)
                             |
-             validate claims and references
+              one configured analyst synthesis (edition budget profile)
                             |
-                  brief.md + brief.html
+   validate: references exist in evidence AND were supplied; continuity records
+                            |
+   narrative.json + edition_state.json (+ session_handoff.json after a substantiated close)
+                            |
+                  brief.md + brief.html · continuity bundle
 ```
+
+Two modules carry the v0.1 additions: `context.py` (projection and edition profiles) and
+`continuity.py` (admission, comparisons, packaging, state validation, bundle persistence). Everything
+else extends the existing modules. There is still no database, service, queue, or provider registry.
 
 ## Deterministic responsibility
 
@@ -169,12 +177,44 @@ and 30 days of normalized run evidence/reports, or the source's shorter permitte
 retention. Raw responses are ephemeral. Do not prune automatically in v0; document
 a later manual cleanup command rather than introducing a background job.
 
-Later sessions compare deterministic records by instrument, metric, horizon, and
-baseline. Record added/removed attention names, return/yield deltas, state changes,
-event outcomes, and invalidated interpretations. Different baselines become
-"not comparable." Feed the previous accepted brief's evidence-linked summary and
-the new delta packet to the model; never treat yesterday's interpretation as a
-fact. Close summaries can inform the next morning through original evidence IDs.
+## Continuity (v0.1)
+
+Every observation and derived row carries a stable `identity` (instrument, metric, window,
+benchmark, basis). Comparisons across runs use that identity, never the run-local evidence ID:
+the same measurement observed again is `no_new_observation`, an absent measurement is
+`unavailable`, incompatible units or intraday prints from different sessions are
+`not_comparable`, and only a genuinely new observation of the same identity is `changed`.
+
+Premarket admits only the previous exchange session's accepted `session_handoff.json`
+(calendar-aware across holidays). Intraday and close editions admit this session's premarket
+anchor and the latest accepted edition. Prior state reaches the analyst as structured hypotheses
+(watch criteria, relationship statements, closing character) namespaced `anchor:evidence-id`;
+no prior headline or prose is ever in the prompt, and prior refs can ground only the
+`changes`, `relationships`, and `watch_updates` records.
+
+Deterministic code assigns every watch and relationship ID (`watch-<run_id>-<n>`), resolves
+horizons from the exchange calendar (NEXT_BRIEF is the next scheduled checkpoint, only tomorrow
+after the close), computes evaluability (`assessable`, `missing_evidence`, `not_comparable`) from
+the comparisons, and appends the analyst's assessment. A watch without comparable current
+evidence can only be `unresolved`; `reversed` retires it; a passed horizon expires it. At most
+three watches and three relationships carry forward.
+
+A post-close edition classifies its closing data: `COMPLETED_SESSION`, `PROVISIONAL_NEAR_CLOSE`
+(labeled), `EARLIER_HISTORY_ONLY`, or `NONE`. Because the provider's completed daily bar is
+admitted only from the next day and the scheduler fires 30–40 minutes late, a CLOSE_1M run may
+admit one labeled `PROVISIONAL` print per instrument: an intraday trade from the final fifteen
+minutes before the exchange close, collected within ninety minutes after it. It is rendered,
+cited, and carried with that status and never presented as an official closing bar. Only the
+first two classifications produce a close handoff; the
+bundle's close pointer and edition pointers are separate, so a premarket never overwrites the
+previous close and a run without session observations leaves the last close untouched.
+
+The bundle (`runs/continuity/bundle.json`, schema `market-brief.continuity-bundle.v1`, every
+record content-hashed) is written only by accepted LIVE, non-experiment, non-commissioning runs.
+On Actions it is restored before collection from the newest unexpired artifact of a successful
+main-branch run of the schedule workflow and uploaded after acceptance; each run's evidence,
+context, narrative, and metadata are archived for thirty days outside Pages and Git. Missing,
+stale, corrupt, or foreign state is an explicit cold start with its reason in the brief.
 
 No shared storage or writable mount with Cuttingboard. New report writes must
 resolve under this project's local run root, with symlink escapes rejected. The

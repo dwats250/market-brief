@@ -16,24 +16,24 @@ not filler. Avoid repeated summaries of the same moves in multiple sections.
 
 | Order | Section | Content and limits |
 |---|---|---|
-| A | Banner / market state | Title, session, cutoff; a qualitative interpretation such as MIXED, with up to six exact fact chips and their horizons |
-| B | Executive summary | Two short paragraphs: dominant relationship, meaningful tension, and biggest unknown |
-| C | Macro / cross-asset | Compact observed table; one interpretation paragraph linking rates, FX, commodities, and volatility only as evidence allows |
-| D | Equity structure | SPY/QQQ, sector spread, concentration proxy or actual breadth with its definition; previous-close and current observations separated |
-| E | Attention list | Up to three names with dated trigger, horizon, evidence, and reason for attention; no target or entry |
-| F | Cuttingboard context | Optional, clearly attributed literal state/time and brief explanation; unavailable is acceptable |
-| G | Event risk | Up to four material scheduled items, event times in ET, confirmed/estimated status, source; calendar coverage limitation |
-| H | What to watch | Up to three condition/confirmation/contradiction statements tied to evidence; no forecasts disguised as certainty |
-| Footer | Sources and coverage | Compact source links with dates/delays, missing domains, and model-assisted interpretation label |
+| A | Header | One status / edition / date / as-of line; sample or commissioning truth stated once |
+| B | Headline, character, executive read | One headline claim; INTERPRETATION label with the qualitative state and the session character; one or two short paragraphs |
+| C | Compact snapshot | Up to six exact fact chips with their clocks; missing domains in plain language |
+| D | What changed | "Since the previous close · date" or "Since the premarket edition": analyst-interpreted `changed` comparisons and carried relationship assessments; a plain note when nothing comparable changed or continuity is unavailable |
+| E | What matters next | Watches with natural horizons ("Into the close…", "At the next update…"), carried watches with their latest assessment, up to three attention items, today's and next-session events |
+| F | Equity structure | Interpretation first, then the mega-cap table (dated change, 20D, vs QQQ · 20s, vs 50DMA) |
+| G | Macro & rates | Interpretation, then Treasury maturities with yield and paired daily change in bp |
+| H | Sector view | Sector names first, tickers muted, ranked by the labeled 20-session spread vs SPY strongest to weakest; a separate dated change column; missing ranks last |
+| I | Cross-asset structure | One row per metal instrument with its named benchmark |
+| J | Cuttingboard context | Optional literal quotation; omitted when absent |
+| Footer | Sources & coverage (collapsed) | Basis, limitations, source ledger, evidence ledger, technical details including continuity status |
 
-For later checkpoints, insert "Changed since [previous time]" immediately after
-the banner. List changed, persisted, and invalidated items. Each delta references
-both previous and current evidence IDs. The prose must explain why the change
-matters, not just subtract numbers. Missing prior data means baseline, not zero.
+Editions share one contract; `config/editions.json` sets the budget profile and word guidance
+per checkpoint (rich premarket/close, light open/opening-structure/afternoon).
 
-## Planned narrative record
+## Narrative record
 
-Schema name: `market-brief.narrative.v0`. Fields:
+Schema name: `market-brief.narrative.v1`. Fields:
 
 - `run_id`, `evidence_packet_hash`, `model_id`, `prompt_version`.
 - `banner`: `label`, `class=INTERPRETATION`, `evidence_ids`, `limitation`.
@@ -47,8 +47,27 @@ Schema name: `market-brief.narrative.v0`. Fields:
 - `attention_ids`: up to three admitted attention records; no invented symbols.
 - `watches`: condition, observable confirmation, contradiction, horizon,
   evidence IDs. Class is always WATCH.
-- `changes`: empty for initial v0, later records with previous/current IDs and
-  type changed/persisted/invalidated/not-comparable.
+- `character`: one short paragraph on the session's character with current evidence IDs;
+  after a substantiated close it becomes the closing character.
+- `relationships`: up to three; `carried_id` null with assessment `new`, or an exact carried
+  ID with strengthened / weakened / reversed / unresolved.
+- `watch_updates`: assessments of carried watches by exact ID; only `unresolved` is allowed
+  when the watch is not `assessable` on current comparisons.
+- `changes`: up to three, each naming a deterministic `changed` comparison ID.
+
+Prior facts are cited as `anchor:evidence-id` (`previous_close:`, `premarket:`, `latest:`) and
+only inside the three continuity records above.
+
+## Artifact contracts per run
+
+| Artifact | Schema | Authority |
+|---|---|---|
+| `evidence.json` | `market-brief.evidence.v0` (+ `identity` per row, `continuity.comparisons`) | Factual record |
+| `analyst_context.json` | `market-brief.analyst-context.v1` | Exact model input; `evidence_hash`, `edition`, `selection`, `prior_state`, `comparisons` |
+| `narrative.json` | `market-brief.narrative.v1` | Model output, validated |
+| `edition_state.json` | `market-brief.continuity.v1`, kind `edition_state` | `observed` (deterministic) + `assessment` (interpretation), content-hashed |
+| `session_handoff.json` | `market-brief.continuity.v1`, kind `session_handoff` | Close-designated state, only after COMPLETED_SESSION or PROVISIONAL_NEAR_CLOSE |
+| `metadata.json` | — | Hashes, model identity/route/profile/usage, validation, continuity outcome |
 
 Absent source evidence cannot be recovered through model confidence. "No major
 news" is forbidden when collection only checked Fed releases. "No matching

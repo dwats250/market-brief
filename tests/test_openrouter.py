@@ -86,3 +86,25 @@ def test_openrouter_rejects_validator_invalid_json_without_second_call():
     else:
         raise AssertionError("validator-invalid response was accepted")
     assert calls == [1]
+
+
+def test_analyst_identity_and_edition_budget_are_configured_and_recorded(monkeypatch):
+    from market_brief.synthesize import analyst_model
+    assert analyst_model(environ={})["model"] == OPENROUTER_MODEL
+    assert analyst_model(environ={})["source"] == "config/editions.json"
+    assert analyst_model(environ={"MARKET_BRIEF_MODEL": "vendor/other-analyst"}) == dict(
+        model="vendor/other-analyst", source="environment", cli_model="sonnet")
+    monkeypatch.setenv("MARKET_BRIEF_MODEL", "vendor/other-analyst")
+    calls = []
+
+    def requester(payload, api_key):
+        calls.append(payload)
+        return {"id": "r", "model": "vendor/other-analyst:resolved", "provider": "Test",
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(narrative())}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}}
+    _, meta = synthesize_openrouter(fixture_packet(), api_key="k", requester=requester)
+    assert calls[0]["model"] == "vendor/other-analyst" and calls[0]["max_tokens"] == 4500
+    assert meta["model"] == "vendor/other-analyst" and meta["model_source"] == "environment"
+    assert meta["resolved_model"] == "vendor/other-analyst:resolved" and meta["profile"] == "rich"
+    assert meta["max_output_tokens"] == 4500 and meta["attempts"] == 1
+    assert meta["input_bytes"] > 1000 and meta["output_bytes"] > 100

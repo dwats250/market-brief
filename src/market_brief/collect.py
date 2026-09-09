@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from .evidence import ET as EASTERN
 from .evidence import timestamp
+from .schedule import next_session_date
 
 TREASURY = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml"
 BLS = "https://www.bls.gov/schedule/news_release/bls.ics"
@@ -118,6 +119,7 @@ def calendar_events(text, now, retrieved):
         raise SourceError("malformed calendar")
     text = re.sub(r"\r?\n[ \t]", "", text)
     events, dates = [], []
+    admitted_dates = {now.astimezone(EASTERN).date().isoformat(), next_session_date(now)}
     for block in text.split("BEGIN:VEVENT")[1:]:
         if "END:VEVENT" not in block or "RRULE:" in block:
             raise SourceError("incomplete or recurring calendar unsupported")
@@ -131,7 +133,7 @@ def calendar_events(text, now, retrieved):
             start_key.split("TZID=")[-1] if "TZID=" in start_key else "America/New_York")
         when = datetime.strptime(value.rstrip("Z"), "%Y%m%dT%H%M%S").replace(tzinfo=zone)
         dates.append(when.astimezone(EASTERN).date())
-        if dates[-1] != now.astimezone(EASTERN).date():
+        if dates[-1].isoformat() not in admitted_dates:
             continue
         events.append(dict(id=f"bls-event-{len(events)}", title=fields["SUMMARY"].replace("\\,", ","),
             source_id="bls", published_at=None, checked_at=retrieved.isoformat(),

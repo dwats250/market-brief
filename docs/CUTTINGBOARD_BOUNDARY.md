@@ -101,6 +101,31 @@ Market Brief independently calculates any future relative spreads from its own
 dated inputs. Those are Market Brief metrics, never "Cuttingboard Leadership."
 Local preferences can diverge from the mirror without altering Cuttingboard.
 
+## Future optional `market_structure` envelope (contract only, no collector)
+
+If Cuttingboard ever publishes structure, Market Brief would read one versioned envelope through
+the same allowlisted file/GET adapter. Absent, stale, future-dated, or incompatible input removes
+only this optional context. Nothing depends on it, and the brief records whether it was consumed.
+
+```json
+{
+  "producer": "cuttingboard", "schema_version": "market_structure.v1", "generation_id": "…",
+  "session_date": "2026-09-08", "generated_at": "2026-09-08T19:55:00+00:00",
+  "underlying_observed_at": "2026-09-08T19:54:30+00:00",
+  "scope": {"universe": "MARKET+SECTORS+METALS+MEGACAPS", "benchmark": "SPY"},
+  "fields": {"leadership_20s": {"unit": "pp", "window": "20 sessions", "definition": "…"},
+             "breadth_above_50dma": {"unit": "%", "definition": "share of measured members above SMA50"}},
+  "market_map": [{"symbol": "XLE", "leadership_20s": 4.1, "grade": "A"}],
+  "grade_definition": {"version": "…", "text": "…"},
+  "coverage": {"members": 22, "measured": 21},
+  "provenance": {"source": "…", "url": "…"}, "permitted_use": {"quote": true, "retain": false}
+}
+```
+
+An upstream grade such as `A` is preserved literally with its definition version and observation
+time; Market Brief never reinterprets it as trade permission. The existing contract quotation
+remains a separate interface.
+
 ## Drift and offline behavior
 
 No import-time remote check. At an explicit later `check-mirror` operation or

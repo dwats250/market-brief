@@ -56,3 +56,25 @@ def test_calendar_holiday_early_close_dst():
     before = session_info(datetime(2026, 3, 6, 12, tzinfo=timezone.utc))
     after = session_info(datetime(2026, 3, 9, 12, tzinfo=timezone.utc))
     assert "14:30" in before["open"] and "13:30" in after["open"]
+
+
+@pytest.mark.parametrize("observed,now,near_close,status", [
+    ("2026-09-08T19:59:58+00:00", "2026-09-08T20:38:00+00:00", "2026-09-08T20:00:00+00:00", "PROVISIONAL"),
+    ("2026-09-08T19:45:00+00:00", "2026-09-08T20:38:00+00:00", "2026-09-08T20:00:00+00:00", "PROVISIONAL"),
+    ("2026-09-08T19:44:59+00:00", "2026-09-08T20:38:00+00:00", "2026-09-08T20:00:00+00:00", "STALE"),
+    ("2026-09-08T20:05:00+00:00", "2026-09-08T20:38:00+00:00", "2026-09-08T20:00:00+00:00", "STALE"),
+    ("2026-09-08T19:59:58+00:00", "2026-09-08T21:31:00+00:00", "2026-09-08T20:00:00+00:00", "STALE"),
+    ("2026-09-08T19:59:58+00:00", "2026-09-08T20:38:00+00:00", None, "STALE"),
+])
+def test_session_ending_prints_are_provisional_only_after_the_close_within_bounds(observed, now, near_close, status):
+    row = observation()
+    row["observed_at"] = observed
+    row["retrieved_at"] = now
+    when = datetime.fromisoformat(now)
+    result = normalize_observation(row, when, datetime.fromisoformat(near_close) if near_close else None)
+    assert result["status"] == status
+    if status == "PROVISIONAL":
+        assert result["value"] == 0 and result["freshness"] == "NEAR_CLOSE"
+        assert "not an official closing bar" in result["reason"]
+    else:
+        assert result["value"] is None

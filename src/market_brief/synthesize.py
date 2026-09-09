@@ -13,7 +13,9 @@ from urllib.request import Request, urlopen
 
 from jsonschema import Draft202012Validator
 
-from .evidence import ROOT, canonical, compact_model_record, digest, evidence_catalog, model_packet
+from .context import analyst_context, edition_profile, supplied_ids
+from .continuity import ASSESSMENTS, CARRIED_ASSESSMENTS, prior_values, validate_state
+from .evidence import ROOT, canonical, compact_model_record, digest, evidence_catalog, model_packet, read_json
 
 TEXT = {"type": "string", "minLength": 1, "maxLength": 1800}
 # One claim of roughly eight to twelve words; the bound is a backstop, not the target.
@@ -38,7 +40,7 @@ PARAGRAPH = obj({"text": TEXT, "class": {"enum": ["OBSERVED", "INTERPRETATION"]}
                  "evidence_ids": REFS, "uncertainty": {"type": "string", "maxLength": 500},
                  "alternative": {"type": "string", "maxLength": 500}})
 NARRATIVE_SCHEMA = obj({
-    "schema_version": {"const": "market-brief.narrative.v0"},
+    "schema_version": {"const": "market-brief.narrative.v1"},
     "mode": {"enum": ["LIVE", "SAMPLE"]},
     "banner": obj({"title": HEADLINE, "label": {"enum": ["RISK-ON", "RISK-OFF", "MIXED", "INDETERMINATE"]},
                    "class": {"const": "INTERPRETATION"}, "evidence_ids": REFS,
@@ -54,13 +56,53 @@ NARRATIVE_SCHEMA = obj({
         "class": {"const": "WATCH"}, "condition": TEXT, "confirmation": TEXT,
         "contradiction": TEXT, "horizon": {"oneOf": [{"enum": HORIZONS},
             {"pattern": EVENT_HORIZON.pattern}]}, "evidence_ids": REFS})},
-    "changes": {"type": "array", "maxItems": 0},
+    # Continuity records. The analyst assesses; deterministic code owns every persistent ID.
+    "character": obj({"text": TEXT, "evidence_ids": REFS}),
+    "relationships": {"type": "array", "maxItems": 3, "items": obj({
+        "carried_id": {"type": ["string", "null"]},
+        "instruments": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 4,
+                        "uniqueItems": True},
+        "statement": TEXT, "assessment": {"enum": list(ASSESSMENTS)},
+        "reason": {"type": "string", "maxLength": 500}, "evidence_ids": REFS})},
+    "watch_updates": {"type": "array", "maxItems": 3, "items": obj({
+        "carried_id": {"type": "string"}, "assessment": {"enum": list(CARRIED_ASSESSMENTS)},
+        "reason": TEXT, "evidence_ids": REFS})},
+    "changes": {"type": "array", "maxItems": 3, "items": obj({
+        "comparison_id": {"type": "string"}, "text": TEXT, "evidence_ids": REFS})},
 })
-TOKEN = re.compile(r"\{\{([a-zA-Z][\w-]*)\}\}")
+TOKEN = re.compile(r"\{\{([a-zA-Z][\w-]*(?::[a-zA-Z][\w-]*)?)\}\}")
 
 
-def validate_narrative(narrative, packet):
-    errors = list(Draft202012Validator(NARRATIVE_SCHEMA).iter_errors(narrative))
+def narrative_schema(profile=None):
+    """The one contract, with the edition's smaller bounds applied for light checkpoints."""
+    if not profile:
+        return NARRATIVE_SCHEMA
+    schema = json.loads(json.dumps(NARRATIVE_SCHEMA))
+    schema["properties"]["summary"]["maxItems"] = profile["summary_paragraphs"]
+    schema["properties"]["attention_ids"]["maxItems"] = profile["attention_items"]
+    schema["properties"]["attention"]["maxItems"] = profile["attention_items"]
+    schema["properties"]["watches"]["maxItems"] = profile["watches"]
+    return schema
+
+
+def analyst_model(config=None, environ=None):
+    """Configured analyst identity: one model for every edition, overridable by environment."""
+    environ = os.environ if environ is None else environ
+    config = config or read_json(ROOT / "config/editions.json")
+    configured = config["analyst"]["model"]
+    override = environ.get("MARKET_BRIEF_MODEL")
+    return dict(model=override or configured, source="environment" if override else "config/editions.json",
+                cli_model=config["analyst"].get("cli_model", "sonnet"))
+
+
+def validate_narrative(narrative, packet, context=None, schema=None):
+    """Mechanical grounding: schema, mode, references that exist in admitted evidence and were
+    actually supplied in the analyst context, numeric placeholders, and trade/current-language rules.
+
+    `schema` is the contract actually advertised to the model; by default the edition's profile-bounded one.
+    """
+    profile = (context or {}).get("edition") or edition_profile(packet["run"]["checkpoint"])
+    errors = list(Draft202012Validator(schema or narrative_schema(profile)).iter_errors(narrative))
     if errors:
         raise ValueError("malformed narrative at " + ".".join(map(str, errors[0].absolute_path)))
     if narrative["mode"] != packet["run"]["mode"]:
@@ -68,17 +110,29 @@ def validate_narrative(narrative, packet):
     if ";" in narrative["banner"]["title"]:
         raise ValueError("headline must be one claim without a semicolon")
     catalog = evidence_catalog(model_packet(packet))
-    records = [narrative["banner"], *narrative["summary"], *narrative["watches"]]
+    if context is not None:
+        if context.get("evidence_hash") != digest(packet):
+            raise ValueError("analyst context does not match the evidence record")
+        shown = supplied_ids(context)
+        catalog = {ident: row for ident, row in catalog.items() if ident in shown}
+    # Current-condition records cite current evidence only; continuity records may add prior refs.
+    records = [narrative["banner"], *narrative["summary"], *narrative["watches"], narrative["character"]]
     records += [p for section in narrative["sections"].values() for p in section]
     for record in records:
         refs = set(record["evidence_ids"])
         if not refs <= catalog.keys():
-            raise ValueError("unknown or unavailable evidence reference")
+            raise ValueError("unknown, unavailable, or unsupplied evidence reference")
+    validate_state(narrative, context, set(catalog), {row["topic"] for row in catalog.values() if "topic" in row})
+    values = {ident: row for ident, row in catalog.items()}
+    values.update(prior_values(context))
+    records += [*narrative["relationships"], *narrative["watch_updates"], *narrative["changes"]]
+    for record in records:
+        refs = set(record["evidence_ids"])
         for key in ("title", "text", "limitation", "uncertainty", "alternative", "condition",
-                    "confirmation", "contradiction", "horizon"):
+                    "confirmation", "contradiction", "horizon", "statement", "reason"):
             text = record.get(key, "")
             for ident in TOKEN.findall(text):
-                if ident not in refs or not isinstance(catalog[ident].get("value"), (int, float)):
+                if ident not in refs or not isinstance(values.get(ident, {}).get("value"), (int, float)):
                     raise ValueError("numeric placeholder not grounded in cited observation")
             plain = TOKEN.sub("", text)
             plain = ALLOWED_LABELS.sub("", plain)
@@ -111,99 +165,39 @@ def validate_narrative(narrative, packet):
     return narrative
 
 
-HISTORY_ERROR = re.compile(r"^(?P<symbol>[A-Z][\w.-]*): invalid/incomplete historical context \((?P<reason>.*)\)$")
-
-
-def _history_error_summary(packet, errors):
-    """Twenty-two near-identical strings become one structured statement of the gap."""
-    symbols, reasons = [], []
-    for text in errors:
-        match = HISTORY_ERROR.match(text)
-        if match:
-            symbols.append(match["symbol"])
-            if match["reason"] not in reasons:
-                reasons.append(match["reason"])
-        elif text not in reasons:
-            reasons.append(text)
-    affected = set(symbols)
-    latest = [h["dates"][-1] for h in packet.get("history", [])
-              if h.get("symbol") in affected and h.get("dates")]
-    return dict(affected_count=len(errors), affected_symbols=sorted(affected),
-                expected_session=packet["run"]["session"]["previous_session"],
-                latest_provider_session=max(latest) if latest else None, reasons=reasons)
-
-
 def synthesis_packet(packet):
-    """The bounded editorial projection: one canonical copy of each admitted fact, no renderer plumbing.
-
-    `model_packet` remains the authority filter (permitted sources, usable rows) for both this
-    projection and the validator; this function only changes the shape the model reads.
-    """
-    projected = model_packet(packet)
-    catalog = evidence_catalog(projected)
-    groups, baselines = {}, {}
-    events, context_items = [], []
-    for row in catalog.values():
-        if "value" not in row:
-            continue
-        baselines.setdefault(row["metric"], row.get("baseline"))
-        item = {key: row[key] for key in ("id", "metric", "value", "unit", "magnitude", "status", "observed_at")
-                if key in row}
-        groups.setdefault(row["topic"], []).append(item)
-    for row in projected["events"]:
-        events.append({key: row[key] for key in ("id", "title", "scheduled_at", "session_relation", "status")
-                       if row.get(key) is not None})
-    for row in projected["context_items"]:
-        context_items.append({key: row[key] for key in ("id", "title", "published_at") if row.get(key) is not None})
-    session = projected["run"].get("session", {})
-    result = dict(
-        run=dict(mode=projected["run"]["mode"], checkpoint=projected["run"]["checkpoint"],
-                 target_time=projected["run"]["target_time"],
-                 session={key: session[key] for key in
-                          ("date", "trading_day", "previous_session", "open", "close", "meaningful_premarket")
-                          if key in session}),
-        coverage=projected["coverage"],
-        baselines=baselines,
-        catalog=[dict(topic=topic, rows=rows) for topic, rows in groups.items()],
-        sector_leadership={key: [row["id"] for row in rows]
-                           for key, rows in projected.get("sector_leadership", {}).items()},
-        attention=projected["attention"],
-        events=events, context_items=context_items,
-        sources=[{key: value for key, value in source.items()
-                  if key in ("id", "name", "kind", "status", "feed", "data_delay", "coverage_date")
-                  and value is not None
-                  or (key == "reason" and value and source.get("status") != "AVAILABLE")}
-                 for source in projected["sources"]],
-        cuttingboard=projected["cuttingboard"],
-    )
-    if packet.get("history_lag"):
-        result["history_lag"] = packet["history_lag"]
-    if packet.get("history_errors"):
-        result["history_errors"] = _history_error_summary(packet, packet["history_errors"])
-    return result
+    """Compatibility name: the bounded projection now lives in `context.analyst_context`."""
+    return analyst_context(packet)
 
 
-def construct_prompt(packet, full=False):
-    """Default payload is the bounded synthesis projection accepted on 2026-09-08 (run 34280109434).
+def construct_prompt(packet, full=False, context=None):
+    """Default payload is the saved analyst context (bounded projection accepted on 2026-09-08).
 
+    `context` is the exact saved artifact when the caller persisted one; otherwise it is built here.
     `full` reproduces the original evidence-plus-catalog payload for diagnostics. Both keep
     `output_schema` in context: the transport alone did not enforce the response shape.
     """
     instructions = (ROOT / "prompts/synthesis.md").read_text()
+    profile = edition_profile(packet["run"]["checkpoint"])
     if full:
         model_view = model_packet(packet)
         catalog = {ident: compact_model_record(row) for ident, row in evidence_catalog(model_view).items()}
         projected = dict(evidence=model_view, catalog=catalog, output_schema=NARRATIVE_SCHEMA)
+        limit = 120_000
     else:
-        projected = dict(synthesis_packet(packet), output_schema=NARRATIVE_SCHEMA)
+        context = context if context is not None else analyst_context(packet, profile)
+        projected = dict(context, output_schema=narrative_schema(context.get("edition") or profile))
+        limit = min(120_000, profile["input_limit_bytes"])
     user = canonical(projected)
     size = len(user.encode())
     sections = {key: len(canonical(value).encode()) for key, value in projected.items()}
     largest = ", ".join(f"{key}={value}" for key, value in
                          sorted(sections.items(), key=lambda item: item[1], reverse=True)[:3])
     print(f"Synthesis packet: {size} bytes; largest sections: {largest}", flush=True)
-    if size > 120_000:
-        raise ValueError("bounded synthesis packet exceeds size limit")
+    if size > limit:
+        # Never truncate: a context that cannot fit its edition budget fails with diagnostics.
+        raise ValueError(f"bounded synthesis packet exceeds the {profile['profile']} edition budget: "
+                         f"{size} bytes > {limit}; largest sections: {largest}")
     return instructions, user
 
 
@@ -292,18 +286,22 @@ def _openrouter_narrative(response):
                          f"diagnostic={diagnostic}") from None
 
 
-def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, sleeper=time.sleep, full=False):
+def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, sleeper=time.sleep, full=False,
+                          context=None):
     api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OpenRouter credentials are not configured")
-    system, user = construct_prompt(packet, full=full)
+    system, user = construct_prompt(packet, full=full, context=context)
+    profile = edition_profile(packet["run"]["checkpoint"])
+    analyst = analyst_model()
+    schema = NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile)
     requested_at = datetime.now(timezone.utc).isoformat()
-    payload = dict(model=OPENROUTER_MODEL, temperature=0, max_tokens=10000,
+    payload = dict(model=analyst["model"], temperature=0, max_tokens=profile["max_output_tokens"],
                    messages=[{"role": "system", "content": system},
                              {"role": "user", "content": user}],
                    plugins=[{"id": "response-healing"}],
                    response_format={"type": "json_schema", "json_schema": {
-                       "name": "market_brief_narrative", "strict": True, "schema": NARRATIVE_SCHEMA}},
+                       "name": "market_brief_narrative", "strict": True, "schema": schema}},
                    reasoning={"exclude": True})
     response = None
     for attempt in range(3):
@@ -316,7 +314,7 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
             sleeper(2 ** attempt)
     narrative = _openrouter_narrative(response)
     try:
-        narrative = validate_narrative(narrative, packet)
+        narrative = validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)
     except ValueError as exc:
         diagnostic = _openrouter_diagnostic(response)
         raise ValueError(f"{exc}; diagnostic={diagnostic}") from None
@@ -327,31 +325,37 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     choice = (response.get("choices") or [{}])[0]
     finish_reason = choice.get("finish_reason", "unknown") if isinstance(choice, dict) else "unknown"
     provider_route = response.get("provider", "unknown")
-    resolved_model = response.get("model", OPENROUTER_MODEL)
+    resolved_model = response.get("model", analyst["model"])
     if safe_usage:
         print("Synthesis usage: " + " ".join(f"{key}={value}" for key, value in safe_usage.items())
               + f" finish={finish_reason} provider={provider_route} model={resolved_model}", flush=True)
     else:
         print(f"Synthesis usage: unavailable finish={finish_reason} provider={provider_route}", flush=True)
-    return narrative, dict(route="openrouter", provider="OpenRouter", model=OPENROUTER_MODEL,
+    return narrative, dict(route="openrouter", provider="OpenRouter", model=analyst["model"],
+                           model_source=analyst["source"], profile=profile["profile"],
+                           max_output_tokens=profile["max_output_tokens"], attempts=attempt + 1,
+                           input_bytes=len(user.encode()), output_bytes=len(canonical(narrative).encode()),
                            resolved_model=resolved_model, provider_route=provider_route,
                            finish_reason=finish_reason,
                            requested_at=requested_at, response_id=response.get("id"), usage=safe_usage,
                            prompt_hash=digest(dict(system=system, user=user)), evidence_hash=digest(packet))
 
 
-def synthesize(packet, runner=subprocess.run, full=False):
+def synthesize(packet, runner=subprocess.run, full=False, context=None):
     if os.environ.get("OPENROUTER_API_KEY"):
-        return synthesize_openrouter(packet, full=full)
+        return synthesize_openrouter(packet, full=full, context=context)
     executable = shutil.which("claude")
     if not executable:
         raise ValueError("Claude CLI is not installed")
-    system, user = construct_prompt(packet, full=full)
+    system, user = construct_prompt(packet, full=full, context=context)
+    analyst = analyst_model()
+    profile = edition_profile(packet["run"]["checkpoint"])
+    schema = NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile)
     argv = [executable, "--print", "--safe-mode", "--tools", "", "--strict-mcp-config",
             "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands",
             "--no-session-persistence", "--setting-sources", "", "--output-format", "json",
-            "--model", "sonnet", "--system-prompt", system,
-            "--json-schema", canonical(NARRATIVE_SCHEMA)]
+            "--model", analyst["cli_model"], "--system-prompt", system,
+            "--json-schema", canonical(schema)]
     # Retain existing auth location, not unrelated provider credentials or project environment.
     env = {k: v for k, v in os.environ.items() if k in
            {"HOME", "PATH", "LANG", "USER", "SHELL", "XDG_CONFIG_HOME", "SSL_CERT_FILE"}}
@@ -370,11 +374,11 @@ def synthesize(packet, runner=subprocess.run, full=False):
         narrative = envelope.get("structured_output")
         if narrative is None:
             narrative = json.loads(envelope.get("result", ""))
-        validated = validate_narrative(narrative, packet)
+        validated = validate_narrative(narrative, packet, None if full else context, schema)
     except (json.JSONDecodeError, TypeError, AttributeError):
         raise ValueError("Claude did not return a structured narrative") from None
     models = list(envelope.get("modelUsage", {}).keys())
-    return validated, dict(route="claude-cli", requested_model="sonnet",
+    return validated, dict(route="claude-cli", requested_model=analyst["cli_model"], profile=profile["profile"],
                            resolved_models=models or ["not exposed"],
                            prompt_hash=digest(dict(system=system, user=user)),
                            evidence_hash=digest(packet))

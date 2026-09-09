@@ -17,4 +17,4 @@ jobs:
       - name: Install Wrangler
         run: npm install --no-save wrangler@3.90.0
       - name: Tail scheduler errors
-        run: timeout 360 npx wrangler tail market-brief-scheduler --format json --status error --sampling-rate 1
+        run: timeout 360 npx wrangler tail market-brief-scheduler --format json --status error

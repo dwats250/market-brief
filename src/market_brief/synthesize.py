@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 
 from jsonschema import Draft202012Validator
 
+from .context import analyst_context, supplied_ids
 from .evidence import ROOT, canonical, compact_model_record, digest, evidence_catalog, model_packet
 
 TEXT = {"type": "string", "minLength": 1, "maxLength": 1800}
@@ -59,7 +60,10 @@ NARRATIVE_SCHEMA = obj({
 TOKEN = re.compile(r"\{\{([a-zA-Z][\w-]*)\}\}")
 
 
-def validate_narrative(narrative, packet):
+def validate_narrative(narrative, packet, context=None):
+    """Mechanical grounding: schema, mode, references that exist in admitted evidence and were
+    actually supplied in the analyst context, numeric placeholders, and trade/current-language rules.
+    """
     errors = list(Draft202012Validator(NARRATIVE_SCHEMA).iter_errors(narrative))
     if errors:
         raise ValueError("malformed narrative at " + ".".join(map(str, errors[0].absolute_path)))
@@ -68,12 +72,17 @@ def validate_narrative(narrative, packet):
     if ";" in narrative["banner"]["title"]:
         raise ValueError("headline must be one claim without a semicolon")
     catalog = evidence_catalog(model_packet(packet))
+    if context is not None:
+        if context.get("evidence_hash") != digest(packet):
+            raise ValueError("analyst context does not match the evidence record")
+        shown = supplied_ids(context)
+        catalog = {ident: row for ident, row in catalog.items() if ident in shown}
     records = [narrative["banner"], *narrative["summary"], *narrative["watches"]]
     records += [p for section in narrative["sections"].values() for p in section]
     for record in records:
         refs = set(record["evidence_ids"])
         if not refs <= catalog.keys():
-            raise ValueError("unknown or unavailable evidence reference")
+            raise ValueError("unknown, unavailable, or unsupplied evidence reference")
         for key in ("title", "text", "limitation", "uncertainty", "alternative", "condition",
                     "confirmation", "contradiction", "horizon"):
             text = record.get(key, "")
@@ -111,81 +120,15 @@ def validate_narrative(narrative, packet):
     return narrative
 
 
-HISTORY_ERROR = re.compile(r"^(?P<symbol>[A-Z][\w.-]*): invalid/incomplete historical context \((?P<reason>.*)\)$")
-
-
-def _history_error_summary(packet, errors):
-    """Twenty-two near-identical strings become one structured statement of the gap."""
-    symbols, reasons = [], []
-    for text in errors:
-        match = HISTORY_ERROR.match(text)
-        if match:
-            symbols.append(match["symbol"])
-            if match["reason"] not in reasons:
-                reasons.append(match["reason"])
-        elif text not in reasons:
-            reasons.append(text)
-    affected = set(symbols)
-    latest = [h["dates"][-1] for h in packet.get("history", [])
-              if h.get("symbol") in affected and h.get("dates")]
-    return dict(affected_count=len(errors), affected_symbols=sorted(affected),
-                expected_session=packet["run"]["session"]["previous_session"],
-                latest_provider_session=max(latest) if latest else None, reasons=reasons)
-
-
 def synthesis_packet(packet):
-    """The bounded editorial projection: one canonical copy of each admitted fact, no renderer plumbing.
-
-    `model_packet` remains the authority filter (permitted sources, usable rows) for both this
-    projection and the validator; this function only changes the shape the model reads.
-    """
-    projected = model_packet(packet)
-    catalog = evidence_catalog(projected)
-    groups, baselines = {}, {}
-    events, context_items = [], []
-    for row in catalog.values():
-        if "value" not in row:
-            continue
-        baselines.setdefault(row["metric"], row.get("baseline"))
-        item = {key: row[key] for key in ("id", "metric", "value", "unit", "magnitude", "status", "observed_at")
-                if key in row}
-        groups.setdefault(row["topic"], []).append(item)
-    for row in projected["events"]:
-        events.append({key: row[key] for key in ("id", "title", "scheduled_at", "session_relation", "status")
-                       if row.get(key) is not None})
-    for row in projected["context_items"]:
-        context_items.append({key: row[key] for key in ("id", "title", "published_at") if row.get(key) is not None})
-    session = projected["run"].get("session", {})
-    result = dict(
-        run=dict(mode=projected["run"]["mode"], checkpoint=projected["run"]["checkpoint"],
-                 target_time=projected["run"]["target_time"],
-                 session={key: session[key] for key in
-                          ("date", "trading_day", "previous_session", "open", "close", "meaningful_premarket")
-                          if key in session}),
-        coverage=projected["coverage"],
-        baselines=baselines,
-        catalog=[dict(topic=topic, rows=rows) for topic, rows in groups.items()],
-        sector_leadership={key: [row["id"] for row in rows]
-                           for key, rows in projected.get("sector_leadership", {}).items()},
-        attention=projected["attention"],
-        events=events, context_items=context_items,
-        sources=[{key: value for key, value in source.items()
-                  if key in ("id", "name", "kind", "status", "feed", "data_delay", "coverage_date")
-                  and value is not None
-                  or (key == "reason" and value and source.get("status") != "AVAILABLE")}
-                 for source in projected["sources"]],
-        cuttingboard=projected["cuttingboard"],
-    )
-    if packet.get("history_lag"):
-        result["history_lag"] = packet["history_lag"]
-    if packet.get("history_errors"):
-        result["history_errors"] = _history_error_summary(packet, packet["history_errors"])
-    return result
+    """Compatibility name: the bounded projection now lives in `context.analyst_context`."""
+    return analyst_context(packet)
 
 
-def construct_prompt(packet, full=False):
-    """Default payload is the bounded synthesis projection accepted on 2026-09-08 (run 34280109434).
+def construct_prompt(packet, full=False, context=None):
+    """Default payload is the saved analyst context (bounded projection accepted on 2026-09-08).
 
+    `context` is the exact saved artifact when the caller persisted one; otherwise it is built here.
     `full` reproduces the original evidence-plus-catalog payload for diagnostics. Both keep
     `output_schema` in context: the transport alone did not enforce the response shape.
     """
@@ -195,7 +138,8 @@ def construct_prompt(packet, full=False):
         catalog = {ident: compact_model_record(row) for ident, row in evidence_catalog(model_view).items()}
         projected = dict(evidence=model_view, catalog=catalog, output_schema=NARRATIVE_SCHEMA)
     else:
-        projected = dict(synthesis_packet(packet), output_schema=NARRATIVE_SCHEMA)
+        projected = dict(context if context is not None else analyst_context(packet),
+                         output_schema=NARRATIVE_SCHEMA)
     user = canonical(projected)
     size = len(user.encode())
     sections = {key: len(canonical(value).encode()) for key, value in projected.items()}
@@ -292,11 +236,12 @@ def _openrouter_narrative(response):
                          f"diagnostic={diagnostic}") from None
 
 
-def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, sleeper=time.sleep, full=False):
+def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, sleeper=time.sleep, full=False,
+                          context=None):
     api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OpenRouter credentials are not configured")
-    system, user = construct_prompt(packet, full=full)
+    system, user = construct_prompt(packet, full=full, context=context)
     requested_at = datetime.now(timezone.utc).isoformat()
     payload = dict(model=OPENROUTER_MODEL, temperature=0, max_tokens=10000,
                    messages=[{"role": "system", "content": system},
@@ -316,7 +261,7 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
             sleeper(2 ** attempt)
     narrative = _openrouter_narrative(response)
     try:
-        narrative = validate_narrative(narrative, packet)
+        narrative = validate_narrative(narrative, packet, None if full else context)
     except ValueError as exc:
         diagnostic = _openrouter_diagnostic(response)
         raise ValueError(f"{exc}; diagnostic={diagnostic}") from None
@@ -340,13 +285,13 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
                            prompt_hash=digest(dict(system=system, user=user)), evidence_hash=digest(packet))
 
 
-def synthesize(packet, runner=subprocess.run, full=False):
+def synthesize(packet, runner=subprocess.run, full=False, context=None):
     if os.environ.get("OPENROUTER_API_KEY"):
-        return synthesize_openrouter(packet, full=full)
+        return synthesize_openrouter(packet, full=full, context=context)
     executable = shutil.which("claude")
     if not executable:
         raise ValueError("Claude CLI is not installed")
-    system, user = construct_prompt(packet, full=full)
+    system, user = construct_prompt(packet, full=full, context=context)
     argv = [executable, "--print", "--safe-mode", "--tools", "", "--strict-mcp-config",
             "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands",
             "--no-session-persistence", "--setting-sources", "", "--output-format", "json",
@@ -370,7 +315,7 @@ def synthesize(packet, runner=subprocess.run, full=False):
         narrative = envelope.get("structured_output")
         if narrative is None:
             narrative = json.loads(envelope.get("result", ""))
-        validated = validate_narrative(narrative, packet)
+        validated = validate_narrative(narrative, packet, None if full else context)
     except (json.JSONDecodeError, TypeError, AttributeError):
         raise ValueError("Claude did not return a structured narrative") from None
     models = list(envelope.get("modelUsage", {}).keys())

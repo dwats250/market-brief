@@ -30,6 +30,18 @@ from market_brief.synthesize import construct_prompt, synthesize, validate_narra
 NOW = datetime(2026, 9, 8, 12, 45, tzinfo=timezone.utc)
 
 
+def freeze_clock(monkeypatch, value):
+    """Pin the CLI's wall clock so live-mode tests do not drift past the fixture's history."""
+    fixed = datetime.fromisoformat(value).astimezone(timezone.utc)
+
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed if tz else fixed.replace(tzinfo=None)
+    monkeypatch.setattr(cli, "datetime", Frozen)
+    return fixed
+
+
 def fixture_packet():
     raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
     raw["cuttingboard"] = cuttingboard_record(raw["cuttingboard"], NOW, NOW)

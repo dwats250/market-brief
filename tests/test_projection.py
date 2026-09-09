@@ -3,11 +3,13 @@
 import copy
 import json
 
+import pytest
 from test_history_admission import packet_at, utc
-from test_pipeline import fixture_packet, narrative
+from test_pipeline import fixture_packet, freeze_clock, narrative
 
 from market_brief import cli
-from market_brief.evidence import ROOT, evidence_catalog, model_packet, read_json
+from market_brief.context import CONTEXT_SCHEMA, analyst_context, supplied_ids
+from market_brief.evidence import ROOT, digest, evidence_catalog, model_packet, read_json
 from market_brief.synthesize import (
     construct_prompt,
     synthesis_packet,
@@ -147,12 +149,13 @@ def test_absent_usage_metadata_does_not_fail_synthesis():
 
 
 def test_experiment_run_never_publishes_or_records_success(tmp_path, monkeypatch):
+    freeze_clock(monkeypatch, "2026-09-08T12:45:00+00:00")
     raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
     raw["mode"] = "LIVE"
     monkeypatch.setattr(cli, "collect_live", lambda target, include_cuttingboard=False: raw)
     value = narrative()
     value["mode"] = "LIVE"
-    monkeypatch.setattr(cli, "synthesize", lambda packet, full=False: (value, {"route": "test"}))
+    monkeypatch.setattr(cli, "synthesize", lambda packet, **kwargs: (value, {"route": "test"}))
     original = cli.output_directory
     monkeypatch.setattr(cli, "output_directory", lambda root, mode, target: original(tmp_path, mode, target))
     monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
@@ -167,3 +170,70 @@ def test_experiment_run_never_publishes_or_records_success(tmp_path, monkeypatch
     folder = next((tmp_path / "runs").glob("*/*"))
     assert (folder / "brief.html").exists()
     assert json.loads((folder / "metadata.json").read_text())["experiment"] is True
+
+
+# The saved analyst boundary: one versioned, hashed context per run, and references checked against it.
+def test_context_carries_schema_version_evidence_hash_and_run_identity():
+    packet = fixture_packet()
+    packet["run"]["run_id"] = "sample-premarket-124500-fixture"
+    context = analyst_context(packet)
+    assert context["schema_version"] == CONTEXT_SCHEMA
+    assert context["evidence_hash"] == digest(packet)
+    assert context["run"]["run_id"] == "sample-premarket-124500-fixture"
+    assert context["run"]["mode"] == "SAMPLE" and context["run"]["checkpoint"] == "PREMARKET"
+    assert analyst_context(packet) == context
+    assert digest(analyst_context(packet)) == digest(context)
+
+
+def test_saved_context_is_the_exact_payload_sent():
+    packet = fixture_packet()
+    context = analyst_context(packet)
+    _, user = construct_prompt(packet, context=context)
+    data = json.loads(user)
+    del data["output_schema"]
+    assert data == json.loads(json.dumps(context))
+
+
+def test_denied_sources_are_absent_from_the_saved_context():
+    packet = fixture_packet()
+    next(s for s in packet["sources"] if s["id"] == "sample-rates")["llm_allowed"] = False
+    context = analyst_context(packet)
+    assert "treasury-2y" not in supplied_ids(context)
+    assert "sample-rates" not in json.dumps(context)
+    assert "SPY-daily" in supplied_ids(context)
+
+
+def test_references_must_have_been_supplied_in_the_context():
+    packet = fixture_packet()
+    context = analyst_context(packet)
+    assert validate_narrative(narrative(), packet, context)
+    trimmed = json.loads(json.dumps(context))
+    trimmed["catalog"] = [group for group in trimmed["catalog"] if group["topic"] != "QQQ"]
+    with pytest.raises(ValueError, match="unsupplied"):
+        validate_narrative(narrative(), packet, trimmed)
+
+
+def test_context_for_a_different_evidence_record_is_rejected():
+    packet = fixture_packet()
+    context = analyst_context(packet)
+    packet["coverage"]["limitations"].append("evidence changed after the context was saved")
+    with pytest.raises(ValueError, match="does not match"):
+        validate_narrative(narrative(), packet, context)
+
+
+def test_replay_persists_context_that_hashes_to_the_saved_evidence(tmp_path, monkeypatch):
+    original = cli.output_directory
+    monkeypatch.setattr(cli, "output_directory", lambda root, mode, target: original(tmp_path, mode, target))
+    monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
+    assert cli.main(["premarket", "--replay"]) == 0
+    folder = next((tmp_path / "runs").glob("*/*"))
+    evidence = json.loads((folder / "evidence.json").read_text())
+    context = json.loads((folder / "analyst_context.json").read_text())
+    metadata = json.loads((folder / "metadata.json").read_text())
+    assert evidence["run"]["run_id"] == folder.name == metadata["run_id"]
+    assert context["evidence_hash"] == digest(evidence) == metadata["evidence_hash"]
+    assert metadata["context_hash"] == digest(context)
+    assert metadata["context_schema"] == CONTEXT_SCHEMA
+    # Replaying the saved evidence rebuilds the identical context.
+    assert digest(analyst_context(evidence)) == metadata["context_hash"]
+    assert set(supplied_ids(context)) == set(evidence_catalog(model_packet(evidence)))

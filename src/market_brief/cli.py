@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import __version__
 from .collect import ALPACA_UNIVERSE, alpaca_probe, collect_live, cuttingboard_record
+from .context import analyst_context
 from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_json, timestamp
 from .metrics import annotate_magnitude, derive
 from .render import render
@@ -157,15 +158,23 @@ def run(args):
                          app_version=__version__, universe_hash=digest(universe),
                          sources_config_hash=digest(config), manual_input=bool(args.input))
     folder = output_directory(ROOT, mode, target)
+    # The folder name is the run identity every artifact of this run carries.
+    packet["run"]["run_id"] = folder.name
     write_json(folder / "evidence.json", packet)
+    evidence_hash = digest(packet)
+    # The analyst reads exactly this saved projection; the validator checks references against it.
+    context = analyst_context(packet)
+    write_json(folder / "analyst_context.json", context)
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                               capture_output=True, text=True, check=False).stdout.strip()
     metadata = dict(app_version=__version__, code_revision=revision or "unknown", mode=mode,
+                    run_id=folder.name,
                     target_time=target.isoformat(), started_at=started.isoformat(),
                     meaningful_premarket=packet["run"]["session"]["meaningful_premarket"],
                     checkpoint=checkpoint, actual_started_at=started.isoformat(),
                     scheduled_checkpoint_at=checkpoint_data["scheduled_at"],
-                    coverage=packet["coverage"]["status"], evidence_hash=digest(packet),
+                    coverage=packet["coverage"]["status"], evidence_hash=evidence_hash,
+                    context_schema=context["schema_version"], context_hash=digest(context),
                     validation="NOT_RUN", model_route="none", experiment=experiment,
                     synthesis_projection="full" if full else "compact")
     try:
@@ -173,14 +182,14 @@ def run(args):
             raise ValueError("no usable observations/events/context; evidence diagnostic only")
         if args.replay and not args.synthesize:
             narrative = read_json(ROOT / "tests/fixtures/narrative.sample.json")
-            validate_narrative(narrative, packet)
-            system, prompt = construct_prompt(packet, full=full)
+            validate_narrative(narrative, packet, None if full else context)
+            system, prompt = construct_prompt(packet, full=full, context=context)
             model = dict(route="fixture-replay", resolved_models=[],
                          prompt_hash=digest(dict(system=system, user=prompt)),
-                         evidence_hash=digest(packet))
+                         evidence_hash=evidence_hash)
         else:
             print("Evidence collected; requesting one isolated structured synthesis.", flush=True)
-            narrative, model = synthesize(packet, full=full)
+            narrative, model = synthesize(packet, full=full, context=context)
         markdown, page = render(packet, narrative)
         (folder / "brief.md").write_text(markdown)
         (folder / "brief.html").write_text(page)
@@ -189,6 +198,7 @@ def run(args):
             publish_latest(ROOT)
         write_json(folder / "narrative.json", narrative)
         metadata.update(validation="PASS", model_route=model["route"], model=model,
+                        narrative_hash=digest(narrative),
                         markdown_hash=digest(markdown), html_hash=digest(page))
         if mode == "LIVE" and not experiment and packet["coverage"]["status"] in {"READY", "PARTIAL"}:
             pointer = ROOT / "runs/latest-success.json"

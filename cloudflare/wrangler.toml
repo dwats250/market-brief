@@ -5,7 +5,7 @@ workers_dev = true
 
 [vars]
 GITHUB_REPOSITORY = "dwats250/market-brief"
-DIAGNOSTIC_CRON = "15 19 * * MON-FRI"
+DIAGNOSTIC_CRON = "17 19 * * MON-FRI"
 
 # Cloudflare Cron is UTC. These are wake candidates for both Pacific seasons;
 # the Python scheduler resolves DST, holidays, early closes, and idempotency.
@@ -15,5 +15,5 @@ crons = [
   "31 13-14 * * MON-FRI",
   "0 19-20 * * MON-FRI",
   "1 17,18,20,21 * * MON-FRI",
-  "15 19 * * MON-FRI",
+  "17 19 * * MON-FRI",
 ]

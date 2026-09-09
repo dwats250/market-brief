@@ -24,12 +24,12 @@ jobs:
             -H "Content-Type: application/json" \
             -H "User-Agent: market-brief-dispatch-probe" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            --data '{"ref":"main","inputs":{"cloudflare_wakeup":"true","cloudflare_smoke":"true"}}')
+            --data '{"ref":"__market_brief_dispatch_probe_invalid_ref__","inputs":{"cloudflare_wakeup":"true","cloudflare_smoke":"true"}}')
           echo "GitHub dispatch HTTP status: $status"
           echo "GitHub dispatch response:"
           head -c 1000 /tmp/github-response
           echo
-          test "$status" = "204"
+          test "$status" = "422"
 
   tail:
     runs-on: ubuntu-latest

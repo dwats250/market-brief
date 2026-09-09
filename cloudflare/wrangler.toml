@@ -1,0 +1,24 @@
+name = "market-brief-scheduler"
+main = "src/index.js"
+compatibility_date = "2026-09-09"
+workers_dev = true
+
+[vars]
+GITHUB_REPOSITORY = "dwats250/market-brief"
+
+# Cloudflare Cron is UTC. These are wake candidates for both Pacific seasons;
+# the Python scheduler resolves DST, holidays, early closes, and idempotency.
+[triggers]
+crons = [
+  "0 13 * * 1-5",
+  "31 13 * * 1-5",
+  "0 14 * * 1-5",
+  "31 14 * * 1-5",
+  "0 15 * * 1-5",
+  "7 19 * * 1-5",
+  "1 17 * * 1-5",
+  "1 18 * * 1-5",
+  "1 20 * * 1-5",
+  "7 20 * * 1-5",
+  "1 21 * * 1-5",
+]

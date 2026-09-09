@@ -43,6 +43,11 @@ on:
         required: false
         default: false
         type: boolean
+      cloudflare_wakeup:
+        description: Cloudflare Cron wake-up; resolve the checkpoint in the Python scheduler
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -105,12 +110,22 @@ jobs:
           EVENT_SCHEDULE: ${{ github.event.schedule }}
           INPUT_CHECKPOINT: ${{ inputs.checkpoint }}
           INPUT_COMMISSIONING: ${{ inputs.commissioning }}
+          INPUT_CLOUDFLARE_WAKEUP: ${{ inputs.cloudflare_wakeup }}
         run: |
           if [ "$INPUT_COMMISSIONING" = "true" ]; then
             # The application resolves the market phase from the clock at collection time.
             checkpoint=CURRENT
             label="LIVE COMMISSIONING"
             run=true
+          elif [ "$INPUT_CLOUDFLARE_WAKEUP" = "true" ]; then
+            checkpoint=$(python -m market_brief resolve-scheduled)
+            if [ "$checkpoint" = "SKIP" ]; then
+              run=false
+              label=SKIP
+            else
+              run=true
+              label="$checkpoint"
+            fi
           elif [ -n "$INPUT_CHECKPOINT" ]; then
             checkpoint="$INPUT_CHECKPOINT"
             label="$checkpoint"
@@ -136,13 +151,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python -m market_brief continuity-restore --repository "$GITHUB_REPOSITORY" --branch main
       - name: Alpaca commissioning probe
-        if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
+        if: github.event_name == 'workflow_dispatch' && inputs.cloudflare_wakeup != true && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief alpaca-probe
       - name: Full Alpaca coverage probe
-        if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
+        if: github.event_name == 'workflow_dispatch' && inputs.cloudflare_wakeup != true && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief alpaca-probe --full
       - name: Collect, synthesize, validate, and render manually
-        if: github.event_name == 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
+        if: github.event_name == 'workflow_dispatch' && inputs.cloudflare_wakeup != true && steps.checkpoint.outputs.run == 'true'
         env:
           COMMISSIONING: ${{ inputs.commissioning }}
           EXPERIMENT: ${{ inputs.experiment }}
@@ -154,7 +169,10 @@ jobs:
           else
             python -m market_brief premarket --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
           fi
-      - name: Collect, synthesize, validate, and render on schedule
+      - name: Collect, synthesize, validate, and render from Cloudflare wake-up
+        if: inputs.cloudflare_wakeup == true && steps.checkpoint.outputs.run == 'true'
+        run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
+      - name: Collect, synthesize, validate, and render on GitHub schedule
         if: github.event_name != 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
       - name: Archive this run's evidence, context, narrative, and metadata

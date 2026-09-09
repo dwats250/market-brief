@@ -1,0 +1,31 @@
+name: Deploy Cloudflare Scheduler
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cloudflare/**"
+      - ".github/workflows/cloudflare-scheduler.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_DISPATCH_TOKEN: ${{ secrets.GITHUB_DISPATCH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require GitHub dispatch credential
+        run: test -n "$GITHUB_DISPATCH_TOKEN"
+      - name: Deploy scheduler Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --config cloudflare/wrangler.toml
+      - name: Configure GitHub dispatch credential
+        run: |
+          printf '%s' "$GITHUB_DISPATCH_TOKEN" | npx wrangler secret put GITHUB_DISPATCH_TOKEN --config cloudflare/wrangler.toml

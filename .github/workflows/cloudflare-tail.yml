@@ -16,5 +16,25 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Wrangler
         run: npm install --no-save wrangler@3.90.0
-      - name: Tail scheduler errors
-        run: timeout 360 npx wrangler tail market-brief-scheduler --format json --status error
+      - name: Query scheduler Worker logs
+        run: |
+          NOW_MS=$(date +%s%3N)
+          FROM_MS=$((NOW_MS - 86400000))
+          curl --fail-with-body --silent --show-error \
+            -X POST "https://api.cloudflare.com/client/v4/accounts/\${CLOUDFLARE_ACCOUNT_ID}/workers/observability/telemetry/query" \
+            -H "Authorization: Bearer \${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -n --argjson from "\$FROM_MS" --argjson to "\$NOW_MS" '{
+              queryId: "market-brief-scheduler-diagnostic",
+              timeframe: {from: $from, to: $to},
+              view: "events",
+              limit: 100,
+              parameters: {
+                datasets: ["cloudflare-workers"],
+                filterCombination: "and",
+                filters: [
+                  {key: "$metadata.service", operation: "eq", type: "string", value: "market-brief-scheduler"}
+                ]
+              }
+            }')" \
+            | jq '.result.events.events[]? | {metadata: .["$metadata"], source: .source}'

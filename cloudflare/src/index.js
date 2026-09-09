@@ -8,7 +8,6 @@ export default {
       throw new Error("Cloudflare scheduler is missing its GitHub dispatch configuration");
     }
 
-    const diagnostic = controller.cron === env.DIAGNOSTIC_CRON;
     const response = await fetch(
       `https://api.github.com/repos/${repository}/actions/workflows/${WORKFLOW}/dispatches`,
       {
@@ -22,10 +21,7 @@ export default {
         },
         body: JSON.stringify({
           ref: "main",
-          inputs: {
-            cloudflare_wakeup: "true",
-            ...(diagnostic ? { cloudflare_smoke: "true" } : {}),
-          },
+          inputs: { cloudflare_wakeup: "true" },
         }),
       },
     );

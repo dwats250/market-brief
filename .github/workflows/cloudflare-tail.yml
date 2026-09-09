@@ -28,14 +28,12 @@ jobs:
               queryId: "market-brief-scheduler-diagnostic",
               timeframe: {from: $from, to: $to},
               view: "events",
-              limit: 5,
+              limit: 20,
               parameters: {
                 datasets: ["cloudflare-workers"],
-                filterCombination: "and",
-                filters: [
-                  {key: "$metadata.service", operation: "eq", type: "string", value: "market-brief-scheduler"},
-                  {key: "$metadata.message", operation: "includes", type: "string", value: "github_workflow_dispatch_rejected"}
-                ]
+                filterCombination: "and"
               }
             }')" \
-            | jq -r '.result.events.events[]? | (.source | tostring)[0:1200]'
+            | jq -c '.result.events.events[]? | .["$metadata"] | {
+                timestamp, service, origin, trigger, error, message
+              }'

@@ -28,6 +28,9 @@ do not repeat the summary in them. Select only the evidence needed for each clai
 Return compact JSON with no indentation, markdown, or commentary. Complete this
 bounded editing task directly: use the supplied comparisons and classifications,
 do not recompute the tables or explore unsupported scenarios.
+Concise output is a hard contract, not a style preference: a response that is
+truncated by the generation limit, or that overruns any field bound, is
+discarded unpublished and there is no second attempt.
 
 HEADLINE: exactly one market claim, roughly 8 to 12 words, no caveat clause,
 no semicolon, no multi-part thesis. Specific rather than clever, and it must make

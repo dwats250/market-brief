@@ -259,3 +259,60 @@ def test_invalid_reasoning_split_does_not_invent_content_accounting(reasoning):
     usage = _safe_usage({"usage": {"completion_tokens": 4000,
                                   "completion_tokens_details": {"reasoning_tokens": reasoning}}})
     assert "non_reasoning_completion_tokens" not in usage
+
+
+def test_suite_guard_blocks_live_openrouter_and_cli_calls(monkeypatch):
+    """The autouse guard in conftest.py: a leaked key or installed CLI cannot make a paid call."""
+    import os
+
+    from market_brief.synthesize import synthesize
+    assert "OPENROUTER_API_KEY" not in os.environ
+    with pytest.raises(AssertionError, match="never open a connection"):
+        synthesize_openrouter(fixture_packet(), api_key="leaked")
+    with pytest.raises(ValueError, match="not installed"):
+        synthesize(fixture_packet())
+
+
+@pytest.mark.parametrize("status,expected", [(400, "OpenRouter HTTP 400"), (503, "no automatic paid retry")])
+def test_http_error_body_is_recorded_sanitized_without_retry(monkeypatch, status, expected):
+    """Run 34486249474 lost its cause: `OpenRouter HTTP 400` with no body. Keep the safe parts."""
+    import importlib
+    import io
+    from urllib.error import HTTPError
+
+    module = importlib.import_module("market_brief.synthesize")
+    calls = []
+    body = json.dumps({"error": {"code": status, "message": "Provider returned error: PARAM_REJECTED",
+                                 "metadata": {"provider_name": "Azure", "error_type": "invalid_request",
+                                              "raw": "PRIVATE_RAW_SENTINEL", "headers": {"authorization": "x"}}},
+                       "user_id": "PRIVATE_USER_SENTINEL"}).encode()
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        raise HTTPError(request.full_url, status, "error", {}, io.BytesIO(body))
+
+    monkeypatch.setattr(module, "urlopen", fake_urlopen)
+    with pytest.raises(ValueError, match=expected) as exc:
+        synthesize_openrouter(fixture_packet(), api_key="fake")
+    recorded = str(exc.value)
+    assert len(calls) == 1
+    assert '"http_status": %d' % status in recorded
+    assert "PARAM_REJECTED" in recorded and "Azure" in recorded and "invalid_request" in recorded
+    for private in ("PRIVATE_RAW_SENTINEL", "PRIVATE_USER_SENTINEL", "authorization", "fake"):
+        assert private not in recorded
+
+
+def test_unreadable_http_error_body_is_unknown_not_invented(monkeypatch):
+    import importlib
+    import io
+    from urllib.error import HTTPError
+
+    module = importlib.import_module("market_brief.synthesize")
+
+    def fake_urlopen(request, timeout):
+        raise HTTPError(request.full_url, 400, "error", {}, io.BytesIO(b"<html>not json"))
+
+    monkeypatch.setattr(module, "urlopen", fake_urlopen)
+    with pytest.raises(ValueError, match="OpenRouter HTTP 400") as exc:
+        synthesize_openrouter(fixture_packet(), api_key="fake")
+    assert '"error": "unknown"' in str(exc.value) and "html" not in str(exc.value)

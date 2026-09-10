@@ -160,3 +160,10 @@ def test_a_context_over_its_edition_budget_fails_with_diagnostics_not_truncation
     monkeypatch.setattr(context_module, "edition_profile", lambda checkpoint, config=None: tight)
     with pytest.raises(ValueError, match="exceeds the rich edition budget"):
         construct_prompt(packet)
+
+
+def test_contract_states_concise_output_is_enforced_not_stylistic():
+    """The prompt must say that over-budget or truncated output is discarded with no second attempt."""
+    lowered = PROMPT.lower()
+    assert "hard" in lowered and "no second attempt" in lowered
+    assert "discarded" in lowered or "rejected" in lowered

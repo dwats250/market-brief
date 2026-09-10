@@ -270,13 +270,35 @@ def _openrouter_post(payload, api_key, timeout=180):
                 }
             return result
     except HTTPError as exc:
-        if exc.code in TRANSIENT_OPENROUTER_STATUS:
-            raise _TransientOpenRouterError(f"OpenRouter transient HTTP {exc.code}") from None
         if exc.code in {401, 403}:
             raise ValueError("OpenRouter authentication failed") from None
-        raise ValueError(f"OpenRouter HTTP {exc.code}") from None
+        diagnostic = canonical({"http_status": exc.code, "error": _safe_error(exc)})
+        if exc.code in TRANSIENT_OPENROUTER_STATUS:
+            raise _TransientOpenRouterError(f"OpenRouter transient HTTP {exc.code}; "
+                                            f"diagnostic={diagnostic}") from None
+        raise ValueError(f"OpenRouter HTTP {exc.code}; diagnostic={diagnostic}") from None
     except (URLError, TimeoutError, OSError, UnicodeError, json.JSONDecodeError):
         raise _TransientOpenRouterError("OpenRouter network or response failure") from None
+
+
+def _safe_error(exc, limit=20_000):
+    """Run 34486249474 recorded only `OpenRouter HTTP 400`. Keep the documented error code,
+    a bounded message and provider labels; never the raw provider body, headers or IDs."""
+    try:
+        body = json.loads(exc.read(limit).decode("utf-8"))
+        error = body["error"]
+        code, message, metadata = error.get("code"), error.get("message"), error.get("metadata")
+    except (AttributeError, OSError, UnicodeError, ValueError, KeyError, TypeError):
+        return "unknown"
+    result = {}
+    if type(code) in (int, float):
+        result["code"] = code
+    if isinstance(message, str):
+        result["message"] = message[:300]
+    if isinstance(metadata, dict):
+        result["metadata"] = {key: metadata[key][:80] for key in ("provider_name", "error_type", "provider_code")
+                              if isinstance(metadata.get(key), str)}
+    return result or "unknown"
 
 
 def _safe_usage(response):
@@ -399,8 +421,8 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     # One request only, including on transport failure. `sleeper` is retained for callers.
     try:
         response = requester(payload, api_key)
-    except _TransientOpenRouterError:
-        raise ValueError("OpenRouter transport failure; no automatic paid retry") from None
+    except _TransientOpenRouterError as exc:
+        raise ValueError(f"OpenRouter transport failure; no automatic paid retry; cause={exc}") from None
     narrative = _openrouter_narrative(response)
     try:
         narrative = validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)

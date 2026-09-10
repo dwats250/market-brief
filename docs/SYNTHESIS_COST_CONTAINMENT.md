@@ -79,6 +79,59 @@ producing a response to an oversized contract, with no proven reasoning reservat
 The evidence does NOT establish that excessive visible prose alone, or reasoning
 alone, consumed the cap. The fix addresses both controls and the missing diagnostics.
 
+## Reasoning control on this route: what is documented, what is not
+
+Two documented facts bound what `reasoning.max_tokens=1024` could have done:
+
+1. Anthropic's Fable 5.1 interface has no thinking budget. Thinking is always on and
+   adaptive; `thinking: {type: "enabled", budget_tokens: N}` is rejected with HTTP 400,
+   and depth is controlled by `output_config.effort` (`low` … `max`). Whatever
+   OpenRouter forwarded for this model, it was not a native 1,024-token cap.
+2. OpenRouter's generic reasoning documentation translates `reasoning.max_tokens`
+   directly into a legacy Anthropic budget, and `reasoning.effort` into
+   `budget_tokens = max(min(max_tokens × ratio, 128000), 1024)` with ratio 0.2 for
+   `low`. Applied literally to a 5,524 / 3,524 ceiling, `effort: low` would be a
+   1,104 / 1,024 budget: the SAME control that failed. The Fable 5.1 model page lists
+   `reasoning` and `reasoning_effort` as accepted, but does not say how they map.
+
+Because Opus 4.7 and later also reject `budget_tokens`, OpenRouter must translate
+per model to serve reasoning on them at all; the most likely translation of
+`effort` is the native effort setting. That is an inference, not a documented
+guarantee. `effort: low` is retained as the only control that has a native meaning
+on this model, and the report no longer claims it proves a reasoning reservation.
+
+Historical evidence sets the scale. Run `34280109434` (2026-09-08, old contract,
+`reasoning: {exclude: true}` only, ceiling 10,000) completed with `finish=stop` at
+**7,972 completion tokens** and $0.53919. PR #15 then set 5,524 below that
+demonstrated need. On 2026-09-10 the truncated PREMARKET content was 8,395 bytes;
+if compact English JSON tokenizes at no fewer than three bytes per token, visible
+content used at most 2,798 of the 5,524 tokens and hidden reasoning at least 2,726.
+The same bound gives OPEN_1M at most 1,583 visible and at least 1,941 reasoning. Both
+exceed 1,024. These are bounds under a stated assumption, not recovered counts; the
+exact split was not retained and cannot be reconstructed.
+
+Consequence for the one verification: if the route does not actually lower Fable's
+effort, hidden reasoning alone may approach the ceiling regardless of how small the
+contract is. The captured `completion_tokens_details.reasoning_tokens` will settle
+this on the first call; a length failure with large reasoning accounting points at
+the route's translation, not at the contract.
+
+### OPEN_30M HTTP 400 and the new error diagnostic
+
+Run `34486249474` failed 1.6 seconds after packet construction with only
+`OpenRouter HTTP 400`; the transport discarded the response body. OpenRouter
+documents the body shape `{error: {code, message, metadata?}}`. `_safe_error` now
+records the numeric code, a 300-character message and the `provider_name`,
+`error_type` and `provider_code` labels, never the raw provider body, headers or
+IDs, for both fatal and transient statuses. The cause of that 400 remains unknown
+and is not counted as a length failure.
+
+`require_parameters: true` was introduced on this branch; the three production
+failures ran without it. If OpenRouter decides no provider advertises every
+requested parameter, the request fails before generation at zero model cost. That
+is an acceptable fail-closed outcome for the one verification, and the diagnostic
+above will now say so.
+
 ## Why PR #15 was insufficient
 
 [PR #15](https://github.com/dwats250/market-brief/pull/15) assumed the requested
@@ -185,7 +238,7 @@ claims, never missing support; the prompt says so explicitly.
 | Maximum-shape light JSON, representative IDs | 60,161 bytes | 7,921 bytes |
 | New rich cold-start stress shape, no updates/changes | — | 8,595 bytes |
 | Rich useful prose target | 350–500 words | 350–500 across all prose |
-| Reasoning control | Requested 1,024; honoring unproved | Adaptive low effort; no fixed reservation |
+| Reasoning control | Requested 1,024; not a native cap on Fable 5.1 | `effort: low`; route translation undocumented, verified by the first call's reasoning accounting |
 | Total completion ceiling, rich / light | 5,524 / 3,524 | 5,524 / 3,524 |
 | Application transport attempts | Up to 3 | Exactly 1 |
 
@@ -234,6 +287,15 @@ is 98,493 rich / 75,227 light bytes. This overestimates enums/patterns and seman
 restrictions but illustrates why a representative byte/token stress test cannot
 honestly be described as proof that every schema-valid string fits the token cap.
 
+## Offline guarantee for the test suite
+
+`tests/conftest.py` removes `OPENROUTER_API_KEY` and `MARKET_BRIEF_MODEL` for every
+test, replaces the synthesis module's `urlopen` with a failing stub, and makes
+`shutil.which("claude")` return nothing unless a test stubs it. A leaked key or an
+installed analyst CLI on a developer machine cannot make a paid call from the suite.
+Merging this branch touches nothing under `cloudflare/`, so the scheduler deploy
+workflow does not run and the emptied cron list is not restored by the merge.
+
 ## Local verification and reproduction
 
 No Fable/OpenRouter generation, paid token-count request, workflow dispatch or push
@@ -255,7 +317,7 @@ reasoning/healing diagnostics without private content, one HTTP attempt on timeo
 HTTP failure and malformed transport, no retry on length/semantic rejection, and
 the existing grounding, continuity, render and presentation behavior.
 
-Observed final local result: **207 tests passed in 4.85s**; Ruff reported **All
+Observed final local result: **217 tests passed in 4.75s**; Ruff reported **All
 checks passed!**; `git diff --check` exited zero. The initial new regression suite
 against the old implementation had 12 failures and 3 passes, including failure
 of both maximum-shape budget checks and acceptance of excessive prose.

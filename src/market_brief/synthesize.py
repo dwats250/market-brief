@@ -211,24 +211,29 @@ def synthesis_packet(packet):
     return analyst_context(packet)
 
 
-def construct_prompt(packet, full=False, context=None):
+def construct_prompt(packet, full=False, context=None, include_schema=True):
     """Default payload is the saved analyst context (bounded projection accepted on 2026-09-08).
 
     `context` is the exact saved artifact when the caller persisted one; otherwise it is built here.
-    `full` reproduces the original evidence-plus-catalog payload for diagnostics. Both keep
-    `output_schema` in context: the transport alone did not enforce the response shape.
+    `full` reproduces the original evidence-plus-catalog payload for diagnostics.
+    OpenRouter retains the factored schema copy: run 34278983083 failed banner schema
+    validation with strict response_format but no copy. The isolated CLI supplies its
+    contract through --json-schema and opts out of the duplicate user-message schema.
     """
     instructions = (ROOT / "prompts/synthesis.md").read_text()
     profile = edition_profile(packet["run"]["checkpoint"])
     if full:
         model_view = model_packet(packet)
         catalog = {ident: compact_model_record(row) for ident, row in evidence_catalog(model_view).items()}
-        projected = dict(evidence=model_view, catalog=catalog, output_schema=NARRATIVE_SCHEMA)
+        projected = dict(evidence=model_view, catalog=catalog)
         limit = 120_000
     else:
         context = context if context is not None else analyst_context(packet, profile)
-        projected = dict(context, output_schema=compact_schema(narrative_schema(context.get("edition") or profile)))
+        projected = dict(context)
         limit = min(120_000, profile["input_limit_bytes"])
+    if include_schema:
+        schema = NARRATIVE_SCHEMA if full else narrative_schema(context.get("edition") or profile)
+        projected["output_schema"] = compact_schema(schema)
     user = compact_json(projected)
     size = len(user.encode())
     sections = {key: len(compact_json(value).encode()) for key, value in projected.items()}
@@ -282,7 +287,8 @@ def _safe_usage(response):
     result = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cost")
               if type(usage.get(key)) in (int, float)}
     for group, keys in {
-        "completion_tokens_details": ("reasoning_tokens", "accepted_prediction_tokens", "rejected_prediction_tokens"),
+        "completion_tokens_details": ("reasoning_tokens", "text_tokens",
+                                      "accepted_prediction_tokens", "rejected_prediction_tokens"),
         "prompt_tokens_details": ("cached_tokens", "cache_write_tokens"),
         "cost_details": ("upstream_inference_cost", "upstream_inference_prompt_cost",
                          "upstream_inference_completions_cost"),
@@ -290,6 +296,11 @@ def _safe_usage(response):
         details = usage.get(group)
         if isinstance(details, dict):
             result[group] = {key: details[key] for key in keys if type(details.get(key)) in (int, float)}
+    total = result.get("completion_tokens")
+    reasoning = result.get("completion_tokens_details", {}).get("reasoning_tokens")
+    if total is not None and reasoning is not None and 0 <= reasoning <= total:
+        # An accounting residual, not a tokenizer measurement of message.content.
+        result["non_reasoning_completion_tokens"] = total - reasoning
     return result
 
 
@@ -415,6 +426,7 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
                            finish_reason=finish_reason,
                            diagnostic=json.loads(_openrouter_diagnostic(response)),
                            requested_at=requested_at, response_id=response.get("id"), usage=safe_usage,
+                           schema_hash=digest(schema),
                            prompt_hash=digest(dict(system=system, user=user)), evidence_hash=digest(packet))
 
 
@@ -424,7 +436,7 @@ def synthesize(packet, runner=subprocess.run, full=False, context=None):
     executable = shutil.which("claude")
     if not executable:
         raise ValueError("Claude CLI is not installed")
-    system, user = construct_prompt(packet, full=full, context=context)
+    system, user = construct_prompt(packet, full=full, context=context, include_schema=False)
     analyst = analyst_model()
     profile = edition_profile(packet["run"]["checkpoint"])
     schema = NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile)
@@ -432,7 +444,7 @@ def synthesize(packet, runner=subprocess.run, full=False, context=None):
             "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands",
             "--no-session-persistence", "--setting-sources", "", "--output-format", "json",
             "--model", analyst["cli_model"], "--system-prompt", system,
-            "--json-schema", canonical(schema)]
+            "--json-schema", compact_json(compact_schema(schema))]
     # Retain existing auth location, not unrelated provider credentials or project environment.
     env = {k: v for k, v in os.environ.items() if k in
            {"HOME", "PATH", "LANG", "USER", "SHELL", "XDG_CONFIG_HOME", "SSL_CERT_FILE"}}
@@ -457,5 +469,6 @@ def synthesize(packet, runner=subprocess.run, full=False, context=None):
     models = list(envelope.get("modelUsage", {}).keys())
     return validated, dict(route="claude-cli", requested_model=analyst["cli_model"], profile=profile["profile"],
                            resolved_models=models or ["not exposed"],
+                           schema_hash=digest(compact_schema(schema)),
                            prompt_hash=digest(dict(system=system, user=user)),
                            evidence_hash=digest(packet))

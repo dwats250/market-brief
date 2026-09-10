@@ -30,6 +30,8 @@ def test_openrouter_structured_transport_preserves_validator_contract():
     assert output["mode"] == "SAMPLE"
     assert metadata["provider"] == "OpenRouter"
     assert metadata["usage"]["total_tokens"] == 30
+    from market_brief.evidence import digest
+    assert metadata["schema_hash"] == digest(payload["response_format"]["json_schema"]["schema"])
 
 
 def test_openrouter_never_retries_transient_transport_failures():
@@ -187,6 +189,7 @@ def test_nested_accounting_and_healing_survive_without_private_content(finish):
     assert diagnostic["response_id"] == "gen-test"
     assert diagnostic["resolved_model"] == "resolved-model"
     assert diagnostic["usage"]["completion_tokens_details"] == {"reasoning_tokens": 1700}
+    assert diagnostic["usage"]["non_reasoning_completion_tokens"] == 2300
     assert diagnostic["response_healing"][0]["data"] == {
         "improved": True, "original_length": 5001, "healed_length": 5000}
     if finish == "length":
@@ -206,6 +209,7 @@ def test_missing_nested_accounting_is_unknown_not_zero():
     from market_brief.synthesize import _openrouter_diagnostic
     diagnostic = json.loads(_openrouter_diagnostic({"choices": [{"message": {"content": "{}"}}]}))
     assert "completion_tokens_details" not in diagnostic["usage"]
+    assert "non_reasoning_completion_tokens" not in diagnostic["usage"]
     assert diagnostic["response_healing"] is None
 
 
@@ -247,3 +251,11 @@ def test_transport_failure_makes_one_http_request_and_enables_metadata(monkeypat
     with pytest.raises(ValueError, match="no automatic paid retry"):
         synthesize_openrouter(fixture_packet(), api_key="fake")
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("reasoning", [True, "1700", -1, 4001])
+def test_invalid_reasoning_split_does_not_invent_content_accounting(reasoning):
+    from market_brief.synthesize import _safe_usage
+    usage = _safe_usage({"usage": {"completion_tokens": 4000,
+                                  "completion_tokens_details": {"reasoning_tokens": reasoning}}})
+    assert "non_reasoning_completion_tokens" not in usage

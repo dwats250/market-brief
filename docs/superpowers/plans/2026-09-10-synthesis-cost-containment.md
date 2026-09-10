@@ -1,6 +1,6 @@
 # Synthesis Cost Containment Implementation Plan
 
-> Execute inline in this session under the owner's implementation authority. No model calls, workflow dispatch, push, or production changes.
+> Execute inline under the owner's authority. No model calls, workflow dispatch or push. The urgent addendum separately authorizes the operational Cloudflare cron pause; the GitHub executor is temporarily disabled to cover propagation. No deployed code or scheduling source edits.
 
 **Goal:** Make the next authorized PREMARKET call a bounded editorial task with observable costs.
 
@@ -19,3 +19,11 @@
 Investigation: run 34480006410 contains only evidence, analyst context and failed metadata; raw output, nested usage, resolved response model and response ID were not retained. Exact historical reasoning/content/healing token attribution cannot be reconstructed. Fable-specific Anthropic thinking/effort documentation supersedes the generic legacy 1024-token guidance used in PR #15. GitNexus returned no indexed repositories; source tracing is the available authority.
 
 Final local verification: 207 tests passed in 4.85s; Ruff and git diff --check passed. The implementation is packaged as a local commit only; no push or paid verification. Detailed limits and owner-run criteria are in docs/SYNTHESIS_COST_CONTAINMENT.md.
+
+Urgent addendum:
+
+- [x] Pause live Market Brief cron triggers before investigation; verify empty schedules and unchanged Worker deployment. Disable the executor workflow during propagation and keep it disabled. No code/secret/credential rotation.
+- [x] Verify OPEN_1M run 34483191122 and identify systemic rich/light cap exhaustion; distinguish the separately discovered OPEN_30M HTTP 400 failure.
+- [x] Inspect the actual earlier schema-omission failure, not just a source comment. Keep the compressed OpenRouter copy because its necessity cannot safely be ruled out for this route; remove the duplicate from CLI stdin while preserving --json-schema and a separate schema hash.
+- [x] Preserve nested accounting and derive the non-reasoning residual only from valid reported counts. Confirm healing is free CPU-side processing and retain it.
+- [x] Expand tests, update the report and one-call plan to retain the operational hold, and rerun the full local checks before the addendum commit.

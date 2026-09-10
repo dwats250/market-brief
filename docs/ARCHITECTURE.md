@@ -239,8 +239,11 @@ schema as well as semantic validation. The rich word target is still 350–500 a
 ALL prose, including watches and continuity; light targets remain edition-specific.
 Schema character bounds are backstops, not targets or a global word-count constraint.
 No source, evidence row, timestamp, coverage caveat, comparison or prior state is
-removed. Repeated schema definitions use `$defs` in both the context and transport;
-compact wire JSON removes whitespace without changing saved records or their hashes.
+removed. Repeated schema definitions use `$defs`. OpenRouter retains a factored
+user-message copy because the earlier Azure omission experiment failed banner
+schema validation despite strict response_format. The isolated CLI receives the
+schema only through `--json-schema`; its user message has no duplicate. Both routes
+record a schema hash, and compact wire JSON preserves saved evidence/continuity hashes.
 
 `tests/test_synthesis_budget.py` fills all arrays and prose fields with representative
 identifiers: rich is 10,414 compact bytes, light 7,921. Byte/3 estimates occupy about
@@ -252,11 +255,14 @@ Normal 350–500-word prose should use substantially less than this stress shape
 A `finish_reason=length` response fails as an output-budget exhaustion before JSON
 parsing or semantic validation, even if response healing produced parseable JSON.
 Sanitized diagnostics retain response ID, resolved model, native finish reason,
-nested numeric token/cost accounting, provider and content bytes. The documented
+nested numeric token/cost accounting, provider and content bytes. Valid completion
+minus reasoning counts are separately labeled non-reasoning completion tokens;
+they are not a tokenizer measurement of visible content. The documented
 `X-OpenRouter-Metadata: enabled` header requests routing/healing telemetry; only
 allowlisted numeric/boolean healing details are retained. Missing accounting is
 unknown, never zero. Neither reasoning text nor encrypted reasoning is persisted.
-Response-healing stays enabled; there is no evidence it caused the production cap.
+Response-healing stays enabled: OpenRouter documents it as free CPU-side repair,
+not model generation, and it cannot recover max-token truncation.
 
 Per request, maximum requested paid output is 5,524 tokens (rich) or 3,524 (light),
 including hidden reasoning. At an output rate of R dollars per million tokens,
@@ -266,3 +272,12 @@ truncation or validation failure; a timeout can follow a billable generation.
 Provider fallback is disabled and parameter support is required. No second model,
 repair call or paid fallback is added. Live verification requires owner authorization;
 see [the investigation and one-call criteria](SYNTHESIS_COST_CONTAINMENT.md).
+
+## Operational hold, 2026-09-10
+
+Cloudflare's live `market-brief-scheduler` cron list was set to `[]` through the
+trigger-only API; deployed code and repository source were not changed. The GitHub
+`schedule.yml` workflow was also disabled to block late wakes while Cron changes
+propagate. Both remain paused pending explicit owner authorization. A single paid
+verification does not authorize restoring recurring scheduling. The report linked
+above records deployment identity, pause evidence, and the one-manual-call procedure.

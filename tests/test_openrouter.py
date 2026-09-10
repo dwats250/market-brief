@@ -112,16 +112,16 @@ def test_analyst_identity_and_edition_budget_are_configured_and_recorded(monkeyp
                 "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(narrative())}}],
                 "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}}
     _, meta = synthesize_openrouter(fixture_packet(), api_key="k", requester=requester)
-    assert calls[0]["model"] == "vendor/other-analyst" and calls[0]["max_tokens"] == 5524
+    assert calls[0]["model"] == "vendor/other-analyst" and calls[0]["max_tokens"] == 7000
     assert meta["model"] == "vendor/other-analyst" and meta["model_source"] == "environment"
     assert meta["resolved_model"] == "vendor/other-analyst:resolved" and meta["profile"] == "rich"
-    assert meta["max_output_tokens"] == 5524 and meta["attempts"] == 1
+    assert meta["max_output_tokens"] == 7000 and meta["attempts"] == 1
     assert meta["input_bytes"] > 1000 and meta["output_bytes"] > 100
 
 
 @pytest.mark.parametrize("checkpoint,total", [
-    ("PREMARKET", 5524), ("CLOSE_1M", 5524),
-    ("OPEN_1M", 3524), ("OPEN_30M", 3524), ("AFTERNOON", 3524),
+    ("PREMARKET", 7000), ("CLOSE_1M", 7000),
+    ("OPEN_1M", 4500), ("OPEN_30M", 4500), ("AFTERNOON", 4500),
 ])
 def test_each_edition_sends_low_adaptive_effort_and_unchanged_total_ceiling(checkpoint, total):
     from test_contract import edition_response
@@ -165,14 +165,14 @@ def test_length_is_output_budget_failure_before_validation_without_retry(monkeyp
         calls.append(payload)
         return {"provider": "Test", "choices": [{"finish_reason": "length", "message": {
             "content": content, "reasoning": "PRIVATE_REASONING_SENTINEL"}}],
-            "usage": {"completion_tokens": 5524, "cost": 0.1}}
+            "usage": {"completion_tokens": 7000, "cost": 0.1}}
 
     with pytest.raises(ValueError, match="output budget exhausted") as exc:
         synthesize_openrouter(fixture_packet(), api_key="test", requester=requester,
                              sleeper=lambda _: pytest.fail("length completion retried"))
     assert len(calls) == 1
     assert '"finish_reason": "length"' in str(exc.value)
-    assert '"completion_tokens": 5524' in str(exc.value)
+    assert '"completion_tokens": 7000' in str(exc.value)
     assert "PRIVATE_REASONING_SENTINEL" not in str(exc.value)
     assert "schema_version" not in str(exc.value)
 

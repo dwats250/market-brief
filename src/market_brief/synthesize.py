@@ -106,26 +106,6 @@ def compact_json(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
 
 
-def compact_schema(schema):
-    """Share repeated definitions under `definitions`, the reference form Anthropic documents."""
-    definitions = {"evidence_refs": REFS, "section_paragraph": SECTION_PARAGRAPH}
-
-    def visit(value, replace=True):
-        if replace:
-            for name, definition in definitions.items():
-                if value == definition:
-                    return {"$ref": f"#/definitions/{name}"}
-        if isinstance(value, dict):
-            return {key: visit(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [visit(item) for item in value]
-        return value
-
-    result = visit(schema)
-    result["definitions"] = {name: visit(value, replace=False) for name, value in definitions.items()}
-    return result
-
-
 # Anthropic's structured-output subset (documented 2026-09-10) rejects string length, array
 # length beyond minItems 0/1, uniqueItems, pattern and oneOf with HTTP 400. Whether OpenRouter
 # strips them before Azure is not documented; three production requests carrying them returned
@@ -136,7 +116,10 @@ UNSUPPORTED_WIRE_KEYWORDS = ("minLength", "maxLength", "maxItems", "uniqueItems"
 
 
 def transport_schema(schema):
-    """The provider-compatible shape of the same contract: types, required, enums, references."""
+    """The provider-compatible shape of the same contract, fully inlined: types, required, enums.
+
+    No `$ref`/`definitions` factoring: the owner ruled out a schema-reference compatibility
+    variable before the first paid verification; the inlined form costs input bytes only."""
 
     def describe(node):
         notes = []
@@ -180,7 +163,7 @@ def transport_schema(schema):
                 result["description"] = description
         return result
 
-    return visit(compact_schema(schema))
+    return visit(schema)
 
 
 def analyst_model(config=None, environ=None):

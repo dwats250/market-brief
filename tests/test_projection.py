@@ -56,7 +56,8 @@ def test_wire_compaction_preserves_every_saved_context_value_and_hash():
     assert data == before == context
     assert data["evidence_hash"] == digest(packet)
     assert schema == transport_schema(narrative_schema(context["edition"]))
-    assert len(json.dumps(schema)) < len(json.dumps(narrative_schema(context["edition"]))) * .8
+    # Inlined wire form with bound descriptions: larger than the local schema by design.
+    assert "maxLength" not in json.dumps(schema) and "$ref" not in json.dumps(schema)
 
 
 def test_full_normalized_packet_is_untouched_by_projection():

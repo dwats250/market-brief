@@ -224,8 +224,8 @@ provided snapshot file; no repository path traversal or callback can write back.
 
 ## Structured synthesis output budgets
 
-`config/editions.json` retains total generation ceilings of 5,524 rich / 3,524 light
-tokens and requests `reasoning={effort: "low", exclude: true}`. Fable 5.1 uses
+`config/editions.json` sets total generation ceilings of 7,000 rich / 4,500 light
+tokens, hard maximum-exposure limits rather than expected usage, and requests `reasoning={effort: "low", exclude: true}`. Fable 5.1 uses
 adaptive thinking: the old 1,024-token request was not a guaranteed reservation.
 [Anthropic's model-specific effort guidance](https://platform.claude.com/docs/en/build-with-claude/effort)
 identifies effort as a behavioral control; only total `max_tokens` is a hard cap.
@@ -240,9 +240,9 @@ ALL prose, including watches and continuity; light targets remain edition-specif
 Schema character bounds are backstops, not targets or a global word-count constraint.
 No source, evidence row, timestamp, coverage caveat, comparison or prior state is
 removed. Two forms of one contract exist: the local schema with every bound, used
-by `validate_narrative`, and the wire schema from `transport_schema`, restricted to
-Anthropic's documented structured-output subset (types, required, enums, local
-`$ref` under `definitions`, `minItems` 0/1) with every bound restated as a field
+by `validate_narrative`, and the wire schema from `transport_schema`, fully inlined
+and restricted to Anthropic's documented structured-output subset (types, required,
+enums, `minItems` 0/1, no schema references) with every bound restated as a field
 description. Bounds are enforced after generation; the provider is not relied on
 for them. OpenRouter retains the wire copy in the user message because the earlier
 Azure omission experiment failed banner validation despite strict response_format.
@@ -251,7 +251,7 @@ record the wire schema hash, and compact wire JSON preserves saved evidence/cont
 
 `tests/test_synthesis_budget.py` fills all arrays and prose fields with representative
 identifiers: rich is 10,414 compact bytes, light 7,921. Byte/3 estimates occupy about
-63% / 75% of their total ceilings before adaptive reasoning. This is a deterministic
+50% / 59% of their total ceilings before adaptive reasoning. This is a deterministic
 size regression check, not a native tokenizer or a guarantee for adversarial strings,
 maximum-length identifiers, JSON whitespace, or unbounded adaptive reasoning.
 Normal 350–500-word prose should use substantially less than this stress shape.
@@ -268,9 +268,9 @@ unknown, never zero. Neither reasoning text nor encrypted reasoning is persisted
 Response-healing stays enabled: OpenRouter documents it as free CPU-side repair,
 not model generation, and it cannot recover max-token truncation.
 
-Per request, maximum requested paid output is 5,524 tokens (rich) or 3,524 (light),
+Per request, maximum requested paid output is 7,000 tokens (rich) or 4,500 (light),
 including hidden reasoning. At an output rate of R dollars per million tokens,
-output exposure is 0.005524 * R or 0.003524 * R dollars, plus input charges. There is
+output exposure is 0.007 * R or 0.0045 * R dollars, plus input charges. There is
 exactly ONE client request, including on timeout, HTTP failure, malformed transport,
 truncation or validation failure; a timeout can follow a billable generation.
 Provider fallback is disabled and parameter support is required. No second model,

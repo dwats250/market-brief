@@ -8,7 +8,7 @@ from jsonschema import Draft202012Validator
 from test_pipeline import fixture_packet, narrative
 
 from market_brief.context import edition_profile
-from market_brief.synthesize import compact_schema, narrative_schema, validate_narrative
+from market_brief.synthesize import narrative_schema, transport_schema, validate_narrative
 
 
 def maximum_shape(schema):
@@ -18,8 +18,6 @@ def maximum_shape(schema):
     It is schema-valid, intentionally not a claim of semantic grounding.
     """
     def fill(node, key="", index=0):
-        if "$ref" in node:
-            return fill(schema["$defs"][node["$ref"].split("/")[-1]], key, index)
         if "const" in node:
             return node["const"]
         if "enum" in node:
@@ -47,7 +45,7 @@ def test_maximum_shape_has_measured_serialized_headroom(checkpoint):
     Draft202012Validator.check_schema(schema)
     value = maximum_shape(schema)
     Draft202012Validator(schema).validate(value)
-    transport = compact_schema(schema)
+    transport = transport_schema(schema)
     Draft202012Validator.check_schema(transport)
     Draft202012Validator(transport).validate(value)
     size = len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
@@ -98,7 +96,7 @@ def test_all_schema_strings_are_bounded_including_reference_ids():
 # Anthropic's documented structured-output subset (2026-09-10): no minLength/maxLength, no array
 # constraints beyond minItems 0 or 1, no uniqueItems/pattern/oneOf. Unsupported keywords are a 400.
 PROVIDER_KEYWORDS = {"type", "properties", "required", "additionalProperties", "enum", "const",
-                     "anyOf", "$ref", "definitions", "items", "minItems", "description"}
+                     "anyOf", "items", "minItems", "description"}
 
 
 def keywords(node, found=None):
@@ -108,7 +106,7 @@ def keywords(node, found=None):
             found.add(key)
             if key == "minItems":
                 assert value in (0, 1)
-            if key not in ("properties", "definitions"):
+            if key != "properties":
                 keywords(value, found)
             else:
                 for child in value.values():
@@ -126,7 +124,8 @@ def test_transport_schema_uses_only_documented_provider_keywords(checkpoint):
         transport = transport_schema(local)
         Draft202012Validator.check_schema(transport)
         assert keywords(transport) <= PROVIDER_KEYWORDS
-        assert "$defs" not in json.dumps(transport) and "oneOf" not in json.dumps(transport)
+        # Fully inlined: no schema references of any spelling reach the provider.
+        assert not any(token in json.dumps(transport) for token in ("$ref", "$defs", "definitions", "oneOf"))
         # Same shape: a complete bounded response satisfies both contracts.
         Draft202012Validator(transport).validate(maximum_shape(local))
 
@@ -142,12 +141,8 @@ def test_every_local_bound_is_described_in_transport_and_enforced_only_locally()
     strict = Draft202012Validator(local)
     checked = 0
 
-    def resolve(node):
-        return transport["definitions"][node["$ref"].split("/")[-1]] if "$ref" in node else node
-
     def visit(node, current, wire):
         nonlocal checked
-        wire = resolve(wire)
         if isinstance(current, dict):
             for key, child in node["properties"].items():
                 visit(child, current[key], wire["properties"][key])
@@ -161,7 +156,7 @@ def test_every_local_bound_is_described_in_transport_and_enforced_only_locally()
         elif isinstance(current, list):
             if "maxItems" in node:
                 assert str(node["maxItems"]) in wire.get("description", "")
-                current.append(current[0] if current else maximum_shape(dict(node["items"], definitions=local)))
+                current.append(current[0] if current else maximum_shape(node["items"]))
                 assert not strict.is_valid(value) and lenient.is_valid(value)
                 current.pop()
                 checked += 1
@@ -172,7 +167,7 @@ def test_every_local_bound_is_described_in_transport_and_enforced_only_locally()
                     current[index] = child
                     checked += 1
                 else:
-                    visit(node["items"], child, resolve(wire)["items"])
+                    visit(node["items"], child, wire["items"])
     visit(local, value, transport)
     assert strict.is_valid(value) and lenient.is_valid(value)
     assert checked >= 40

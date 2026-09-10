@@ -158,9 +158,12 @@ is consistent with shape-only enforcement but does not identify the violated bou
 Verdict: **cannot be proven statically**; the design no longer depends on it.
 
 Design change. `transport_schema` derives the wire contract from the local one:
-types, `required`, `additionalProperties: false`, `enum`, `const`, local
-`$ref` under `definitions` (the documented name), `minItems` only when 0 or 1,
-`anyOf` for the nullable `carried_id`, and a plain string for the watch horizon.
+types, `required`, `additionalProperties: false`, `enum`, `const`, `minItems` only
+when 0 or 1, `anyOf` for the nullable `carried_id`, and a plain string for the
+watch horizon. It is fully inlined: the owner ruled out `$ref`/`definitions`
+factoring as a compatibility variable before the first paid verification. Measured
+cost of inlining: 8,486 wire bytes against 5,715 factored, 2,771 bytes (roughly
+700 tokens) more input per call.
 Every removed bound becomes a `description` ("At most 240 characters, non-empty.",
 "At most 3 items, no duplicates.") that the model reads in both the user-message
 copy and `response_format`. `validate_narrative` still enforces the full bounded
@@ -291,11 +294,11 @@ claims, never missing support; the prompt says so explicitly.
 
 | Measurement | Before | After |
 |---|---:|---:|
-| Archived PREMARKET user message | 32,526 bytes | 29,044 bytes |
-| Archived OPEN_1M user message, OpenRouter | 27,310 bytes | 24,279 bytes |
+| Archived PREMARKET user message | 32,526 bytes | 31,815 bytes |
+| Archived OPEN_1M user message, OpenRouter | 27,310 bytes | 27,050 bytes |
 | Same PREMARKET / OPEN_1M evidence, CLI user message | Schema duplicated | 23,312 / 18,549 bytes |
 | Saved context, canonical encoding | 25,346 bytes | Unchanged |
-| Schema embedded in user message | 7,161 bytes | 5,715 bytes (wire form with bound descriptions) |
+| Schema embedded in user message | 7,161 bytes | 8,486 bytes (inlined wire form with bound descriptions; factored form was 5,715) |
 | System prompt | 7,646 bytes | 8,849 bytes |
 | System + user + transport schema, before envelope escaping | 47,333 bytes | 42,020 bytes |
 | Local contract maximum prose characters, rich | 62,660 | 6,180 (enforced after generation) |
@@ -304,7 +307,7 @@ claims, never missing support; the prompt says so explicitly.
 | New rich cold-start stress shape, no updates/changes | — | 8,595 bytes |
 | Rich useful prose target | 350–500 words | 350–500 across all prose |
 | Reasoning control | Requested 1,024; not a native cap on Fable 5.1 | `effort: low`; route translation undocumented, verified by the first call's reasoning accounting |
-| Total completion ceiling, rich / light | 5,524 / 3,524 | 5,524 / 3,524 |
+| Total completion ceiling, rich / light (hard exposure limit) | 5,524 / 3,524 | 7,000 / 4,500 |
 | Application transport attempts | Up to 3 | Exactly 1 |
 
 Diagnostics and successful metadata preserve safe nested reasoning and optional
@@ -422,28 +425,24 @@ that single-call authorization. Do not also run commissioning, experiments,
 probes that invoke synthesis, or recovery. No scheduling redesign is part of
 this patch. Do not label a later market phase PREMARKET to test it.
 
-Verify the job checks out the reviewed implementation and sends low effort, unchanged
-5,524 ceiling, strict schema, response-healing, parameter support required and no
-provider fallback. There must be exactly one application synthesis request. Preserve
-its evidence, context, narrative and metadata. No rerun on any failure.
+Verify the job checks out the reviewed implementation and sends low effort, the
+7,000-token rich ceiling, strict schema, response-healing, parameter support required
+and no provider fallback. The ceilings are hard maximum-exposure limits, not expected
+usage targets. There must be exactly one application synthesis request. Preserve its
+evidence, context, narrative and metadata. No rerun on any failure.
 
-PASS requires ALL of:
+PASS requires ALL of (owner decision, 2026-09-10):
 
-1. Correct PREMARKET/current evidence, expected configured/resolved model, one request,
-   and `finish_reason=stop` with a normal native completion (not length).
-2. Unmodified schema, reference, numeric grounding, continuity and publication checks
-   pass. Rendered output is readable and preserves the evidence-first analysis.
-3. Roughly 350–500 useful words across model prose; less only for a documented thin
-   evidence packet. Relationships, contradictions and distinct observable watch
-   confirmation/contradiction remain useful. No repetitive filler or unsupported claims.
-4. Completion tokens at most 4,143 (75% of 5,524), compact JSON at most 7,000 bytes,
-   and reported total cost at most $0.40. These are verification gates, not higher
-   runtime ceilings. A successful response near the cap FAILS cost containment.
-5. Response ID, actual route/model, content bytes, cost and nested reasoning-token
-   accounting are recorded. Missing reasoning accounting means attribution remains
-   unverified and is a verification FAIL, not zero reasoning. Inspect any available
-   healing telemetry; absent router metadata remains explicitly unknown.
+1. Exactly one OpenRouter request occurs and the HTTP request succeeds.
+2. `finish_reason=stop`; the structured JSON parses.
+3. The full local schema validates, and grounding, reference and numeric validation pass.
+4. The PREMARKET analysis is approximately the intended 350–500 useful words.
+5. The brief renders and the dashboard publishes.
+6. Usage and cost metadata are recorded, and reasoning-token accounting is recorded
+   whenever OpenRouter supplies it.
 
-Any failed criterion means FAIL: retain the artifacts and stop. Do not retry, raise
-the ceiling, silently repair/truncate output, or invoke another model. A failure
-requiring another paid run returns to the owner for separate authorization.
+There is no completion-token or cost efficiency gate: an otherwise valid, useful brief
+is not failed for exceeding an efficiency target. Any generation or validation failure:
+archive the diagnostics and STOP. No retry, no ceiling change during the run, no
+silent repair or truncation, no other model. A failure requiring another paid run
+returns to the owner for separate authorization.

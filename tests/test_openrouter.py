@@ -24,7 +24,7 @@ def test_openrouter_structured_transport_preserves_validator_contract():
     payload, key = calls[0]
     assert key == "secret"
     assert payload["model"] == OPENROUTER_MODEL
-    assert payload["reasoning"] == {"exclude": True, "max_tokens": 1024}
+    assert payload["reasoning"] == {"exclude": True, "effort": "low"}
     assert payload["plugins"] == [{"id": "response-healing"}]
     assert payload["response_format"]["type"] == "json_schema"
     assert output["mode"] == "SAMPLE"
@@ -32,19 +32,18 @@ def test_openrouter_structured_transport_preserves_validator_contract():
     assert metadata["usage"]["total_tokens"] == 30
 
 
-def test_openrouter_retries_only_transient_transport_failures():
+def test_openrouter_never_retries_transient_transport_failures():
     calls = []
 
     def requester(payload, api_key):
-        calls.append(1)
-        if len(calls) < 3:
-            raise _TransientOpenRouterError("temporary")
-        return {"id": "response-test", "choices": [{"message": {
-            "content": json.dumps(narrative())}}]}
+        calls.append(payload)
+        raise _TransientOpenRouterError("temporary")
 
-    output, _ = synthesize_openrouter(fixture_packet(), api_key="secret", requester=requester,
-                                      sleeper=lambda _: None)
-    assert output["mode"] == "SAMPLE" and len(calls) == 3
+    with pytest.raises(ValueError, match="no automatic paid retry"):
+        synthesize_openrouter(fixture_packet(), api_key="secret", requester=requester,
+                             sleeper=lambda _: pytest.fail("paid retry"))
+    assert len(calls) == 1
+    assert calls[0]["provider"] == {"allow_fallbacks": False, "require_parameters": True}
 
 
 def test_openrouter_accepts_fenced_json_transport_wrapper():
@@ -115,7 +114,7 @@ def test_analyst_identity_and_edition_budget_are_configured_and_recorded(monkeyp
     ("PREMARKET", 5524), ("CLOSE_1M", 5524),
     ("OPEN_1M", 3524), ("OPEN_30M", 3524), ("AFTERNOON", 3524),
 ])
-def test_each_edition_sends_bounded_reasoning_and_reserved_json_capacity(checkpoint, total):
+def test_each_edition_sends_low_adaptive_effort_and_unchanged_total_ceiling(checkpoint, total):
     from test_contract import edition_response
 
     from market_brief.context import analyst_context, edition_profile
@@ -135,10 +134,10 @@ def test_each_edition_sends_bounded_reasoning_and_reserved_json_capacity(checkpo
     output, metadata = synthesize_openrouter(packet, api_key="test", requester=requester, context=context)
     assert len(calls) == 1
     assert calls[0]["max_tokens"] == total
-    assert calls[0]["reasoning"] == {"max_tokens": 1024, "exclude": True}
-    assert metadata["reasoning_max_tokens"] == 1024
+    assert calls[0]["reasoning"] == {"effort": "low", "exclude": True}
+    assert metadata["reasoning_effort"] == "low"
     assert metadata["max_output_tokens"] == total
-    assert total - metadata["reasoning_max_tokens"] == (4500 if profile["profile"] == "rich" else 2500)
+    assert "reasoning_max_tokens" not in metadata
     assert "PRIVATE_REASONING_SENTINEL" not in json.dumps([output, metadata])
 
 
@@ -167,3 +166,84 @@ def test_length_is_output_budget_failure_before_validation_without_retry(monkeyp
     assert '"completion_tokens": 5524' in str(exc.value)
     assert "PRIVATE_REASONING_SENTINEL" not in str(exc.value)
     assert "schema_version" not in str(exc.value)
+
+
+@pytest.mark.parametrize("finish", ["stop", "length"])
+def test_nested_accounting_and_healing_survive_without_private_content(finish):
+    from market_brief.synthesize import _openrouter_diagnostic
+
+    response = {"id": "gen-test", "model": "resolved-model", "provider": "Azure", "choices": [{
+        "finish_reason": finish, "native_finish_reason": "max_tokens" if finish == "length" else "end_turn",
+        "message": {"content": json.dumps(narrative()), "reasoning_details": [
+            {"text": "PRIVATE_SENTINEL", "data": "PRIVATE_SENTINEL"}]}}],
+        "usage": {"completion_tokens": 4000, "cost": .2,
+                  "completion_tokens_details": {"reasoning_tokens": 1700, "text": "PRIVATE_SENTINEL"},
+                  "prompt_tokens_details": {"cached_tokens": 12},
+                  "cost_details": {"upstream_inference_cost": .2}},
+        "openrouter_metadata": {"pipeline": [{"type": "response_healing", "data": {
+            "improved": True, "original_length": 5001, "healed_length": 5000,
+            "content": "PRIVATE_SENTINEL"}}]}}
+    diagnostic = json.loads(_openrouter_diagnostic(response))
+    assert diagnostic["response_id"] == "gen-test"
+    assert diagnostic["resolved_model"] == "resolved-model"
+    assert diagnostic["usage"]["completion_tokens_details"] == {"reasoning_tokens": 1700}
+    assert diagnostic["response_healing"][0]["data"] == {
+        "improved": True, "original_length": 5001, "healed_length": 5000}
+    if finish == "length":
+        with pytest.raises(ValueError) as exc:
+            synthesize_openrouter(fixture_packet(), api_key="fake", requester=lambda *_: response)
+        recorded = str(exc.value)
+    else:
+        _, metadata = synthesize_openrouter(fixture_packet(), api_key="fake", requester=lambda *_: response)
+        assert metadata["diagnostic"] == diagnostic
+        assert metadata["usage"] == diagnostic["usage"]
+        recorded = json.dumps(metadata)
+    assert "reasoning_tokens" in recorded
+    assert "PRIVATE_SENTINEL" not in recorded
+
+
+def test_missing_nested_accounting_is_unknown_not_zero():
+    from market_brief.synthesize import _openrouter_diagnostic
+    diagnostic = json.loads(_openrouter_diagnostic({"choices": [{"message": {"content": "{}"}}]}))
+    assert "completion_tokens_details" not in diagnostic["usage"]
+    assert diagnostic["response_healing"] is None
+
+
+@pytest.mark.parametrize("failure", ["timeout", "http", "malformed"])
+def test_transport_failure_makes_one_http_request_and_enables_metadata(monkeypatch, failure):
+    import importlib
+    from urllib.error import HTTPError
+
+    module = importlib.import_module("market_brief.synthesize")
+    calls = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, limit):
+            return b"not json"
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        assert request.get_header("X-openrouter-metadata") == "enabled"
+        payload = json.loads(request.data)
+        assert payload["provider"] == {"allow_fallbacks": False, "require_parameters": True}
+        assert payload["reasoning"] == {"effort": "low", "exclude": True}
+        assert payload["response_format"]["json_schema"]["schema"] == json.loads(
+            payload["messages"][1]["content"])["output_schema"]
+        if failure == "timeout":
+            raise TimeoutError()
+        if failure == "http":
+            raise HTTPError(request.full_url, 503, "unavailable", {}, None)
+        return Response()
+
+    monkeypatch.setattr(module, "urlopen", fake_urlopen)
+    with pytest.raises(ValueError, match="no automatic paid retry"):
+        synthesize_openrouter(fixture_packet(), api_key="fake")
+    assert len(calls) == 1

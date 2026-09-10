@@ -13,6 +13,22 @@ RELATIONSHIPS, CONTRADICTIONS, and WHAT WOULD CHANGE THE READ. The qualitative
 banner is interpretation, never trade permission. Do not invent regime rules,
 trade qualification, recommendations, targets, positions, entries, exits, or orders.
 
+OUTPUT BUDGET: the edition's word range covers ALL prose fields combined, including
+character, caveat, uncertainty, alternatives, attention reasons, watch criteria,
+relationships, changes and carried-watch assessments. It is not a separate allowance
+for each section. For a rich edition, allocate roughly 80 words to summary, 100 to
+sections, 100 to watches, and 70–120 to the remaining fields; use the balance up to
+500 only for distinct useful analysis. For light editions, share their smaller range
+across the same contract and leave optional sections empty when they add nothing.
+The schema's character limits are hard backstops, not writing targets. Empty
+uncertainty/alternative strings are correct when there is no specific new point.
+Keep character to one sentence and continuity records to concise assessments;
+do not repeat the summary in them. Select only the evidence needed for each claim
+(usually two IDs, at most four); narrow a claim if its support cannot fit.
+Return compact JSON with no indentation, markdown, or commentary. Complete this
+bounded editing task directly: use the supplied comparisons and classifications,
+do not recompute the tables or explore unsupported scenarios.
+
 HEADLINE: exactly one market claim, roughly 8 to 12 words, no caveat clause,
 no semicolon, no multi-part thesis. Specific rather than clever, and it must make
 sense read alone. Coverage caveats never belong in the headline.

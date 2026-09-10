@@ -6,7 +6,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import time
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -17,11 +16,17 @@ from .context import analyst_context, edition_profile, supplied_ids
 from .continuity import ASSESSMENTS, CARRIED_ASSESSMENTS, prior_values, validate_state
 from .evidence import ROOT, canonical, compact_model_record, digest, evidence_catalog, model_packet, read_json
 
-TEXT = {"type": "string", "minLength": 1, "maxLength": 1800}
+
+def text_field(limit, optional=False):
+    return {"type": "string", "minLength": 0 if optional else 1, "maxLength": limit}
+
+
+TEXT = text_field(360)
+IDENTIFIER = text_field(96)
 # One claim of roughly eight to twelve words; the bound is a backstop, not the target.
 HEADLINE = {"type": "string", "minLength": 1, "maxLength": 160}
-REFS = {"type": "array", "items": {"type": "string"}, "minItems": 1,
-        "maxItems": 12, "uniqueItems": True}
+REFS = {"type": "array", "items": IDENTIFIER, "minItems": 1,
+        "maxItems": 4, "uniqueItems": True}
 HORIZONS = ["OPENING_HOUR", "SESSION", "NEXT_CLOSE", "NEXT_BRIEF"]
 EVENT_HORIZON = re.compile(r"^EVENT\([a-zA-Z][\w-]{0,79}\)$")
 ALLOWED_LABELS = re.compile(r"\b(?:2Y|5Y|10Y|30Y|5-session|20-session|50-day|50-session)\b")
@@ -37,38 +42,40 @@ def obj(properties):
 
 
 PARAGRAPH = obj({"text": TEXT, "class": {"enum": ["OBSERVED", "INTERPRETATION"]},
-                 "evidence_ids": REFS, "uncertainty": {"type": "string", "maxLength": 500},
-                 "alternative": {"type": "string", "maxLength": 500}})
+                 "evidence_ids": REFS, "uncertainty": text_field(80, optional=True),
+                 "alternative": text_field(100, optional=True)})
+SECTION_PARAGRAPH = obj(dict(PARAGRAPH["properties"], text=text_field(240)))
 NARRATIVE_SCHEMA = obj({
     "schema_version": {"const": "market-brief.narrative.v1"},
     "mode": {"enum": ["LIVE", "SAMPLE"]},
     "banner": obj({"title": HEADLINE, "label": {"enum": ["RISK-ON", "RISK-OFF", "MIXED", "INDETERMINATE"]},
                    "class": {"const": "INTERPRETATION"}, "evidence_ids": REFS,
-                   "limitation": TEXT}),
+                   "limitation": text_field(200)}),
     "summary": {"type": "array", "items": PARAGRAPH, "minItems": 1, "maxItems": 2},
-    "sections": obj({k: {"type": "array", "items": PARAGRAPH, "maxItems": 1}
+    "sections": obj({k: {"type": "array", "items": SECTION_PARAGRAPH,
+                         "maxItems": 0 if k == "cuttingboard" else 1}
                      for k in ("macro", "equities", "attention", "cuttingboard", "events")}),
-    "attention_ids": {"type": "array", "items": {"type": "string"},
+    "attention_ids": {"type": "array", "items": IDENTIFIER,
                       "maxItems": 3, "uniqueItems": True},
     "attention": {"type": "array", "maxItems": 3, "items": obj({
-        "id": {"type": "string"}, "why": TEXT})},
+        "id": IDENTIFIER, "why": text_field(120)})},
     "watches": {"type": "array", "minItems": 1, "maxItems": 3, "items": obj({
-        "class": {"const": "WATCH"}, "condition": TEXT, "confirmation": TEXT,
-        "contradiction": TEXT, "horizon": {"oneOf": [{"enum": HORIZONS},
-            {"pattern": EVENT_HORIZON.pattern}]}, "evidence_ids": REFS})},
+        "class": {"const": "WATCH"}, "condition": text_field(140), "confirmation": text_field(100),
+        "contradiction": text_field(100), "horizon": {"oneOf": [{"enum": HORIZONS},
+            {"type": "string", "maxLength": 87, "pattern": EVENT_HORIZON.pattern}]}, "evidence_ids": REFS})},
     # Continuity records. The analyst assesses; deterministic code owns every persistent ID.
-    "character": obj({"text": TEXT, "evidence_ids": REFS}),
+    "character": obj({"text": text_field(180), "evidence_ids": REFS}),
     "relationships": {"type": "array", "maxItems": 3, "items": obj({
-        "carried_id": {"type": ["string", "null"]},
-        "instruments": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 4,
+        "carried_id": dict(IDENTIFIER, type=["string", "null"]),
+        "instruments": {"type": "array", "items": text_field(40), "minItems": 1, "maxItems": 4,
                         "uniqueItems": True},
-        "statement": TEXT, "assessment": {"enum": list(ASSESSMENTS)},
-        "reason": {"type": "string", "maxLength": 500}, "evidence_ids": REFS})},
+        "statement": text_field(140), "assessment": {"enum": list(ASSESSMENTS)},
+        "reason": text_field(100, optional=True), "evidence_ids": REFS})},
     "watch_updates": {"type": "array", "maxItems": 3, "items": obj({
-        "carried_id": {"type": "string"}, "assessment": {"enum": list(CARRIED_ASSESSMENTS)},
-        "reason": TEXT, "evidence_ids": REFS})},
+        "carried_id": IDENTIFIER, "assessment": {"enum": list(CARRIED_ASSESSMENTS)},
+        "reason": text_field(120), "evidence_ids": REFS})},
     "changes": {"type": "array", "maxItems": 3, "items": obj({
-        "comparison_id": {"type": "string"}, "text": TEXT, "evidence_ids": REFS})},
+        "comparison_id": IDENTIFIER, "text": text_field(140), "evidence_ids": REFS})},
 })
 TOKEN = re.compile(r"\{\{([a-zA-Z][\w-]*(?::[a-zA-Z][\w-]*)?)\}\}")
 
@@ -82,7 +89,41 @@ def narrative_schema(profile=None):
     schema["properties"]["attention_ids"]["maxItems"] = profile["attention_items"]
     schema["properties"]["attention"]["maxItems"] = profile["attention_items"]
     schema["properties"]["watches"]["maxItems"] = profile["watches"]
+    if profile["profile"] == "light":
+        # All carried watches can still be assessed; select fewer relationships/changes.
+        for key in ("relationships", "changes"):
+            schema["properties"][key]["maxItems"] = 2
+        schema["properties"]["summary"]["items"]["properties"]["text"] = text_field(300)
+        watch = schema["properties"]["watches"]["items"]["properties"]
+        watch.update(condition=text_field(130), confirmation=text_field(80), contradiction=text_field(80))
+        schema["properties"]["watch_updates"]["items"]["properties"]["reason"] = text_field(100)
+        schema["properties"]["character"]["properties"]["text"] = text_field(140)
     return schema
+
+
+def compact_json(value):
+    """Wire serialization only; do not change canonical evidence/continuity hashes."""
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def compact_schema(schema):
+    """Share repeated definitions; the context and transport still carry the SAME contract."""
+    definitions = {"evidence_refs": REFS, "section_paragraph": SECTION_PARAGRAPH}
+
+    def visit(value, replace=True):
+        if replace:
+            for name, definition in definitions.items():
+                if value == definition:
+                    return {"$ref": f"#/$defs/{name}"}
+        if isinstance(value, dict):
+            return {key: visit(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [visit(item) for item in value]
+        return value
+
+    result = visit(schema)
+    result["$defs"] = {name: visit(value, replace=False) for name, value in definitions.items()}
+    return result
 
 
 def analyst_model(config=None, environ=None):
@@ -186,11 +227,11 @@ def construct_prompt(packet, full=False, context=None):
         limit = 120_000
     else:
         context = context if context is not None else analyst_context(packet, profile)
-        projected = dict(context, output_schema=narrative_schema(context.get("edition") or profile))
+        projected = dict(context, output_schema=compact_schema(narrative_schema(context.get("edition") or profile)))
         limit = min(120_000, profile["input_limit_bytes"])
-    user = canonical(projected)
+    user = compact_json(projected)
     size = len(user.encode())
-    sections = {key: len(canonical(value).encode()) for key, value in projected.items()}
+    sections = {key: len(compact_json(value).encode()) for key, value in projected.items()}
     largest = ", ".join(f"{key}={value}" for key, value in
                          sorted(sections.items(), key=lambda item: item[1], reverse=True)[:3])
     print(f"Synthesis packet: {size} bytes; largest sections: {largest}", flush=True)
@@ -206,11 +247,12 @@ class _TransientOpenRouterError(ValueError):
 
 
 def _openrouter_post(payload, api_key, timeout=180):
-    request = Request(OPENROUTER_URL, data=json.dumps(payload).encode("utf-8"), headers={
+    request = Request(OPENROUTER_URL, data=compact_json(payload).encode("utf-8"), headers={
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://dwats250.github.io/market-brief/",
         "X-Title": "Market Brief",
+        "X-OpenRouter-Metadata": "enabled",
     }, method="POST")
     try:
         with urlopen(request, timeout=timeout) as response:
@@ -232,6 +274,38 @@ def _openrouter_post(payload, api_key, timeout=180):
         raise _TransientOpenRouterError("OpenRouter network or response failure") from None
 
 
+def _safe_usage(response):
+    """Keep accounting, including reasoning counts; never infer missing detail as zero."""
+    usage = response.get("usage") or {}
+    if not isinstance(usage, dict):
+        return {}
+    result = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cost")
+              if type(usage.get(key)) in (int, float)}
+    for group, keys in {
+        "completion_tokens_details": ("reasoning_tokens", "accepted_prediction_tokens", "rejected_prediction_tokens"),
+        "prompt_tokens_details": ("cached_tokens", "cache_write_tokens"),
+        "cost_details": ("upstream_inference_cost", "upstream_inference_prompt_cost",
+                         "upstream_inference_completions_cost"),
+    }.items():
+        details = usage.get(group)
+        if isinstance(details, dict):
+            result[group] = {key: details[key] for key in keys if type(details.get(key)) in (int, float)}
+    return result
+
+
+def _healing_diagnostic(response):
+    metadata = response.get("openrouter_metadata") or {}
+    pipeline = metadata.get("pipeline") if isinstance(metadata, dict) else None
+    if not isinstance(pipeline, list):
+        return None
+    return [{"type": "response_healing", "data": {
+        key: value for key, value in (stage.get("data") or {}).items()
+        if key in {"healed", "improved", "original_length", "healed_length", "input_length", "output_length",
+                   "original_content_length", "healed_content_length"} and type(value) in (int, float, bool)}}
+        for stage in pipeline if isinstance(stage, dict) and stage.get("type") == "response_healing"
+        and isinstance(stage.get("data"), dict)]
+
+
 def _openrouter_diagnostic(response, message=None, content=None):
     choice = (response.get("choices") or [{}])[0] if isinstance(response, dict) else {}
     message = message if isinstance(message, dict) else (choice.get("message") or {})
@@ -250,9 +324,11 @@ def _openrouter_diagnostic(response, message=None, content=None):
         "finish_reason": choice.get("finish_reason", "unknown") if isinstance(choice, dict) else "unknown",
         "content_type": type(content).__name__ if content is not None else "missing",
         "content_bytes": len(content.encode("utf-8")) if isinstance(content, str) else 0,
-        "usage": {key: value for key, value in (response.get("usage") or {}).items()
-                   if isinstance(value, (int, float))}
-        if isinstance(response, dict) and isinstance(response.get("usage"), dict) else {},
+        "usage": _safe_usage(response) if isinstance(response, dict) else {},
+        "response_id": response.get("id"),
+        "resolved_model": response.get("model", "unknown"),
+        "native_finish_reason": choice.get("native_finish_reason", "unknown"),
+        "response_healing": _healing_diagnostic(response),
         "provider": response.get("provider", "unknown") if isinstance(response, dict) else "unknown",
         "metadata_keys": sorted(response.get("openrouter_metadata", {}))
         if isinstance(response, dict) and isinstance(response.get("openrouter_metadata"), dict) else [],
@@ -290,7 +366,7 @@ def _openrouter_narrative(response):
                          f"diagnostic={diagnostic}") from None
 
 
-def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, sleeper=time.sleep, full=False,
+def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, sleeper=None, full=False,
                           context=None):
     api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
@@ -298,34 +374,29 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     system, user = construct_prompt(packet, full=full, context=context)
     profile = edition_profile(packet["run"]["checkpoint"])
     analyst = analyst_model()
-    schema = NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile)
+    schema = compact_schema(NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile))
     requested_at = datetime.now(timezone.utc).isoformat()
     payload = dict(model=analyst["model"], temperature=0, max_tokens=profile["max_output_tokens"],
                    messages=[{"role": "system", "content": system},
                              {"role": "user", "content": user}],
                    plugins=[{"id": "response-healing"}],
+                   provider={"allow_fallbacks": False, "require_parameters": True},
                    response_format={"type": "json_schema", "json_schema": {
                        "name": "market_brief_narrative", "strict": True, "schema": schema}},
-                   reasoning={"max_tokens": profile["reasoning_max_tokens"], "exclude": True})
-    response = None
-    for attempt in range(3):
-        try:
-            response = requester(payload, api_key)
-            break
-        except _TransientOpenRouterError:
-            if attempt == 2:
-                raise ValueError("OpenRouter transient failure after bounded retries") from None
-            sleeper(2 ** attempt)
+                   reasoning={"effort": profile["reasoning_effort"], "exclude": True})
+    # A timeout or malformed transport envelope may follow a billable generation.
+    # One request only, including on transport failure. `sleeper` is retained for callers.
+    try:
+        response = requester(payload, api_key)
+    except _TransientOpenRouterError:
+        raise ValueError("OpenRouter transport failure; no automatic paid retry") from None
     narrative = _openrouter_narrative(response)
     try:
         narrative = validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)
     except ValueError as exc:
         diagnostic = _openrouter_diagnostic(response)
         raise ValueError(f"{exc}; diagnostic={diagnostic}") from None
-    usage = response.get("usage") if isinstance(response, dict) else None
-    safe_usage = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cost")
-                  if isinstance(usage, dict) and isinstance(usage.get(key), (int, float))
-                  and not isinstance(usage.get(key), bool)}
+    safe_usage = _safe_usage(response)
     choice = (response.get("choices") or [{}])[0]
     finish_reason = choice.get("finish_reason", "unknown") if isinstance(choice, dict) else "unknown"
     provider_route = response.get("provider", "unknown")
@@ -338,10 +409,11 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     return narrative, dict(route="openrouter", provider="OpenRouter", model=analyst["model"],
                            model_source=analyst["source"], profile=profile["profile"],
                            max_output_tokens=profile["max_output_tokens"],
-                           reasoning_max_tokens=profile["reasoning_max_tokens"], attempts=attempt + 1,
+                           reasoning_effort=profile["reasoning_effort"], attempts=1,
                            input_bytes=len(user.encode()), output_bytes=len(canonical(narrative).encode()),
                            resolved_model=resolved_model, provider_route=provider_route,
                            finish_reason=finish_reason,
+                           diagnostic=json.loads(_openrouter_diagnostic(response)),
                            requested_at=requested_at, response_id=response.get("id"), usage=safe_usage,
                            prompt_hash=digest(dict(system=system, user=user)), evidence_hash=digest(packet))
 

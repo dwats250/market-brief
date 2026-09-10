@@ -224,34 +224,45 @@ provided snapshot file; no repository path traversal or callback can write back.
 
 ## Structured synthesis output budgets
 
-`config/editions.json` separates the total generation ceiling (`max_output_tokens`)
-from the reasoning allocation (`reasoning_max_tokens`). The OpenRouter request sends
-these as top-level `max_tokens` and `reasoning.max_tokens`, with `reasoning.exclude=true`.
-Rich editions use 5,524 total tokens including up to 1,024 reasoning tokens, leaving
-4,500 tokens for final JSON at the reasoning limit. Light editions use 3,524 total,
-including the same 1,024 reasoning allowance, leaving 2,500 for JSON. The final
-allowances preserve the previous output budgets: prose word targets alone do not
-cover JSON keys, evidence references, watches, and continuity assessments. No word
-targets or schema constraints change. Fixture byte/token estimates are sanity checks,
-not proof that every valid narrative fits or that a live provider obeys the allocation.
+`config/editions.json` retains total generation ceilings of 5,524 rich / 3,524 light
+tokens and requests `reasoning={effort: "low", exclude: true}`. Fable 5.1 uses
+adaptive thinking: the old 1,024-token request was not a guaranteed reservation.
+[Anthropic's model-specific effort guidance](https://platform.claude.com/docs/en/build-with-claude/effort)
+identifies effort as a behavioral control; only total `max_tokens` is a hard cap.
+Reported reasoning tokens remain billable even when their content is excluded.
+Do not describe a fixed portion of either ceiling as reserved for final JSON.
 
-[OpenRouter's reasoning documentation](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
-documents a minimum direct Anthropic reasoning budget of 1,024 tokens. Excluding
-reasoning only hides it; it remains billable output. Both editions therefore use
-this minimum, with smaller final-output capacity for light editions. No reasoning
-text is persisted; successful metadata records the requested caps and reported usage.
-These exact reasoning allocations rely on the provider's support for Anthropic's
-direct budget mechanism; overrides to other model families may translate budgets
-into effort levels instead. A live paid verification remains an owner-authorized step.
+The schema bounds prose by role (80–360 characters, with a 160-character
+headline), limits citations to four sufficient references per record, and bounds
+identifier lengths. The already-forbidden Cuttingboard narrative array is empty by
+schema as well as semantic validation. The rich word target is still 350–500 across
+ALL prose, including watches and continuity; light targets remain edition-specific.
+Schema character bounds are backstops, not targets or a global word-count constraint.
+No source, evidence row, timestamp, coverage caveat, comparison or prior state is
+removed. Repeated schema definitions use `$defs` in both the context and transport;
+compact wire JSON removes whitespace without changing saved records or their hashes.
+
+`tests/test_synthesis_budget.py` fills all arrays and prose fields with representative
+identifiers: rich is 10,414 compact bytes, light 7,921. Byte/3 estimates occupy about
+63% / 75% of their total ceilings before adaptive reasoning. This is a deterministic
+size regression check, not a native tokenizer or a guarantee for adversarial strings,
+maximum-length identifiers, JSON whitespace, or unbounded adaptive reasoning.
+Normal 350–500-word prose should use substantially less than this stress shape.
 
 A `finish_reason=length` response fails as an output-budget exhaustion before JSON
 parsing or semantic validation, even if response healing produced parseable JSON.
-Sanitized diagnostics include finish reason, usage, provider, and content byte count,
-not reasoning or narrative text. Length failures never enter the transport retry loop.
+Sanitized diagnostics retain response ID, resolved model, native finish reason,
+nested numeric token/cost accounting, provider and content bytes. The documented
+`X-OpenRouter-Metadata: enabled` header requests routing/healing telemetry; only
+allowlisted numeric/boolean healing details are retained. Missing accounting is
+unknown, never zero. Neither reasoning text nor encrypted reasoning is persisted.
+Response-healing stays enabled; there is no evidence it caused the production cap.
 
 Per request, maximum requested paid output is 5,524 tokens (rich) or 3,524 (light),
 including hidden reasoning. At an output rate of R dollars per million tokens,
-output exposure is 0.005524 * R or 0.003524 * R dollars, plus input charges. Existing
-transient transport retries are unchanged (at most three requests); if every attempt
-were billable at its ceiling, aggregate output exposure would be 16,572 or 10,572
-tokens. There is no added retry for truncation or semantic validation failure.
+output exposure is 0.005524 * R or 0.003524 * R dollars, plus input charges. There is
+exactly ONE client request, including on timeout, HTTP failure, malformed transport,
+truncation or validation failure; a timeout can follow a billable generation.
+Provider fallback is disabled and parameter support is required. No second model,
+repair call or paid fallback is added. Live verification requires owner authorization;
+see [the investigation and one-call criteria](SYNTHESIS_COST_CONTAINMENT.md).

@@ -12,7 +12,7 @@
       "input_target_tokens": 8000,
       "input_limit_bytes": 64000,
       "max_output_tokens": 5524,
-      "reasoning_max_tokens": 1024,
+      "reasoning_effort": "low",
       "summary_paragraphs": 2,
       "attention_items": 3,
       "watches": 3
@@ -22,7 +22,7 @@
       "input_target_tokens": 4000,
       "input_limit_bytes": 40000,
       "max_output_tokens": 3524,
-      "reasoning_max_tokens": 1024,
+      "reasoning_effort": "low",
       "summary_paragraphs": 1,
       "attention_items": 2,
       "watches": 2

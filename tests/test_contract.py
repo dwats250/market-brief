@@ -7,7 +7,7 @@ import pytest
 from test_pipeline import fixture_packet, narrative
 
 from market_brief.evidence import ROOT
-from market_brief.synthesize import NARRATIVE_SCHEMA, construct_prompt, validate_narrative
+from market_brief.synthesize import NARRATIVE_SCHEMA, construct_prompt, narrative_schema, validate_narrative
 
 PROMPT = (ROOT / "prompts/synthesis.md").read_text()
 
@@ -115,10 +115,14 @@ def test_each_edition_validates_a_complete_response_within_its_budget(now, check
     assert system == PROMPT
     payload = json.loads(user)
     assert payload["edition"]["checkpoint"] == checkpoint and payload["edition"]["profile"] == profile["profile"]
-    assert payload["output_schema"]["properties"]["watches"]["maxItems"] == profile["watches"]
+    # The wire copy carries the edition's watch count as a description; the local contract enforces it.
+    assert str(profile["watches"]) in payload["output_schema"]["properties"]["watches"]["description"]
+    assert "maxItems" not in payload["output_schema"]["properties"]["watches"]
+    local = narrative_schema(profile)
+    assert local["properties"]["watches"]["maxItems"] == profile["watches"]
     assert len(user.encode()) <= profile["input_limit_bytes"]
-    final_token_reserve = profile["max_output_tokens"] - profile["reasoning_max_tokens"]
-    assert len(canonical(value).encode()) < final_token_reserve * 4
+    # A measured visible-output estimate; adaptive reasoning has no fixed reservation.
+    assert len(canonical(value).encode()) / 3 < profile["max_output_tokens"] * .65
     if profile["profile"] == "light":
         assert payload["selection"]["mode"] == "changed" and payload["selection"]["omitted_count"] > 0
 
@@ -160,3 +164,10 @@ def test_a_context_over_its_edition_budget_fails_with_diagnostics_not_truncation
     monkeypatch.setattr(context_module, "edition_profile", lambda checkpoint, config=None: tight)
     with pytest.raises(ValueError, match="exceeds the rich edition budget"):
         construct_prompt(packet)
+
+
+def test_contract_states_concise_output_is_enforced_not_stylistic():
+    """The prompt must say that over-budget or truncated output is discarded with no second attempt."""
+    lowered = PROMPT.lower()
+    assert "hard" in lowered and "no second attempt" in lowered
+    assert "discarded" in lowered or "rejected" in lowered

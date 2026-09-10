@@ -1,0 +1,448 @@
+# Production synthesis cost containment — 2026-09-10
+
+## Operational pause — remains in force
+
+Before investigating the urgent addendum, the four live Cron Triggers on
+`market-brief-scheduler` were removed using Cloudflare's trigger-only
+`PUT /accounts/{account_id}/workers/scripts/market-brief-scheduler/schedules`
+with JSON body `[]`. A subsequent GET returned `{"schedules": []}` at
+**2026-09-10 14:23:42 UTC** (07:23:42 America/Vancouver).
+The deployment list before/after was identical. The active deployment remains
+`e98e28f2-8b7a-4068-8668-261e8a9df710`, with Worker version
+`3d2cd283-4941-439a-ad7c-d2b94520454f` at 100%.
+Evidence is saved at `/tmp/market-brief-cron-pause-2026-09-10.json`.
+
+Because Cloudflare documents up to 15 minutes for trigger removals to propagate,
+the GitHub executor was also temporarily disabled: workflow ID `352850846`,
+`.github/workflows/schedule.yml`, state **`disabled_manually`**. No queued or
+in-progress jobs were present. This blocks delayed wake-ups during propagation.
+Neither operation changes repository source, Worker code or secret bindings.
+Existing Wrangler login was refreshed normally; credentials were not rotated.
+No Cuttingboard repository or Worker was modified.
+
+Both operational safeguards remain paused. Green static tests and a completed
+patch do NOT authorize resumption. Source still contains the original crons;
+do not redeploy the scheduler or enable the executor while the hold is active.
+One paid verification requires explicit owner authorization and does not imply
+permission to restore recurring cron triggers.
+
+Sources: [Cloudflare schedule update API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/schedules/methods/update/),
+[Cron propagation behavior](https://developers.cloudflare.com/workers/configuration/cron-triggers/).
+
+## Evidence and root cause
+
+Baseline: `1a7752dbd7705876216bd72b74858c69674cb972`, repository
+`dwats250/market-brief`. Read-only inspection of
+[run 34480006410](https://github.com/dwats250/market-brief/actions/runs/34480006410)
+and artifact `10153213045` reproduced the archived user message at exactly 32,526
+bytes. The artifact contains `evidence.json`, `analyst_context.json`, and failed
+`metadata.json`; it contains neither the response body nor a narrative.
+
+The addendum's [OPEN_1M run 34483191122](https://github.com/dwats250/market-brief/actions/runs/34483191122)
+was independently verified from its logs and downloaded artifact: 27,310-byte
+packet, 14,227-byte catalog, 7,161-byte schema copy, 15,697 prompt tokens, exactly
+3,524 completion tokens, `finish_reason=length`, 4,749 content bytes, Azure and
+$0.33317. Both profiles exhausted their exact caps, establishing a systemic
+output-budget defect rather than a PREMARKET-only failure. Their combined reported
+cost was $0.79268; neither published.
+
+Read-only job inspection also found [run 34486249474](https://github.com/dwats250/market-brief/actions/runs/34486249474),
+OPEN_30M at 14:00 UTC, completed before the pause. It constructed 28,063 bytes and
+failed with HTTP 400. Its logs expose neither usage nor an upstream error body;
+do not count it as another length failure or invent its cost/cause.
+
+The observed failure is exhaustion of a SHARED reasoning-plus-content ceiling:
+18,331 prompt tokens, exactly 5,524 completion tokens, `finish_reason=length`,
+8,395 content bytes, HTTP 200, Azure, and a 20,662-byte response envelope. The
+response included `reasoning_details`, but the logger discarded nested usage,
+response ID, resolved model and native finish reason. Byte counts cannot recover
+native token counts. In particular, subtracting content bytes from envelope bytes
+does not measure reasoning: JSON escaping, metadata and encrypted signatures are
+also in the envelope. No exact visible/reasoning split can honestly be recovered.
+
+The causal configuration defect is clear even though historical attribution is
+incomplete. The request had a generic legacy `reasoning.max_tokens=1024`, no effort,
+and a schema permitting 62,660 narrative characters. Its prompt described the word
+range as editorial guidance and independently requested summary, sections, watches,
+character and continuity prose. Strict shape did not make that work fit the budget.
+
+[Anthropic's Fable-specific guidance](https://platform.claude.com/docs/en/build-with-claude/effort)
+recommends effort for adaptive thinking and describes the total ceiling as shared.
+[Thinking configuration](https://platform.claude.com/docs/en/build-with-claude/thinking)
+distinguishes Fable's adaptive behavior from legacy manual thinking budgets.
+The old request therefore did not establish a 1,024-token hard reasoning limit.
+OpenRouter's exact translation on this historical Azure request is unavailable;
+do not claim it definitely ignored the field or that exactly 1,024 tokens were used.
+
+The precise defensible conclusion is: generation reached its combined cap while
+producing a response to an oversized contract, with no proven reasoning reservation.
+The evidence does NOT establish that excessive visible prose alone, or reasoning
+alone, consumed the cap. The fix addresses both controls and the missing diagnostics.
+
+## Reasoning control on this route: what is documented, what is not
+
+Two documented facts bound what `reasoning.max_tokens=1024` could have done:
+
+1. Anthropic's Fable 5.1 interface has no thinking budget. Thinking is always on and
+   adaptive; `thinking: {type: "enabled", budget_tokens: N}` is rejected with HTTP 400,
+   and depth is controlled by `output_config.effort` (`low` … `max`). Whatever
+   OpenRouter forwarded for this model, it was not a native 1,024-token cap.
+2. OpenRouter's generic reasoning documentation translates `reasoning.max_tokens`
+   directly into a legacy Anthropic budget, and `reasoning.effort` into
+   `budget_tokens = max(min(max_tokens × ratio, 128000), 1024)` with ratio 0.2 for
+   `low`. Applied literally to a 5,524 / 3,524 ceiling, `effort: low` would be a
+   1,104 / 1,024 budget: the SAME control that failed. The Fable 5.1 model page lists
+   `reasoning` and `reasoning_effort` as accepted, but does not say how they map.
+
+Because Opus 4.7 and later also reject `budget_tokens`, OpenRouter must translate
+per model to serve reasoning on them at all; the most likely translation of
+`effort` is the native effort setting. That is an inference, not a documented
+guarantee. `effort: low` is retained as the only control that has a native meaning
+on this model, and the report no longer claims it proves a reasoning reservation.
+
+Historical evidence sets the scale. Run `34280109434` (2026-09-08, old contract,
+`reasoning: {exclude: true}` only, ceiling 10,000) completed with `finish=stop` at
+**7,972 completion tokens** and $0.53919. PR #15 then set 5,524 below that
+demonstrated need. On 2026-09-10 the truncated PREMARKET content was 8,395 bytes;
+if compact English JSON tokenizes at no fewer than three bytes per token, visible
+content used at most 2,798 of the 5,524 tokens and hidden reasoning at least 2,726.
+The same bound gives OPEN_1M at most 1,583 visible and at least 1,941 reasoning. Both
+exceed 1,024. These are bounds under a stated assumption, not recovered counts; the
+exact split was not retained and cannot be reconstructed.
+
+Consequence for the one verification: if the route does not actually lower Fable's
+effort, hidden reasoning alone may approach the ceiling regardless of how small the
+contract is. The captured `completion_tokens_details.reasoning_tokens` will settle
+this on the first call; a length failure with large reasoning accounting points at
+the route's translation, not at the contract.
+
+### OPEN_30M HTTP 400 and the new error diagnostic
+
+Run `34486249474` failed 1.6 seconds after packet construction with only
+`OpenRouter HTTP 400`; the transport discarded the response body. OpenRouter
+documents the body shape `{error: {code, message, metadata?}}`. `_safe_error` now
+records the numeric code, a 300-character message and the `provider_name`,
+`error_type` and `provider_code` labels, never the raw provider body, headers or
+IDs, for both fatal and transient statuses. The cause of that 400 remains unknown
+and is not counted as a length failure.
+
+`require_parameters: true` was introduced on this branch; the three production
+failures ran without it. If OpenRouter decides no provider advertises every
+requested parameter, the request fails before generation at zero model cost. That
+is an acceptable fail-closed outcome for the one verification, and the diagnostic
+above will now say so.
+
+## Schema compatibility adjudication (second pass, 2026-09-10)
+
+Anthropic's current structured-output documentation lists the supported subset:
+basic types, `enum`, `const`, `anyOf`/`allOf`, local `$ref`/`definitions`,
+`required`, `additionalProperties: false`, listed string formats and array
+`minItems` of 0 or 1. It lists as unsupported, with a **400 error**: string
+`minLength`/`maxLength`, array constraints beyond `minItems` 0/1, numeric bounds,
+recursion. `uniqueItems`, `pattern` (heading present, details truncated) and
+`oneOf` are not in the supported list. Anthropic's own SDKs strip unsupported
+constraints, move them into descriptions, and validate locally against the
+original schema. OpenRouter's structured-output documentation says providers
+variously "guarantee schema-conforming output", "translate your schema" or
+"treat it as a strong hint", and defers to provider documentation for the
+allowed subset; it does not say whether it strips unsupported keywords.
+
+What the repository history proves: the origin/main schema already carried
+`maxLength`, `minLength`, `maxItems` up to 12, `uniqueItems`, `pattern` and
+`oneOf`, and the Azure route returned HTTP 200 for runs 34280109434, 34480006410
+and 34483191122. OPEN_1M and OPEN_30M used byte-identical light schemas at the same
+revision; one returned 200 and one 400. **Deterministic rejection of these keywords
+on this route is therefore falsified.** Enforcement is not proven either: run
+34278983083 returned `finish=stop` output that failed local banner validation, which
+is consistent with shape-only enforcement but does not identify the violated bound.
+Verdict: **cannot be proven statically**; the design no longer depends on it.
+
+Design change. `transport_schema` derives the wire contract from the local one:
+types, `required`, `additionalProperties: false`, `enum`, `const`, `minItems` only
+when 0 or 1, `anyOf` for the nullable `carried_id`, and a plain string for the
+watch horizon. It is fully inlined: the owner ruled out `$ref`/`definitions`
+factoring as a compatibility variable before the first paid verification. Measured
+cost of inlining: 8,486 wire bytes against 5,715 factored, 2,771 bytes (roughly
+700 tokens) more input per call.
+Every removed bound becomes a `description` ("At most 240 characters, non-empty.",
+"At most 3 items, no duplicates.") that the model reads in both the user-message
+copy and `response_format`. `validate_narrative` still enforces the full bounded
+contract, including the horizon pattern and admitted event IDs, after generation,
+and a violation is fatal with no retry. Tests assert the wire schema uses only the
+documented keyword set, that every local bound appears in a description, that the
+wire schema alone would accept the excess (so no test can mistake it for
+enforcement), and that the local validator rejects it.
+
+`temperature=0` is removed from the request. No Fable 5.1 endpoint advertises
+`temperature` (OpenRouter's read-only endpoint listing, 2026-09-10), and Anthropic
+rejects sampling parameters on this model; with `require_parameters: true` a stray
+sampling parameter could leave no eligible provider.
+
+Consequence for cost: the provider-side "adversarial legal maximum" is now
+explicitly unbounded except by `max_tokens`; that ceiling is the only financial
+exposure limit, as it always was in practice. Editorial size is governed by the
+prompt, the descriptions and post-generation rejection.
+
+## Provider eligibility under require_parameters
+
+OpenRouter's public endpoint listing for `anthropic/claude-fable-5.1` on
+2026-09-10 shows four endpoints. Azure, Anthropic and Amazon Bedrock advertise
+`max_tokens`, `reasoning`, `reasoning_effort`, `response_format`,
+`structured_outputs`, `stop`, `tools`, `verbosity`; Google Vertex lacks
+`structured_outputs`. With the request's parameters (`max_tokens`,
+`response_format`, `reasoning`) three endpoints are eligible and Vertex is
+excluded. `allow_fallbacks: false` means the first chosen eligible endpoint is
+the only one tried. Advertised support is not proof of keyword-level schema
+enforcement; it filters out a provider that cannot take the parameter at all.
+
+The OPEN_30M 400 at origin/main ran with default routing and no
+`require_parameters`. A route to an endpoint without structured-output support
+is one consistent, unproven explanation among others; the recorded error body will
+now settle any repeat. `require_parameters: true` is kept.
+
+## Why PR #15 was insufficient
+
+[PR #15](https://github.com/dwats250/market-brief/pull/15) assumed the requested
+1,024 reasoning tokens left 4,500 for JSON. It correctly added fail-closed length
+handling, but retained every broad schema bound and tested a small fixture using
+a byte/4 estimate. Neither a submitted parameter nor a small fixture proved that
+the route honored that allocation or that maximum-shape output fit it.
+
+## Accounting and response-healing
+
+At the [published Fable rates](https://openrouter.ai/anthropic/claude-fable-5.1-20260831),
+the reported cost reconciles exactly:
+
+`18,331 × $10/M + 5,524 × $50/M = $0.18331 + $0.27620 = $0.45951`.
+
+There is no visible separate healing surcharge. This does not exclude any work
+already included in provider completion accounting. More decisively,
+[OpenRouter's launch documentation](https://openrouter.ai/announcements/response-healing-reduce-json-defects-by-80percent)
+identifies healing as free CPU-side processing. Historical healing metadata was
+absent, so its actual participation and content changes are unknown, but there is
+no basis to blame it for model token expenditure.
+[The healing documentation](https://openrouter.ai/docs/guides/features/plugins/response-healing)
+describes JSON repair, not a guaranteed way to complete truncated responses.
+There is no evidence to justify removing it. It remains enabled. No application
+repair/model call is added, and length output is rejected even if parseable.
+
+## Duplicate schema: route-specific decision
+
+The user-message schema is normally redundant with native structured-output
+interfaces: [OpenRouter's documented interface](https://openrouter.ai/docs/guides/features/structured-outputs)
+uses `response_format` with strict `json_schema`, and
+[Claude CLI](https://code.claude.com/docs/en/headless) uses `--json-schema` alongside
+`--output-format json`. The installed CLI's help confirms that option.
+
+However, repository history supplies direct counterevidence for removing the
+production OpenRouter copy without another experiment. Commit `429ea5f` removed
+it while preserving strict `response_format`; paid Azure run
+[34278983083](https://github.com/dwats250/market-brief/actions/runs/34278983083)
+returned `finish_reason=stop`, 10,056 content bytes and `malformed narrative at banner`.
+Commit `dfb232d` restored the copy, and run `34280109434` subsequently passed.
+The first experiment also changed the evidence projection and did not require
+provider parameter support, so it is not a controlled proof that duplication is
+universally necessary. The raw banner was not retained, leaving its exact violation
+unknown. Conversely, documentation alone does not establish that removing the copy
+is safe on this previously failing route. `require_parameters: true` filters for
+advertised parameter support; it is not proof of runtime schema compliance.
+
+For the next call's success probability, retain the **factored 4,921/4,919-byte copy
+on OpenRouter**, alongside strict transport enforcement and local validation.
+Remove it from the **isolated CLI user message**: the CLI receives the same factored
+contract once through `--json-schema`, with no change to its local validator or
+tools-off isolation. Tests inspect the actual mocked argv/stdin for both normal
+and full-packet modes. No CLI generation or paid schema experiment was performed.
+
+This qualifies the earlier broad source comment: a specific route failed without
+the copy; it is not a universal interface requirement. Complete removal from
+OpenRouter is intentionally not claimed safe by this static-only patch.
+
+## Patch and budget
+
+`src/market_brief/synthesize.py` owns the smaller schema, schema factoring, compact
+wire encoding, low-effort request, single attempt, and sanitized accounting.
+`config/editions.json` replaces `reasoning_max_tokens` with `reasoning_effort: low`;
+ceilings and edition word targets stay unchanged. `prompts/synthesis.md` shares the
+existing word target across ALL prose and requests compact JSON and minimal sufficient
+citations. No changes to `context.py`, evidence selection, renderer, scheduling,
+Cloudflare, source collection or the Cuttingboard repository are needed.
+
+| Bound | Before rich | After rich |
+|---|---:|---:|
+| Headline characters | 160 | 160 |
+| Banner limitation | 1,800 | 200 |
+| Summary text, each | 1,800 | 360 |
+| Section text, each | 1,800 | 240 |
+| Paragraph uncertainty / alternative | 500 / 500 | 80 / 100 |
+| Attention reason | 1,800 | 120 |
+| Watch condition / confirmation / contradiction | 1,800 each | 140 / 100 / 100 |
+| Character | 1,800 | 180 |
+| Relationship statement / reason | 1,800 / 500 | 140 / 100 |
+| Carried-watch reason / change text | 1,800 each | 120 / 140 |
+| References per record | 12 | 4 |
+| Identifier / instrument length | Unbounded | 96 / 40 |
+| Cuttingboard narrative paragraphs | 1, rejected semantically | 0 |
+
+Rich retains two summary paragraphs, three attention items, three new watches,
+three relationships, three carried-watch assessments and three changes. All fields
+and all grounding checks remain. Light retains its smaller summary/attention/watch
+counts, uses 300-character summary, 130/80/80 watch criteria, 140-character character,
+100-character watch updates, and at most two relationships/changes. It can still
+assess all three carried watches. Citation limits require narrower fully supported
+claims, never missing support; the prompt says so explicitly.
+
+| Measurement | Before | After |
+|---|---:|---:|
+| Archived PREMARKET user message | 32,526 bytes | 31,815 bytes |
+| Archived OPEN_1M user message, OpenRouter | 27,310 bytes | 27,050 bytes |
+| Same PREMARKET / OPEN_1M evidence, CLI user message | Schema duplicated | 23,312 / 18,549 bytes |
+| Saved context, canonical encoding | 25,346 bytes | Unchanged |
+| Schema embedded in user message | 7,161 bytes | 8,486 bytes (inlined wire form with bound descriptions; factored form was 5,715) |
+| System prompt | 7,646 bytes | 8,849 bytes |
+| System + user + transport schema, before envelope escaping | 47,333 bytes | 42,020 bytes |
+| Local contract maximum prose characters, rich | 62,660 | 6,180 (enforced after generation) |
+| Maximum-shape rich JSON, representative IDs | 70,979 bytes | 10,414 bytes |
+| Maximum-shape light JSON, representative IDs | 60,161 bytes | 7,921 bytes |
+| New rich cold-start stress shape, no updates/changes | — | 8,595 bytes |
+| Rich useful prose target | 350–500 words | 350–500 across all prose |
+| Reasoning control | Requested 1,024; not a native cap on Fable 5.1 | `effort: low`; route translation undocumented, verified by the first call's reasoning accounting |
+| Total completion ceiling, rich / light (hard exposure limit) | 5,524 / 3,524 | 7,000 / 4,500 |
+| Application transport attempts | Up to 3 | Exactly 1 |
+
+Diagnostics and successful metadata preserve safe nested reasoning and optional
+text-token counts. When valid reasoning and completion totals both exist,
+`non_reasoning_completion_tokens` records their difference. It is an accounting
+residual, not a tokenizer measurement of `message.content`. Missing or inconsistent
+counts never become an invented zero. Reasoning text, summaries, signatures and
+`reasoning_details` contents are never persisted.
+
+Low effort is a product-quality choice for both profiles, not a claim of a hard
+thinking cap. This is a bounded editing task over admitted facts: deterministic
+code has already computed numbers, temporal comparisons and classifications;
+the model should select and explain relationships, alternatives and watches.
+The especially short OPEN_1M edition does not warrant open-ended scenario research.
+All substantive fields and grounding checks remain. Lower effort can still affect
+interpretive quality, which local fixtures cannot measure; the one authorized
+verification must pass the qualitative gates as well as size and cost gates.
+
+The old schema has NO finite total serialized bound: identifier strings are
+unbounded, and the event-horizon pattern branch also omitted its string type.
+Even excluding the semantically forbidden Cuttingboard paragraph, it allowed
+59,860 prose characters. The stress shape above uses every schema array and
+representative distinct references, not a maximum possible response or grounded
+market claims. The new prose character bounds reduce that surface by about 90%.
+
+The new rich/light stress estimates are 3,472 / 2,641 visible tokens at byte/3,
+leaving 2,052 / 883 of their total ceilings for adaptive reasoning and variance.
+This estimate is deliberately more conservative than PR #15's byte/4, but it is
+still NOT the native Fable tokenizer. The unchanged complete sample is 4,146 compact
+bytes and 334 prose words; the continuity fixture has 383 prose words and also
+validates. A normal 350–500-word response should be roughly 4.5–7 KB depending on
+citations and continuity, substantially below the all-fields-at-maximum shape.
+This is an engineering expectation, not an observed new model result.
+
+Schema bounds do not constrain JSON indentation or force a global 500-word count;
+the explicit editorial allocation supplies that guidance. Extremely long IDs,
+Unicode/control characters and adversarial strings can exceed the representative
+byte/token estimate. Static proof cannot guarantee adaptive thinking duration or
+model quality. The next single paid verification must demonstrate both headroom
+and useful analysis; a merely parseable answer is insufficient.
+
+For completeness, a conservative upper bound for compact serialization of the new
+schema, allowing six encoded bytes per bounded string character plus JSON structure,
+is 98,493 rich / 75,227 light bytes. This overestimates enums/patterns and semantic
+restrictions but illustrates why a representative byte/token stress test cannot
+honestly be described as proof that every schema-valid string fits the token cap.
+
+## Offline guarantee for the test suite
+
+`tests/conftest.py` removes `OPENROUTER_API_KEY` and `MARKET_BRIEF_MODEL` for every
+test, replaces the synthesis module's `urlopen` with a failing stub, and makes
+`shutil.which("claude")` return nothing unless a test stubs it. A leaked key or an
+installed analyst CLI on a developer machine cannot make a paid call from the suite.
+Merging this branch touches nothing under `cloudflare/`, so the scheduler deploy
+workflow does not run and the emptied cron list is not restored by the merge.
+
+## Local verification and reproduction
+
+No Fable/OpenRouter generation, paid token-count request, workflow dispatch or push
+was made during investigation or implementation. Remote writes were limited to the
+owner-authorized Cloudflare trigger pause and temporary GitHub executor disablement.
+Other remote operations were read-only evidence retrieval. GitNexus had no indexed repo;
+the call chain was traced directly from the source.
+
+```sh
+.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest tests/test_synthesis_budget.py -q -s
+.venv/bin/ruff check src tests
+git diff --check
+```
+
+Tests exercise field overflows against the local AND factored transport schema,
+maximum-shape bytes and edition ordering, exact preservation of saved context,
+reasoning/healing diagnostics without private content, one HTTP attempt on timeout,
+HTTP failure and malformed transport, no retry on length/semantic rejection, and
+the existing grounding, continuity, render and presentation behavior.
+
+Observed final local result: **220 tests passed in 5.25s**; Ruff reported **All
+checks passed!**; `git diff --check` exited zero. The initial new regression suite
+against the old implementation had 12 failures and 3 passes, including failure
+of both maximum-shape budget checks and acceptance of excessive prose.
+
+To reconstruct the context comparison offline after downloading the artifact:
+
+```sh
+PYTHONPATH=src .venv/bin/python - <<'PY'
+import json
+from pathlib import Path
+from market_brief.synthesize import construct_prompt
+
+root = Path('/tmp/market-brief-34480006410')
+evidence_path = next(root.rglob('evidence.json'))
+packet = json.loads(evidence_path.read_text())
+context = json.loads(evidence_path.with_name('analyst_context.json').read_text())
+_, user = construct_prompt(packet, context=context)
+projected = json.loads(user)
+projected.pop('output_schema')
+assert projected == context
+print(len(user.encode()))  # 28250 at this implementation
+PY
+```
+
+Run `test_synthesis_budget.maximum_shape` with `PYTHONPATH=src:tests`
+on the old/new schemas for the serialized shape comparison.
+The old schema is available in `git show 1a7752d:src/market_brief/synthesize.py`;
+the before measurement was saved before editing. These operations never invoke a model.
+
+## One owner-authorized PREMARKET verification
+
+After owner review, explicit authorization and normal promotion of the final
+implementation commit, keep Cloudflare crons empty. Temporarily enable the GitHub
+executor for ONE manual PREMARKET dispatch in the actual premarket window, then
+disable it again after completion. Do not restore recurring triggers as part of
+that single-call authorization. Do not also run commissioning, experiments,
+probes that invoke synthesis, or recovery. No scheduling redesign is part of
+this patch. Do not label a later market phase PREMARKET to test it.
+
+Verify the job checks out the reviewed implementation and sends low effort, the
+7,000-token rich ceiling, strict schema, response-healing, parameter support required
+and no provider fallback. The ceilings are hard maximum-exposure limits, not expected
+usage targets. There must be exactly one application synthesis request. Preserve its
+evidence, context, narrative and metadata. No rerun on any failure.
+
+PASS requires ALL of (owner decision, 2026-09-10):
+
+1. Exactly one OpenRouter request occurs and the HTTP request succeeds.
+2. `finish_reason=stop`; the structured JSON parses.
+3. The full local schema validates, and grounding, reference and numeric validation pass.
+4. The PREMARKET analysis is approximately the intended 350–500 useful words.
+5. The brief renders and the dashboard publishes.
+6. Usage and cost metadata are recorded, and reasoning-token accounting is recorded
+   whenever OpenRouter supplies it.
+
+There is no completion-token or cost efficiency gate: an otherwise valid, useful brief
+is not failed for exceeding an efficiency target. Any generation or validation failure:
+archive the diagnostics and STOP. No retry, no ceiling change during the run, no
+silent repair or truncation, no other model. A failure requiring another paid run
+returns to the owner for separate authorization.

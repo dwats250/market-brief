@@ -43,6 +43,23 @@ def test_compact_payload_keeps_the_output_schema_in_context():
     assert banner["required"] == ["title", "label", "class", "evidence_ids", "limitation"]
 
 
+def test_wire_compaction_preserves_every_saved_context_value_and_hash():
+    from market_brief.synthesize import narrative_schema, transport_schema
+    packet = fixture_packet()
+    context = analyst_context(packet, edition_profile("PREMARKET"))
+    # Continuity is attached by the caller; it must survive just like current facts.
+    context["prior_state"] = {"status": "cold_start", "reason": "no accepted prior brief"}
+    context["comparisons"] = []
+    before = copy.deepcopy(context)
+    data = json.loads(construct_prompt(packet, context=context)[1])
+    schema = data.pop("output_schema")
+    assert data == before == context
+    assert data["evidence_hash"] == digest(packet)
+    assert schema == transport_schema(narrative_schema(context["edition"]))
+    # Inlined wire form with bound descriptions: larger than the local schema by design.
+    assert "maxLength" not in json.dumps(schema) and "$ref" not in json.dumps(schema)
+
+
 def test_full_normalized_packet_is_untouched_by_projection():
     packet = fixture_packet()
     before = copy.deepcopy(packet)

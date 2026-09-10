@@ -18,8 +18,13 @@ admitted evidence *and* in the supplied context), render, and deploy to Pages. M
   50DMA distance, paired Treasury table, collapsed sources.
 
 Measured on the fixture (2026-09-09): rich context 8.6–8.9 KB (~2.2k tokens) and light 8.1 KB before the
-7.2 KB output schema; fixture responses 3.9–4.3 KB. Output caps are 4,500 / 2,500 tokens because the last
-recorded live response used 2,794 completion tokens under the smaller v0 contract; tune on saved contexts.
+7.2 KB output schema; fixture responses 3.9–4.3 KB. Generation ceilings are 7,000 rich / 4,500 light tokens (hard
+exposure limits, not usage targets); the wire schema is inlined and bounds are enforced locally.
+
+**Hold since 2026-09-10.** Three scheduled editions failed at their completion ceilings or with an
+opaque HTTP 400 and published nothing. Cloudflare's cron list is empty and `schedule.yml` is disabled;
+branch `fix/synthesis-cost-containment` carries the bounded contract, sanitized diagnostics and an
+offline test guard. See `docs/SYNTHESIS_COST_CONTAINMENT.md` for the one authorized verification.
 
 ## Next
 

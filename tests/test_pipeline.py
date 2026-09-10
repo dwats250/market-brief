@@ -136,13 +136,21 @@ def test_synthesis_projection_is_deterministic():
     assert model_packet(packet) == model_packet(packet)
 
 
-def test_claude_is_single_isolated_tools_off_route(monkeypatch):
+@pytest.mark.parametrize("full", [False, True])
+def test_claude_is_single_isolated_tools_off_route(monkeypatch, full):
+    from market_brief.context import edition_profile
+    from market_brief.synthesize import NARRATIVE_SCHEMA, narrative_schema, transport_schema
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setattr("market_brief.synthesize.shutil.which", lambda _: "/usr/bin/claude")
     calls = []
 
     def runner(argv, **kwargs):
         calls.append(argv)
         assert kwargs["input"] and kwargs["timeout"] == 180
+        assert "output_schema" not in json.loads(kwargs["input"])
+        assert json.loads(argv[argv.index("--json-schema")+1]) == transport_schema(
+            NARRATIVE_SCHEMA if full else narrative_schema(edition_profile("PREMARKET")))
         assert argv[argv.index("--tools")+1] == ""
         assert "--safe-mode" in argv and "--no-session-persistence" in argv
         assert "--strict-mcp-config" in argv and "--continue" not in argv
@@ -150,9 +158,11 @@ def test_claude_is_single_isolated_tools_off_route(monkeypatch):
         assert "APCA_API_KEY_ID" not in kwargs["env"]
         return SimpleNamespace(returncode=0, stdout=json.dumps({"structured_output": narrative(),
                                   "modelUsage": {"claude-test": {}}}))
-    output, meta = synthesize(fixture_packet(), runner=runner)
+    output, meta = synthesize(fixture_packet(), runner=runner, full=full)
     assert output["mode"] == "SAMPLE" and len(calls) == 1
     assert meta["resolved_models"] == ["claude-test"]
+    from market_brief.evidence import digest
+    assert meta["schema_hash"] == digest(json.loads(calls[0][calls[0].index("--json-schema")+1]))
 
 
 def test_model_timeout_has_no_raw_exception(monkeypatch):

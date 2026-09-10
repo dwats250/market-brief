@@ -239,11 +239,15 @@ schema as well as semantic validation. The rich word target is still 350–500 a
 ALL prose, including watches and continuity; light targets remain edition-specific.
 Schema character bounds are backstops, not targets or a global word-count constraint.
 No source, evidence row, timestamp, coverage caveat, comparison or prior state is
-removed. Repeated schema definitions use `$defs`. OpenRouter retains a factored
-user-message copy because the earlier Azure omission experiment failed banner
-schema validation despite strict response_format. The isolated CLI receives the
-schema only through `--json-schema`; its user message has no duplicate. Both routes
-record a schema hash, and compact wire JSON preserves saved evidence/continuity hashes.
+removed. Two forms of one contract exist: the local schema with every bound, used
+by `validate_narrative`, and the wire schema from `transport_schema`, restricted to
+Anthropic's documented structured-output subset (types, required, enums, local
+`$ref` under `definitions`, `minItems` 0/1) with every bound restated as a field
+description. Bounds are enforced after generation; the provider is not relied on
+for them. OpenRouter retains the wire copy in the user message because the earlier
+Azure omission experiment failed banner validation despite strict response_format.
+The isolated CLI receives the wire schema only through `--json-schema`. Both routes
+record the wire schema hash, and compact wire JSON preserves saved evidence/continuity hashes.
 
 `tests/test_synthesis_budget.py` fills all arrays and prose fields with representative
 identifiers: rich is 10,414 compact bytes, light 7,921. Byte/3 estimates occupy about

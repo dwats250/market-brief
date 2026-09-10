@@ -27,6 +27,13 @@ def test_openrouter_structured_transport_preserves_validator_contract():
     assert payload["reasoning"] == {"exclude": True, "effort": "low"}
     assert payload["plugins"] == [{"id": "response-healing"}]
     assert payload["response_format"]["type"] == "json_schema"
+    assert payload["response_format"]["json_schema"]["strict"] is True
+    # Fable 5.1 endpoints advertise no sampling parameters; with require_parameters a stray
+    # temperature could leave no eligible provider. The wire schema carries only documented keywords.
+    assert "temperature" not in payload and "top_p" not in payload
+    wire = json.dumps(payload["response_format"]["json_schema"]["schema"])
+    assert "maxLength" not in wire and "maxItems" not in wire and "uniqueItems" not in wire
+    assert payload["provider"] == {"allow_fallbacks": False, "require_parameters": True}
     assert output["mode"] == "SAMPLE"
     assert metadata["provider"] == "OpenRouter"
     assert metadata["usage"]["total_tokens"] == 30

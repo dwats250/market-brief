@@ -95,28 +95,101 @@ def test_all_schema_strings_are_bounded_including_reference_ids():
     visit(narrative_schema(edition_profile("PREMARKET")))
 
 
-def test_every_prose_and_identifier_bound_is_enforced_in_transport_schema():
-    schema = narrative_schema(edition_profile("PREMARKET"))
-    value = maximum_shape(schema)
-    transport = Draft202012Validator(compact_schema(schema))
+# Anthropic's documented structured-output subset (2026-09-10): no minLength/maxLength, no array
+# constraints beyond minItems 0 or 1, no uniqueItems/pattern/oneOf. Unsupported keywords are a 400.
+PROVIDER_KEYWORDS = {"type", "properties", "required", "additionalProperties", "enum", "const",
+                     "anyOf", "$ref", "definitions", "items", "minItems", "description"}
 
-    def visit(node, current):
+
+def keywords(node, found=None):
+    found = set() if found is None else found
+    if isinstance(node, dict):
+        for key, value in node.items():
+            found.add(key)
+            if key == "minItems":
+                assert value in (0, 1)
+            if key not in ("properties", "definitions"):
+                keywords(value, found)
+            else:
+                for child in value.values():
+                    keywords(child, found)
+    elif isinstance(node, list):
+        for item in node:
+            keywords(item, found)
+    return found
+
+
+@pytest.mark.parametrize("checkpoint", ["PREMARKET", "OPEN_30M"])
+def test_transport_schema_uses_only_documented_provider_keywords(checkpoint):
+    from market_brief.synthesize import NARRATIVE_SCHEMA, transport_schema
+    for local in (narrative_schema(edition_profile(checkpoint)), NARRATIVE_SCHEMA):
+        transport = transport_schema(local)
+        Draft202012Validator.check_schema(transport)
+        assert keywords(transport) <= PROVIDER_KEYWORDS
+        assert "$defs" not in json.dumps(transport) and "oneOf" not in json.dumps(transport)
+        # Same shape: a complete bounded response satisfies both contracts.
+        Draft202012Validator(transport).validate(maximum_shape(local))
+
+
+def test_every_local_bound_is_described_in_transport_and_enforced_only_locally():
+    """Cost safety never depends on the provider honoring a bound: the model reads it in a
+    description, the local validator enforces it, and the transport schema alone would accept excess."""
+    from market_brief.synthesize import transport_schema
+    local = narrative_schema(edition_profile("PREMARKET"))
+    transport = transport_schema(local)
+    value = maximum_shape(local)
+    lenient = Draft202012Validator(transport)
+    strict = Draft202012Validator(local)
+    checked = 0
+
+    def resolve(node):
+        return transport["definitions"][node["$ref"].split("/")[-1]] if "$ref" in node else node
+
+    def visit(node, current, wire):
+        nonlocal checked
+        wire = resolve(wire)
         if isinstance(current, dict):
             for key, child in node["properties"].items():
+                visit(child, current[key], wire["properties"][key])
+                current_child = current[key]
                 if "maxLength" in child:
-                    original = current[key]
+                    assert str(child["maxLength"]) in wire["properties"][key].get("description", "")
                     current[key] = "x" * (child["maxLength"] + 1)
-                    assert not transport.is_valid(value)
-                    current[key] = original
-                else:
-                    visit(child, current[key])
+                    assert not strict.is_valid(value) and lenient.is_valid(value)
+                    current[key] = current_child
+                    checked += 1
         elif isinstance(current, list):
+            if "maxItems" in node:
+                assert str(node["maxItems"]) in wire.get("description", "")
+                current.append(current[0] if current else maximum_shape(dict(node["items"], definitions=local)))
+                assert not strict.is_valid(value) and lenient.is_valid(value)
+                current.pop()
+                checked += 1
             for index, child in enumerate(current):
                 if "maxLength" in node["items"]:
                     current[index] = "x" * (node["items"]["maxLength"] + 1)
-                    assert not transport.is_valid(value)
+                    assert not strict.is_valid(value) and lenient.is_valid(value)
                     current[index] = child
+                    checked += 1
                 else:
-                    visit(node["items"], child)
-    visit(schema, value)
-    assert transport.is_valid(value)
+                    visit(node["items"], child, resolve(wire)["items"])
+    visit(local, value, transport)
+    assert strict.is_valid(value) and lenient.is_valid(value)
+    assert checked >= 40
+
+
+def test_watch_horizon_and_nullable_carried_id_survive_transport_translation():
+    from market_brief.synthesize import transport_schema
+    local = narrative_schema(edition_profile("PREMARKET"))
+    transport = transport_schema(local)
+    horizon = transport["properties"]["watches"]["items"]["properties"]["horizon"]
+    assert horizon["type"] == "string" and "EVENT(" in horizon["description"] and "NEXT_BRIEF" in horizon["description"]
+    carried = transport["properties"]["relationships"]["items"]["properties"]["carried_id"]
+    assert {"type": "null"} in carried["anyOf"] and "type" not in carried
+    value = maximum_shape(local)
+    value["relationships"][0]["carried_id"] = None
+    value["watches"][0]["horizon"] = "EVENT(fomc)"
+    assert Draft202012Validator(transport).is_valid(value)
+    value["watches"][0]["horizon"] = "TOMORROW"
+    assert Draft202012Validator(transport).is_valid(value)  # transport cannot express the pattern
+    assert not Draft202012Validator(local).is_valid(value)  # the local contract still rejects it

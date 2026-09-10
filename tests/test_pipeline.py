@@ -139,7 +139,7 @@ def test_synthesis_projection_is_deterministic():
 @pytest.mark.parametrize("full", [False, True])
 def test_claude_is_single_isolated_tools_off_route(monkeypatch, full):
     from market_brief.context import edition_profile
-    from market_brief.synthesize import NARRATIVE_SCHEMA, compact_schema, narrative_schema
+    from market_brief.synthesize import NARRATIVE_SCHEMA, narrative_schema, transport_schema
 
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setattr("market_brief.synthesize.shutil.which", lambda _: "/usr/bin/claude")
@@ -149,7 +149,7 @@ def test_claude_is_single_isolated_tools_off_route(monkeypatch, full):
         calls.append(argv)
         assert kwargs["input"] and kwargs["timeout"] == 180
         assert "output_schema" not in json.loads(kwargs["input"])
-        assert json.loads(argv[argv.index("--json-schema")+1]) == compact_schema(
+        assert json.loads(argv[argv.index("--json-schema")+1]) == transport_schema(
             NARRATIVE_SCHEMA if full else narrative_schema(edition_profile("PREMARKET")))
         assert argv[argv.index("--tools")+1] == ""
         assert "--safe-mode" in argv and "--no-session-persistence" in argv

@@ -132,6 +132,71 @@ requested parameter, the request fails before generation at zero model cost. Tha
 is an acceptable fail-closed outcome for the one verification, and the diagnostic
 above will now say so.
 
+## Schema compatibility adjudication (second pass, 2026-09-10)
+
+Anthropic's current structured-output documentation lists the supported subset:
+basic types, `enum`, `const`, `anyOf`/`allOf`, local `$ref`/`definitions`,
+`required`, `additionalProperties: false`, listed string formats and array
+`minItems` of 0 or 1. It lists as unsupported, with a **400 error**: string
+`minLength`/`maxLength`, array constraints beyond `minItems` 0/1, numeric bounds,
+recursion. `uniqueItems`, `pattern` (heading present, details truncated) and
+`oneOf` are not in the supported list. Anthropic's own SDKs strip unsupported
+constraints, move them into descriptions, and validate locally against the
+original schema. OpenRouter's structured-output documentation says providers
+variously "guarantee schema-conforming output", "translate your schema" or
+"treat it as a strong hint", and defers to provider documentation for the
+allowed subset; it does not say whether it strips unsupported keywords.
+
+What the repository history proves: the origin/main schema already carried
+`maxLength`, `minLength`, `maxItems` up to 12, `uniqueItems`, `pattern` and
+`oneOf`, and the Azure route returned HTTP 200 for runs 34280109434, 34480006410
+and 34483191122. OPEN_1M and OPEN_30M used byte-identical light schemas at the same
+revision; one returned 200 and one 400. **Deterministic rejection of these keywords
+on this route is therefore falsified.** Enforcement is not proven either: run
+34278983083 returned `finish=stop` output that failed local banner validation, which
+is consistent with shape-only enforcement but does not identify the violated bound.
+Verdict: **cannot be proven statically**; the design no longer depends on it.
+
+Design change. `transport_schema` derives the wire contract from the local one:
+types, `required`, `additionalProperties: false`, `enum`, `const`, local
+`$ref` under `definitions` (the documented name), `minItems` only when 0 or 1,
+`anyOf` for the nullable `carried_id`, and a plain string for the watch horizon.
+Every removed bound becomes a `description` ("At most 240 characters, non-empty.",
+"At most 3 items, no duplicates.") that the model reads in both the user-message
+copy and `response_format`. `validate_narrative` still enforces the full bounded
+contract, including the horizon pattern and admitted event IDs, after generation,
+and a violation is fatal with no retry. Tests assert the wire schema uses only the
+documented keyword set, that every local bound appears in a description, that the
+wire schema alone would accept the excess (so no test can mistake it for
+enforcement), and that the local validator rejects it.
+
+`temperature=0` is removed from the request. No Fable 5.1 endpoint advertises
+`temperature` (OpenRouter's read-only endpoint listing, 2026-09-10), and Anthropic
+rejects sampling parameters on this model; with `require_parameters: true` a stray
+sampling parameter could leave no eligible provider.
+
+Consequence for cost: the provider-side "adversarial legal maximum" is now
+explicitly unbounded except by `max_tokens`; that ceiling is the only financial
+exposure limit, as it always was in practice. Editorial size is governed by the
+prompt, the descriptions and post-generation rejection.
+
+## Provider eligibility under require_parameters
+
+OpenRouter's public endpoint listing for `anthropic/claude-fable-5.1` on
+2026-09-10 shows four endpoints. Azure, Anthropic and Amazon Bedrock advertise
+`max_tokens`, `reasoning`, `reasoning_effort`, `response_format`,
+`structured_outputs`, `stop`, `tools`, `verbosity`; Google Vertex lacks
+`structured_outputs`. With the request's parameters (`max_tokens`,
+`response_format`, `reasoning`) three endpoints are eligible and Vertex is
+excluded. `allow_fallbacks: false` means the first chosen eligible endpoint is
+the only one tried. Advertised support is not proof of keyword-level schema
+enforcement; it filters out a provider that cannot take the parameter at all.
+
+The OPEN_30M 400 at origin/main ran with default routing and no
+`require_parameters`. A route to an endpoint without structured-output support
+is one consistent, unproven explanation among others; the recorded error body will
+now settle any repeat. `require_parameters: true` is kept.
+
 ## Why PR #15 was insufficient
 
 [PR #15](https://github.com/dwats250/market-brief/pull/15) assumed the requested
@@ -226,14 +291,14 @@ claims, never missing support; the prompt says so explicitly.
 
 | Measurement | Before | After |
 |---|---:|---:|
-| Archived PREMARKET user message | 32,526 bytes | 28,250 bytes |
-| Archived OPEN_1M user message, OpenRouter | 27,310 bytes | 23,485 bytes |
+| Archived PREMARKET user message | 32,526 bytes | 29,044 bytes |
+| Archived OPEN_1M user message, OpenRouter | 27,310 bytes | 24,279 bytes |
 | Same PREMARKET / OPEN_1M evidence, CLI user message | Schema duplicated | 23,312 / 18,549 bytes |
 | Saved context, canonical encoding | 25,346 bytes | Unchanged |
-| Schema embedded in user message | 7,161 bytes | 4,921 bytes |
+| Schema embedded in user message | 7,161 bytes | 5,715 bytes (wire form with bound descriptions) |
 | System prompt | 7,646 bytes | 8,849 bytes |
 | System + user + transport schema, before envelope escaping | 47,333 bytes | 42,020 bytes |
-| Schema maximum prose characters, rich | 62,660 | 6,180 |
+| Local contract maximum prose characters, rich | 62,660 | 6,180 (enforced after generation) |
 | Maximum-shape rich JSON, representative IDs | 70,979 bytes | 10,414 bytes |
 | Maximum-shape light JSON, representative IDs | 60,161 bytes | 7,921 bytes |
 | New rich cold-start stress shape, no updates/changes | — | 8,595 bytes |
@@ -317,7 +382,7 @@ reasoning/healing diagnostics without private content, one HTTP attempt on timeo
 HTTP failure and malformed transport, no retry on length/semantic rejection, and
 the existing grounding, continuity, render and presentation behavior.
 
-Observed final local result: **217 tests passed in 4.75s**; Ruff reported **All
+Observed final local result: **220 tests passed in 5.25s**; Ruff reported **All
 checks passed!**; `git diff --check` exited zero. The initial new regression suite
 against the old implementation had 12 failures and 3 passes, including failure
 of both maximum-shape budget checks and acceptance of excessive prose.

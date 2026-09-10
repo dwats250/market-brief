@@ -107,14 +107,14 @@ def compact_json(value):
 
 
 def compact_schema(schema):
-    """Share repeated definitions; the context and transport still carry the SAME contract."""
+    """Share repeated definitions under `definitions`, the reference form Anthropic documents."""
     definitions = {"evidence_refs": REFS, "section_paragraph": SECTION_PARAGRAPH}
 
     def visit(value, replace=True):
         if replace:
             for name, definition in definitions.items():
                 if value == definition:
-                    return {"$ref": f"#/$defs/{name}"}
+                    return {"$ref": f"#/definitions/{name}"}
         if isinstance(value, dict):
             return {key: visit(item) for key, item in value.items()}
         if isinstance(value, list):
@@ -122,8 +122,65 @@ def compact_schema(schema):
         return value
 
     result = visit(schema)
-    result["$defs"] = {name: visit(value, replace=False) for name, value in definitions.items()}
+    result["definitions"] = {name: visit(value, replace=False) for name, value in definitions.items()}
     return result
+
+
+# Anthropic's structured-output subset (documented 2026-09-10) rejects string length, array
+# length beyond minItems 0/1, uniqueItems, pattern and oneOf with HTTP 400. Whether OpenRouter
+# strips them before Azure is not documented; three production requests carrying them returned
+# 200, but nothing shows they were enforced. So the wire contract carries only documented
+# keywords, every bound becomes a description the model can read, and `validate_narrative`
+# enforces the full local contract after generation. Cost exposure is bounded by max_tokens alone.
+UNSUPPORTED_WIRE_KEYWORDS = ("minLength", "maxLength", "maxItems", "uniqueItems", "pattern")
+
+
+def transport_schema(schema):
+    """The provider-compatible shape of the same contract: types, required, enums, references."""
+
+    def describe(node):
+        notes = []
+        if "maxLength" in node:
+            notes.append(f"At most {node['maxLength']} characters"
+                         + (", non-empty" if node.get("minLength") else "") + ".")
+        if "maxItems" in node:
+            least = node.get("minItems", 0)
+            notes.append(f"At most {node['maxItems']} items" + (f", at least {least}" if least > 1 else "")
+                         + (", no duplicates" if node.get("uniqueItems") else "") + ".")
+        if "pattern" in node:
+            notes.append(f"Must match {node['pattern']}.")
+        return " ".join(notes)
+
+    def visit(node):
+        if isinstance(node, list):
+            return [visit(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        if "oneOf" in node:
+            # The watch horizon: fixed names or EVENT(<admitted id>); the local validator checks both.
+            names = [name for branch in node["oneOf"] for name in branch.get("enum", [])]
+            event = any("pattern" in branch for branch in node["oneOf"])
+            return {"type": "string", "description": "Exactly one of " + ", ".join(names)
+                    + (", or EVENT(<admitted event id>)" if event else "") + "."}
+        result = {}
+        for key, value in node.items():
+            if key in UNSUPPORTED_WIRE_KEYWORDS or (key == "minItems" and value > 1):
+                continue
+            if key == "type" and isinstance(value, list):
+                continue
+            result[key] = visit(value) if key not in ("enum", "const", "required") else value
+        note = describe(node)
+        if note:
+            result["description"] = (result.get("description", "") + " " + note).strip()
+        if isinstance(node.get("type"), list):
+            description = result.pop("description", None)
+            result = {"anyOf": [dict(result, type=name) if name != "null" else {"type": "null"}
+                                for name in node["type"]]}
+            if description:
+                result["description"] = description
+        return result
+
+    return visit(compact_schema(schema))
 
 
 def analyst_model(config=None, environ=None):
@@ -233,7 +290,7 @@ def construct_prompt(packet, full=False, context=None, include_schema=True):
         limit = min(120_000, profile["input_limit_bytes"])
     if include_schema:
         schema = NARRATIVE_SCHEMA if full else narrative_schema(context.get("edition") or profile)
-        projected["output_schema"] = compact_schema(schema)
+        projected["output_schema"] = transport_schema(schema)
     user = compact_json(projected)
     size = len(user.encode())
     sections = {key: len(compact_json(value).encode()) for key, value in projected.items()}
@@ -407,9 +464,11 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     system, user = construct_prompt(packet, full=full, context=context)
     profile = edition_profile(packet["run"]["checkpoint"])
     analyst = analyst_model()
-    schema = compact_schema(NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile))
+    schema = transport_schema(NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile))
     requested_at = datetime.now(timezone.utc).isoformat()
-    payload = dict(model=analyst["model"], temperature=0, max_tokens=profile["max_output_tokens"],
+    # No sampling parameters: Fable 5.1 endpoints advertise none, and require_parameters would
+    # otherwise leave no eligible provider. Bounds are enforced locally, not by the wire schema.
+    payload = dict(model=analyst["model"], max_tokens=profile["max_output_tokens"],
                    messages=[{"role": "system", "content": system},
                              {"role": "user", "content": user}],
                    plugins=[{"id": "response-healing"}],
@@ -466,7 +525,7 @@ def synthesize(packet, runner=subprocess.run, full=False, context=None):
             "--mcp-config", '{"mcpServers":{}}', "--disable-slash-commands",
             "--no-session-persistence", "--setting-sources", "", "--output-format", "json",
             "--model", analyst["cli_model"], "--system-prompt", system,
-            "--json-schema", compact_json(compact_schema(schema))]
+            "--json-schema", compact_json(transport_schema(schema))]
     # Retain existing auth location, not unrelated provider credentials or project environment.
     env = {k: v for k, v in os.environ.items() if k in
            {"HOME", "PATH", "LANG", "USER", "SHELL", "XDG_CONFIG_HOME", "SSL_CERT_FILE"}}
@@ -491,6 +550,6 @@ def synthesize(packet, runner=subprocess.run, full=False, context=None):
     models = list(envelope.get("modelUsage", {}).keys())
     return validated, dict(route="claude-cli", requested_model=analyst["cli_model"], profile=profile["profile"],
                            resolved_models=models or ["not exposed"],
-                           schema_hash=digest(compact_schema(schema)),
+                           schema_hash=digest(transport_schema(schema)),
                            prompt_hash=digest(dict(system=system, user=user)),
                            evidence_hash=digest(packet))

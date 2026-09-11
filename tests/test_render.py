@@ -11,6 +11,8 @@ class Page(HTMLParser):
         self.scripts = []
         self.ids = set()
         self.refs = []
+        self.hidden = 0
+        self.visible = []  # text outside details, style and script: what a reader sees at rest
 
     def handle_starttag(self, tag, attrs):
         values = dict(attrs)
@@ -20,6 +22,16 @@ class Page(HTMLParser):
             self.ids.add(values["id"])
         if tag == "a" and values.get("href", "").startswith("#"):
             self.refs.append(values["href"][1:])
+        if tag in ("details", "style", "script"):
+            self.hidden += 1
+
+    def handle_endtag(self, tag):
+        if tag in ("details", "style", "script"):
+            self.hidden -= 1
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.visible.append(data)
 
 
 def test_markdown_html_same_facts_mode_and_literal_halt():
@@ -36,7 +48,7 @@ def test_markdown_html_same_facts_mode_and_literal_halt():
     assert 'id="theme-choice"' in page
     assert page.index("What matters next") < page.index("Equity structure") < page.index("Macro &amp; rates")
     assert "direction-positive" in page and "direction-negative" in page
-    assert 'class="number direction-neutral">3.86 % yield' in page
+    assert 'class="number primary direction-neutral">3.86 % yield' in page
 
 
 def test_model_html_is_escaped_in_both_formats():
@@ -116,3 +128,38 @@ def test_render_deemphasizes_provenance_and_epistemic_boilerplate():
     assert "Alternative:" not in page
     assert "Generated UTC:" in page
     assert "2026-09-08T" in page
+
+
+def test_citations_are_quiet_markers_and_the_evidence_chain_is_intact():
+    """One closed marker per analytical block, no per-row link words, every cited ID anchored."""
+    packet, value = fixture_packet(), narrative()
+    _, page = render(packet, value)
+    parsed = Page()
+    parsed.feed(page)
+    assert '<a class="cite"' not in page
+    body = page.split("<body>", 1)[1].split('<details class="drawer"', 1)[0]
+    assert body.count('<details class="cite">') >= 1 + len(value["summary"]) + len(value["watches"])
+    visible = " ".join(parsed.visible)
+    assert ">evidence</a>" not in page  # the per-row and per-paragraph link word is gone
+    assert visible.count("open the evidence ledger") == page.count("<table")  # one affordance per table
+    cited = set(value["banner"]["evidence_ids"]) | set(value["character"]["evidence_ids"])
+    for record in (*value["summary"], *value["watches"], *value["attention"],
+                   *(p for key in value["sections"] for p in value["sections"][key])):
+        cited |= set(record.get("evidence_ids", []))
+    from market_brief.evidence import evidence_catalog
+    catalog = evidence_catalog(packet)
+    assert {f"evidence-{i}" for i in cited if i in catalog} <= parsed.ids
+    assert {f"evidence-{i}" for i in catalog} <= parsed.ids  # every admitted usable row keeps its anchor
+    assert "evidence-ledger" in parsed.ids and set(parsed.refs) <= parsed.ids
+    assert 'data-session-date="2026-09-08"' in page and 'data-checkpoint="PREMARKET"' in page
+
+
+def test_top_of_page_and_continuity_copy_read_as_product():
+    packet, value = fixture_packet(), narrative()
+    _, page = render(packet, value)
+    top = page.split("<h1>", 1)[1].split("<section", 1)[0]
+    assert '<span class="pill">' in top and value["character"]["text"][:30] in top
+    assert value["banner"]["limitation"][:30] not in top  # ordinary caveat lives with the basis line
+    assert page.count('<div class="figure">') == 3
+    assert "premarket: absent" not in page.split('<details class="drawer"', 1)[0]
+    assert "baseline read" in page

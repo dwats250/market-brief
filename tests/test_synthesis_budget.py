@@ -74,7 +74,7 @@ def test_rich_schema_rejects_excess_prose_without_relying_on_prompt(path):
     target = value
     for key in path[:-1]:
         target = target[key]
-    target[path[-1]] = "x" * 501
+    target[path[-1]] = "x" * 1001  # past every acceptance backstop (twice the largest 360 target)
     with pytest.raises(ValueError, match="malformed narrative"):
         validate_narrative(value, fixture_packet())
 

@@ -31,7 +31,14 @@ from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_js
 from .metrics import annotate_magnitude, derive
 from .render import render
 from .schedule import CHECKPOINTS, checkpoint_session, current_phase, due, scheduled_checkpoint
-from .synthesize import NARRATIVE_SCHEMA, construct_prompt, synthesize, validate_narrative
+from .synthesize import (
+    NARRATIVE_SCHEMA,
+    construct_prompt,
+    editorial_notes,
+    narrative_schema,
+    synthesize,
+    validate_narrative,
+)
 
 # Assets (prompt, config, templates) come from ROOT; generated state lives under RUN_ROOT.
 RUN_ROOT = ROOT
@@ -227,6 +234,11 @@ def run(args):
         else:
             print("Evidence collected; requesting one isolated structured synthesis.", flush=True)
             narrative, model = synthesize(packet, full=full, context=context)
+        notes = editorial_notes(narrative, NARRATIVE_SCHEMA if full else narrative_schema(context["edition"]))
+        metadata["editorial"] = notes
+        for note in notes:
+            print(f"Editorial overshoot kept: {note['path']} {note['keyword']} {note['actual']} > {note['limit']}",
+                  flush=True)
         markdown, page = render(packet, narrative, context)
         (folder / "brief.md").write_text(markdown)
         (folder / "brief.html").write_text(page)
@@ -261,6 +273,10 @@ def run(args):
             metadata["continuity"]["advanced"] = True
     except ValueError as exc:
         metadata.update(validation="FAILED", error=str(exc))
+        rejected = getattr(exc, "narrative", None)
+        if rejected is not None:
+            # The generated output is the diagnostic; keep it beside the evidence it failed against.
+            write_json(folder / "narrative.rejected.json", rejected)
         print(f"Brief not accepted: {exc}. Diagnostic: {folder}", file=sys.stderr)
         return 2
     finally:

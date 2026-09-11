@@ -350,10 +350,33 @@ def evaluability(watch, prior, comparisons):
 
 # --- the analyst's view --------------------------------------------------------------------------
 
-def continuity_context(prior, comparisons):
-    """Prior state as bounded hypotheses plus deterministic comparisons, separately namespaced."""
+COMPARISON_FIELDS = ("id", "anchor", "topic", "metric", "unit", "status", "prior_ref", "current_ref",
+                     "prior_value", "current_value", "delta", "prior_observed_at", "current_observed_at")
+
+
+def _citable_idents(prior, comparisons):
+    """Prior identities a light edition may cite: carried-record dependencies and changed measurements."""
+    idents = set()
+    for record in [*prior["watches"], *prior["relationships"]]:
+        idents |= set(record.get("evidence_refs", []))
+    idents |= {c["prior_ref"].split(":", 1)[1] for c in comparisons if c["status"] == "changed"}
+    return idents
+
+
+def continuity_context(prior, comparisons, profile=None):
+    """Prior state as bounded hypotheses plus deterministic comparisons, separately namespaced.
+
+    A "changed" (light) profile keeps every comparison's identity and status but supplies the full
+    record only for `changed` comparisons, the only ones a narrative may interpret, and supplies prior
+    snapshots only for identities a carried record or a changed comparison depends on. Evaluability
+    is computed from the complete comparison list before that projection. Rich profiles are unchanged.
+    """
     if prior["status"] != "available":
         return dict(prior_state=dict(status="cold_start", reason=prior["reason"]), comparisons=[])
+    bounded = bool(profile and profile.get("context") == "changed")
+    citable = _citable_idents(prior, comparisons) if bounded else None
+    changed_refs = {c["prior_ref"] for c in comparisons if c["status"] == "changed"}
+    observed = set()
     watches = []
     for watch in prior["watches"]:
         watches.append(dict(id=watch["id"], lifecycle=watch["lifecycle"],
@@ -367,6 +390,13 @@ def continuity_context(prior, comparisons):
     snapshots = []
     for anchor, rows in prior["snapshots"].items():
         for ident, row in rows.items():
+            if citable is not None:
+                # Anchors are visited in order; a later anchor's identical observation adds nothing
+                # unless it is the prior side of a changed comparison, which stays citable.
+                observation = (ident, row["value"], row["observed_at"])
+                if ident not in citable or (observation in observed and f"{anchor}:{ident}" not in changed_refs):
+                    continue
+                observed.add(observation)
             snapshots.append(dict(ref=f"{anchor}:{ident}", topic=row["topic"], metric=row["metric"],
                                   value=row["value"], unit=row["unit"], observed_at=row["observed_at"]))
     prior_state = {"status": "available", "class": "INTERPRETATION", "note": (
@@ -376,11 +406,19 @@ def continuity_context(prior, comparisons):
         "relationships": relationships, "closing_character": prior["closing_character"], "snapshots": snapshots}
     if prior.get("reason"):
         prior_state["limitation"] = prior["reason"]
-    compact = [{key: c[key] for key in ("id", "anchor", "topic", "metric", "unit", "status", "prior_ref",
-                                       "current_ref", "prior_value", "current_value", "delta",
-                                       "prior_observed_at", "current_observed_at")}
-               for c in comparisons]
-    return dict(prior_state=prior_state, comparisons=compact)
+    if not bounded:
+        return dict(prior_state=prior_state,
+                    comparisons=[{key: c[key] for key in COMPARISON_FIELDS} for c in comparisons])
+    compact = [{key: c[key] for key in COMPARISON_FIELDS} if c["status"] == "changed"
+               else dict(id=c["id"], status=c["status"]) for c in comparisons]
+    counts = {}
+    for c in comparisons:
+        counts[c["status"]] = counts.get(c["status"], 0) + 1
+    summary = dict(mode="changed", counts=counts, note=(
+        "Only changed comparisons carry values; the others are listed by id and status because "
+        "they cannot be interpreted as changes. Prior snapshots cover carried-record dependencies "
+        "and changed measurements only, once per distinct observation."))
+    return dict(prior_state=prior_state, comparisons=compact, comparison_summary=summary)
 
 
 def prior_values(context):

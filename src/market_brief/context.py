@@ -11,6 +11,9 @@ from .evidence import ROOT, digest, evidence_catalog, model_packet, read_json
 
 CONTEXT_SCHEMA = "market-brief.analyst-context.v1"
 ANCHOR_TOPICS = ("SPY", "QQQ", "GLD", "US 2Y", "US 5Y", "US 10Y")
+# Metrics that describe the current window; large dated background (20-session returns, 50DMA
+# distances, spreads) is kept only when an anchor, a carried record, a trigger, or leadership cites it.
+CURRENT_METRICS = {"daily return", "premarket return", "intraday return", "daily yield change"}
 
 
 def editions_config():
@@ -53,7 +56,7 @@ def compact_fact(row):
 
 def _selected_ids(packet, catalog, profile, comparisons, prior):
     """Deterministic ranking for a light edition: anchors, cited dependencies, changed facts,
-    leadership extremes, and material opposing evidence stay; the rest is an explicit gap."""
+    leadership extremes, and material current-window evidence stay; the rest is an explicit gap."""
     keep = {ident for ident, row in catalog.items() if row.get("topic") in ANCHOR_TOPICS}
     for trigger in packet.get("attention", []):
         keep |= set(trigger.get("evidence_ids", []))
@@ -66,7 +69,8 @@ def _selected_ids(packet, catalog, profile, comparisons, prior):
     leader_topics = {row["topic"] for rows in packet.get("sector_leadership", {}).values() for row in rows}
     keep |= leaders | {ident for ident, row in catalog.items() if row.get("topic") in leader_topics
                        and row.get("metric") in {"daily return", "premarket return", "intraday return"}}
-    keep |= {ident for ident, row in catalog.items() if row.get("magnitude") == "LARGE"}
+    keep |= {ident for ident, row in catalog.items()
+             if row.get("magnitude") == "LARGE" and row.get("metric") in CURRENT_METRICS}
     return keep
 
 
@@ -86,7 +90,7 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
         omitted = sorted(ident for ident in valued if ident not in keep)
         selection = dict(profile=profile["profile"], mode="changed", omitted_count=len(omitted),
                          omitted_topics=sorted({valued[i]["topic"] for i in omitted}),
-                         note="Omitted rows are unchanged non-anchor background; they remain in the full "
+                         note="Omitted rows are uncited non-anchor background; they remain in the full "
                               "evidence record and the rendered tables but cannot be cited here.")
         valued = {ident: row for ident, row in valued.items() if ident in keep}
     groups, baselines = {}, {}

@@ -203,7 +203,8 @@ def run(args):
     evidence_hash = digest(packet)
     # The analyst reads exactly this saved projection; the validator checks references against it.
     profile = edition_profile(checkpoint)
-    context = dict(analyst_context(packet, profile, comparisons, prior), **continuity_context(prior, comparisons))
+    context = dict(analyst_context(packet, profile, comparisons, prior),
+                   **continuity_context(prior, comparisons, profile))
     write_json(folder / "analyst_context.json", context)
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                               capture_output=True, text=True, check=False).stdout.strip()

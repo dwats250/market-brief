@@ -47,7 +47,8 @@ def accept(packet, bundle, value=None):
     packet["continuity"] = dict(status=prior["status"], reason=prior["reason"], anchors=prior["anchors"],
                                 comparisons=comparisons)
     profile = edition_profile(packet["run"]["checkpoint"])
-    context = dict(analyst_context(packet, profile, comparisons, prior), **continuity_context(prior, comparisons))
+    context = dict(analyst_context(packet, profile, comparisons, prior),
+                   **continuity_context(prior, comparisons, profile))
     value = trimmed(value or narrative(), profile)
     validate_narrative(value, packet, context)
     state = edition_state(packet, value, prior, comparisons, digest(context), digest(value), "test")
@@ -273,7 +274,8 @@ def carried_setup():
     prior = admit_prior_state(bundle, afternoon)
     comparisons = compare_all(prior, afternoon)
     profile = edition_profile("AFTERNOON")
-    context = dict(analyst_context(afternoon, profile, comparisons, prior), **continuity_context(prior, comparisons))
+    context = dict(analyst_context(afternoon, profile, comparisons, prior),
+                   **continuity_context(prior, comparisons, profile))
     return afternoon, context, bundle
 
 

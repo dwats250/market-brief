@@ -233,6 +233,27 @@ def test_numeric_claims_beside_labels_remain_fatal(text):
         validate_narrative(value, fixture_packet())
 
 
+# Run 34556169474 was rejected on plural "50DMAs" in the title, the equities paragraph and the character.
+# Singular, plural and abbreviated spellings of one authorised label are one label.
+@pytest.mark.parametrize("text", [
+    "Index closes sit on their 50DMAs.",
+    "SPY and QQQ remain below their 50DMAs.",
+    "XLF and XLV also closed below their 50DMAs. A tape where defensives lead is not confirmed.",
+    "Benchmarks finished at or just below their 50DMAs, with energy the lone leader.",
+    "SPY holds its SMA50 while QQQ sits under the 50-SMA.",
+    "NVDA reclaimed its MA50 as the 50 SMA flattened.",
+    "The 20d return favours energy while the 50d trend is flat.",
+    "The 2Ys and 10Ys drifted while the 5d read stayed thin.",
+])
+def test_plural_and_abbreviated_label_forms_are_accepted(text):
+    value = narrative()
+    value["banner"]["title"] = text.split(".")[0]
+    value["sections"]["equities"][0]["text"] = text
+    value["character"]["text"] = text
+    assert validate_narrative(value, fixture_packet())
+    assert not re.search(r"\d", ALLOWED_LABELS.sub("", text)), text
+
+
 def test_every_label_the_prompt_names_is_accepted():
     from test_contract import PROMPT
     numbers = PROMPT.split("NUMBERS:", 1)[1].split("\n\n", 1)[0]

@@ -222,12 +222,36 @@ def test_grammatical_variants_of_configured_labels_are_accepted(text):
     "The session on 2026-09-10 closed lower.",
     "Volume ran 2x its 20-session average.",
     "SPY closed at 500 after a 50-day slide.",
+    "The 50DMAs sit 3 percent above the 200-day averages.",
+    "Only 2 of the 50DMAs were reclaimed over 20 sessions.",
+    "The 100-day and 200DMA trends are unchanged.",
 ])
 def test_numeric_claims_beside_labels_remain_fatal(text):
     value = narrative()
     value["sections"]["equities"][0]["text"] = text
     with pytest.raises(ValueError, match="literal numeric claim"):
         validate_narrative(value, fixture_packet())
+
+
+# Run 34556169474 was rejected on plural "50DMAs" in the title, the equities paragraph and the character.
+# Singular, plural and abbreviated spellings of one authorised label are one label.
+@pytest.mark.parametrize("text", [
+    "Index closes sit on their 50DMAs.",
+    "SPY and QQQ remain below their 50DMAs.",
+    "XLF and XLV also closed below their 50DMAs. A tape where defensives lead is not confirmed.",
+    "Benchmarks finished at or just below their 50DMAs, with energy the lone leader.",
+    "SPY holds its SMA50 while QQQ sits under the 50-SMA.",
+    "NVDA reclaimed its MA50 as the 50 SMA flattened.",
+    "The 20d return favours energy while the 50d trend is flat.",
+    "The 2Ys and 10Ys drifted while the 5d read stayed thin.",
+])
+def test_plural_and_abbreviated_label_forms_are_accepted(text):
+    value = narrative()
+    value["banner"]["title"] = text.split(".")[0]
+    value["sections"]["equities"][0]["text"] = text
+    value["character"]["text"] = text
+    assert validate_narrative(value, fixture_packet())
+    assert not re.search(r"\d", ALLOWED_LABELS.sub("", text)), text
 
 
 def test_every_label_the_prompt_names_is_accepted():

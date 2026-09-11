@@ -222,6 +222,9 @@ def test_grammatical_variants_of_configured_labels_are_accepted(text):
     "The session on 2026-09-10 closed lower.",
     "Volume ran 2x its 20-session average.",
     "SPY closed at 500 after a 50-day slide.",
+    "The 50DMAs sit 3 percent above the 200-day averages.",
+    "Only 2 of the 50DMAs were reclaimed over 20 sessions.",
+    "The 100-day and 200DMA trends are unchanged.",
 ])
 def test_numeric_claims_beside_labels_remain_fatal(text):
     value = narrative()

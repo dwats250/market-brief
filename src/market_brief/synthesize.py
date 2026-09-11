@@ -31,12 +31,13 @@ HORIZONS = ["OPENING_HOUR", "SESSION", "NEXT_CLOSE", "NEXT_BRIEF"]
 EVENT_HORIZON = re.compile(r"^EVENT\([a-zA-Z][\w-]{0,79}\)$")
 # Bounded labels carry digits without stating a measurement: the Treasury tenors, the configured
 # five/twenty/fifty-session windows in their grammatical forms ("20-session", "over 20 sessions",
-# "50-day", "50DMA"), and index names. Any other digit in prose is a literal numeric claim.
-# Run 34554487893 was rejected on "over 20 sessions" while every placeholder was grounded.
+# "50-day", "50DMAs", "SMA50"), and index names. Any other digit in prose is a literal numeric claim.
+# Run 34554487893 was rejected on "over 20 sessions" and run 34556169474 on plural "50DMAs" while
+# every placeholder was grounded; singular, plural and abbreviated forms of one label are one label.
 ALLOWED_LABELS = re.compile(
     r"\b(?:(?:2|5|10|30)[- ]?(?:Y|yr|year)s?"
-    r"|(?:5|20|50)[- ]?(?:trading[- ])?(?:sessions?|days?)"
-    r"|50[- ]?DMA"
+    r"|(?:5|20|50)[- ]?(?:trading[- ])?(?:sessions?|days?|d)"
+    r"|50[- ]?[SD]?MAs?|[SD]?MA[- ]?50s?"
     r"|S&P[ -]?500|Nasdaq[- ]100|Russell [12]000|Dow 30)\b", re.IGNORECASE)  # Title Case headlines
 TRADE_LANGUAGE = re.compile(r"\b(entry|target|sizing|buy|sell|execute|execution|order)\b", re.I)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"

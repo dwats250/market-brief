@@ -140,8 +140,9 @@ def test_citations_are_quiet_markers_and_the_evidence_chain_is_intact():
     body = page.split("<body>", 1)[1].split('<details class="drawer"', 1)[0]
     assert body.count('<details class="cite">') >= 1 + len(value["summary"]) + len(value["watches"])
     visible = " ".join(parsed.visible)
+    assert "Every cell is a ledger row" not in visible and "open the evidence ledger" not in visible
     assert ">evidence</a>" not in page  # the per-row and per-paragraph link word is gone
-    assert visible.count("open the evidence ledger") == page.count("<table")  # one affordance per table
+    assert page.count('<details class="cite proof">') == page.count("<table")  # one local proof per table
     cited = set(value["banner"]["evidence_ids"]) | set(value["character"]["evidence_ids"])
     for record in (*value["summary"], *value["watches"], *value["attention"],
                    *(p for key in value["sections"] for p in value["sections"][key])):

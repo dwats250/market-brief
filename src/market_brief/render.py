@@ -40,7 +40,17 @@ METALS = ("GLD", "SLV", "GDX")
 INSTRUMENT_LABELS = {"GLD": "Gold fund", "SLV": "Silver fund", "GDX": "Gold miners"}
 HORIZON_LABELS = {"daily return": "1d", "twenty-session return": "20s", "fifty-session average": "50d avg",
                   "distance from 50DMA": "vs 50DMA"}
-LEDGER_NOTE = "Every cell is a ledger row; see the evidence ledger for exact values and baselines."
+LEDGER_NOTE = "Exact values and baselines for every cell are in the evidence ledger."
+# Reader-facing metric names for the provenance layers; the metric strings themselves are unchanged.
+READER_METRIC_LABELS = {"daily return": "Daily return", "twenty-session return": "20-session return",
+                        "fifty-session average": "50-session average", "distance from 50DMA": "vs 50DMA",
+                        "daily par yield": "Daily par yield", "daily yield change": "Daily change",
+                        "premarket return": "Premarket vs prior close", "intraday return": "Intraday vs prior close",
+                        "regular close": "Regular close"}
+SOURCE_KIND_LABELS = {"price": "prices", "quote": "current prints", "economic_series": "rates",
+                      "calendar": "release calendar", "news": "releases"}
+SOURCE_STATUS_LABELS = {"AVAILABLE": "Available", "UNAVAILABLE": "Unavailable", "DEGRADED": "Degraded",
+                        "STALE": "Stale", "DELAYED": "Delayed"}
 SIGNED_METRICS = {"daily return", "daily yield change", "premarket return", "intraday return", "distance from 50DMA"}
 
 
@@ -90,10 +100,42 @@ def metric_label(row):
     return row["metric"]
 
 
+def reader_metric_label(row):
+    """`twenty-session return` → `20-session return`; `relative to SPY` → `vs SPY · 20 sessions`."""
+    metric = row.get("metric", "")
+    if metric.startswith("relative to "):
+        return f"vs {metric.removeprefix('relative to ')} · 20 sessions"
+    if row.get("frequency") == "intraday" and metric not in READER_METRIC_LABELS:
+        return "Intraday vs prior close"
+    return READER_METRIC_LABELS.get(metric, metric[:1].upper() + metric[1:] if metric else "")
+
+
+def instrument_label(symbol):
+    """`XLK` → `Technology · XLK`; unknown topics keep their own name."""
+    name = SECTOR_LABELS.get(symbol) or INSTRUMENT_LABELS.get(symbol)
+    return f"{name} · {symbol}" if name else symbol
+
+
+def source_rows(sources):
+    """Reader-facing source ledger rows: what each source is, whether it worked, and why not."""
+    rows = []
+    for s in sources:
+        kind = SOURCE_KIND_LABELS.get(s.get("kind", ""), s.get("kind", ""))
+        name = s["name"]
+        redundant = any(word in name.lower() for word in kind.lower().split())
+        status = s.get("status", "AVAILABLE")
+        rows.append(dict(s, kind_label="" if redundant else kind,
+                         status_label=SOURCE_STATUS_LABELS.get(status, status.title()),
+                         unavailable=status != "AVAILABLE",
+                         retrieved=compact_clock(s.get("retrieved_at", "")),
+                         detail=" · ".join(filter(None, (s.get("provider"), s.get("feed"), s.get("data_delay"))))))
+    return rows
+
+
 def observed_label(value):
     if isinstance(value, str) and "T" in value:
         return pacific_time(value, True)
-    return value
+    return short_date(value) if isinstance(value, str) and value else value
 
 
 def compact_clock(value):
@@ -246,11 +288,19 @@ def presentation(packet, narrative, context=None):
             row = values.get(ref)
             if row is None:
                 continue
-            label = (measure_label(row) if row.get("metric") and row.get("topic")
-                     else row.get("title") or row.get("topic") or ref)
+            if row.get("metric") and row.get("topic"):
+                label = f"{instrument_label(row['topic'])} · {reader_metric_label(row)}"
+            else:
+                label = row.get("title") or row.get("topic") or ref
             rows.append(dict(id=ref, label=label, display=formatted(row) if "value" in row else "",
+                             when=compact_clock(row.get("observed_at") or row.get("published_at") or ""),
                              anchor=ref in catalog))
         return rows
+
+    def proof(rows, keys=("today", "relative", "r20", "dma")):
+        """Every cell of one instrument table, as the same compact proof lines the markers use."""
+        ids = [row[key]["id"] for row in rows for key in keys if row.get(key) and row[key].get("id")]
+        return refs(list(dict.fromkeys(ids)))
 
     def paragraph(p):
         return {**p, "text": expand(p["text"]), "uncertainty": expand(p["uncertainty"]),
@@ -410,11 +460,22 @@ def presentation(packet, narrative, context=None):
         phase = f", {PHASE_PHRASES[checkpoint]}" if checkpoint in PHASE_PHRASES else ""
         truth = (f"LIVE COMMISSIONING RUN — collected {pacific_time(actual_started_at)}{phase}, "
                  "not a scheduled checkpoint.")
-    evidence_rows = [dict(r, display=formatted(r) if "value" in r else r["title"]) for r in catalog.values()]
+    source_names = {s["id"]: s["name"] for s in packet["sources"]}
+    evidence_rows = [dict(r, display=formatted(r) if "value" in r else r["title"],
+                          metric_label=(reader_metric_label(r) if r.get("metric") else "Published / scheduled item"),
+                          when=compact_clock(r.get("observed_at") or r.get("published_at") or ""),
+                          source_name=source_names.get(r.get("source_id"), r.get("source_id", "")),
+                          status_label=SOURCE_STATUS_LABELS.get(r.get("status", ""), (r.get("status") or "").title()))
+                     for r in catalog.values()]
     groups = {}
     for row in evidence_rows:
         groups.setdefault(row.get("topic") or row.get("title") or row["id"], []).append(row)
-    evidence_groups = [dict(topic=topic, rows=rows) for topic, rows in groups.items()]
+    evidence_groups = [dict(topic=topic, label=instrument_label(topic), rows=rows,
+                            count=f"{len(rows)} observation{'s' if len(rows) != 1 else ''}")
+                       for topic, rows in groups.items()]
+    sources = source_rows(packet["sources"])
+    technical["sources_retrieved"] = [dict(id=s["id"], status=s.get("status", ""), reason=s.get("reason", ""),
+                                           retrieved_at=s.get("retrieved_at", "")) for s in packet["sources"]]
     return dict(
         mode=packet["run"]["mode"], status=status, commissioning=commissioning,
         live_commissioning=live_commissioning, checkpoint=checkpoint,
@@ -441,17 +502,21 @@ def presentation(packet, narrative, context=None):
                   paragraphs=[paragraph(p) for key in ("attention", "events") for p in narrative["sections"][key]]),
         equities=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["equities"]],
                       rows=mega_rows, change_label=mega_change, change_head=change_head(mega_change), asof=mega_asof,
+                      proof=proof(mega_rows),
                       lookback={s: v for s, v in packet.get("lookback", {}).items() if v["r20"] != "available"}),
         macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]],
-                   yields=yields, yields_asof=yields_asof, facts=other_macro),
+                   yields=yields, yields_asof=yields_asof, facts=other_macro,
+                   yields_proof=refs([i for row in yields for i in row["ids"]]),
+                   facts_proof=refs([row["id"] for row in other_macro])),
         sectors=dict(rows=sector_rows, change_label=sector_change, change_head=change_head(sector_change),
-                     asof=sector_asof,
+                     asof=sector_asof, proof=proof(sector_rows),
                      spread_label="20-session spread vs SPY, strongest to weakest"),
         cross_asset=dict(rows=metal_rows, change_label=metal_change, change_head=change_head(metal_change),
-                         asof=metal_asof),
+                         asof=metal_asof, proof=proof(metal_rows)),
         cuttingboard_section=dict(visible=cuttingboard_visible,
                                   paragraphs=[paragraph(p) for p in narrative["sections"]["cuttingboard"]]),
-        sources=packet["sources"], cuttingboard=packet["cuttingboard"],
+        sources=sources, unavailable_sources=sum(1 for s in sources if s["unavailable"]),
+        cuttingboard=packet["cuttingboard"],
         evidence=evidence_rows, evidence_groups=evidence_groups, context_items=packet["context_items"])
 
 

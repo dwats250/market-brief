@@ -23,10 +23,12 @@ def test_headline_contract_is_one_short_claim():
 
 def test_overlong_or_compound_headlines_are_rejected():
     value = narrative()
-    value["banner"]["title"] = "Most equity prints sit below the prior close with health care and megacap " \
-        "tech weakest and energy and utilities the exceptions, but the tape comes from a single delayed feed " \
-        "whose trades are stamped at the session close rather than in premarket"
-    with pytest.raises(ValueError):
+    # Beyond the acceptance backstop (twice the 160-character editorial target), not merely long.
+    value["banner"]["title"] = ("Most equity prints sit below the prior close with health care and megacap "
+                                "tech weakest and energy and utilities the exceptions, but the tape comes from "
+                                "a single delayed feed whose trades are stamped at the session close rather "
+                                "than in premarket, and the reading would change if the venue were broader") * 2
+    with pytest.raises(ValueError, match="malformed narrative at banner.title"):
         validate_narrative(value, fixture_packet())
     value = narrative()
     value["banner"]["title"] = "Energy leads while tech lags; the feed is single-venue"
@@ -133,8 +135,11 @@ def test_light_edition_rejects_responses_beyond_its_bounds():
     from market_brief.context import analyst_context, edition_profile
     packet = packet_at(utc("2026-09-08T19:10:00+00:00"), checkpoint="AFTERNOON")
     context = analyst_context(packet, edition_profile("AFTERNOON"))
+    value = narrative()
+    # Two summary paragraphs sit within the light edition's acceptance headroom; three do not.
+    value["summary"].append(dict(value["summary"][0]))
     with pytest.raises(ValueError, match="summary"):
-        validate_narrative(narrative(), packet, context)
+        validate_narrative(value, packet, context)
 
 
 def test_omitted_light_context_rows_cannot_be_cited():

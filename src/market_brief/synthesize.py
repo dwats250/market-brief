@@ -29,7 +29,9 @@ REFS = {"type": "array", "items": IDENTIFIER, "minItems": 1,
         "maxItems": 4, "uniqueItems": True}
 HORIZONS = ["OPENING_HOUR", "SESSION", "NEXT_CLOSE", "NEXT_BRIEF"]
 EVENT_HORIZON = re.compile(r"^EVENT\([a-zA-Z][\w-]{0,79}\)$")
-ALLOWED_LABELS = re.compile(r"\b(?:2Y|5Y|10Y|30Y|5-session|20-session|50-day|50-session)\b")
+# Tenor/window labels and index names carry digits without stating a measurement.
+ALLOWED_LABELS = re.compile(r"\b(?:2Y|5Y|10Y|30Y|5-session|20-session|50-day|50-session"
+                            r"|S&P 500|Nasdaq[- ]100|Russell [12]000|Dow 30)\b")
 TRADE_LANGUAGE = re.compile(r"\b(entry|target|sizing|buy|sell|execute|execution|order)\b", re.I)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "anthropic/claude-fable-5.1"
@@ -99,6 +101,44 @@ def narrative_schema(profile=None):
         schema["properties"]["watch_updates"]["items"]["properties"]["reason"] = text_field(100)
         schema["properties"]["character"]["properties"]["text"] = text_field(140)
     return schema
+
+
+# Editorial targets (maxLength/maxItems) shape the brief; the model reads them as limits. Acceptance
+# enforces them with fixed headroom so a grounded brief that runs modestly long is kept and noted,
+# while structure, grounding, counts of zero, minimums and uniqueness stay exact. Run 34548270198
+# discarded a complete, grounded generation for one paragraph past its 240-character target.
+EDITORIAL_HEADROOM = 2
+EDITORIAL_KEYWORDS = ("maxLength", "maxItems")
+
+
+def acceptance_schema(schema):
+    """The local contract with editorial bounds widened by EDITORIAL_HEADROOM; zero stays zero."""
+    def visit(node):
+        if isinstance(node, list):
+            return [visit(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        return {key: (value * EDITORIAL_HEADROOM if key in EDITORIAL_KEYWORDS else visit(value))
+                for key, value in node.items()}
+    return visit(schema)
+
+
+def editorial_notes(narrative, schema):
+    """Where an accepted narrative ran past an editorial target: recorded, never fatal."""
+    notes = []
+    for error in Draft202012Validator(schema).iter_errors(narrative):
+        if error.validator in EDITORIAL_KEYWORDS:
+            notes.append(dict(path=".".join(map(str, error.absolute_path)), keyword=error.validator,
+                              limit=error.validator_value, actual=len(error.instance)))
+    return sorted(notes, key=lambda note: note["path"])
+
+
+class NarrativeRejected(ValueError):
+    """A parsed narrative that failed acceptance; carried so the run can archive it for diagnosis."""
+
+    def __init__(self, message, narrative):
+        super().__init__(message)
+        self.narrative = narrative
 
 
 def compact_json(value):
@@ -183,7 +223,7 @@ def validate_narrative(narrative, packet, context=None, schema=None):
     `schema` is the contract actually advertised to the model; by default the edition's profile-bounded one.
     """
     profile = (context or {}).get("edition") or edition_profile(packet["run"]["checkpoint"])
-    errors = list(Draft202012Validator(schema or narrative_schema(profile)).iter_errors(narrative))
+    errors = list(Draft202012Validator(acceptance_schema(schema or narrative_schema(profile))).iter_errors(narrative))
     if errors:
         raise ValueError("malformed narrative at " + ".".join(map(str, errors[0].absolute_path)))
     if narrative["mode"] != packet["run"]["mode"]:
@@ -470,7 +510,7 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
         narrative = validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)
     except ValueError as exc:
         diagnostic = _openrouter_diagnostic(response)
-        raise ValueError(f"{exc}; diagnostic={diagnostic}") from None
+        raise NarrativeRejected(f"{exc}; diagnostic={diagnostic}", narrative) from None
     safe_usage = _safe_usage(response)
     choice = (response.get("choices") or [{}])[0]
     finish_reason = choice.get("finish_reason", "unknown") if isinstance(choice, dict) else "unknown"
@@ -527,9 +567,14 @@ def synthesize(packet, runner=subprocess.run, full=False, context=None):
         narrative = envelope.get("structured_output")
         if narrative is None:
             narrative = json.loads(envelope.get("result", ""))
-        validated = validate_narrative(narrative, packet, None if full else context, schema)
     except (json.JSONDecodeError, TypeError, AttributeError):
         raise ValueError("Claude did not return a structured narrative") from None
+    try:
+        validated = validate_narrative(narrative, packet, None if full else context, schema)
+    except (TypeError, AttributeError):
+        raise ValueError("Claude did not return a structured narrative") from None
+    except ValueError as exc:
+        raise NarrativeRejected(str(exc), narrative) from None
     models = list(envelope.get("modelUsage", {}).keys())
     return validated, dict(route="claude-cli", requested_model=analyst["cli_model"], profile=profile["profile"],
                            resolved_models=models or ["not exposed"],

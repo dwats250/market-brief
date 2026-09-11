@@ -31,7 +31,7 @@ do not recompute the tables or explore unsupported scenarios.
 Concise output is a hard contract, not a style preference. Each schema field's
 description states its maximum characters or items; those limits are checked
 after generation, so a response that is truncated by the generation limit, or
-that overruns any stated limit, is discarded unpublished with no second attempt.
+that runs well past a stated limit, is discarded unpublished with no second attempt.
 
 HEADLINE: exactly one market claim, roughly 8 to 12 words, no caveat clause,
 no semicolon, no multi-part thesis. Specific rather than clever, and it must make
@@ -78,9 +78,11 @@ catalog. If a section has no evidence, leave its array empty; the renderer shows
 availability separately. Never cite a source ID in place of an evidence ID.
 
 NUMBERS: do not write literal digits anywhere in narrative prose, titles, or
-watches except bounded market labels such as 2Y, 5Y, 10Y, 30Y, 5-session,
-20-session, 50-day, and 50-session. To quote a numeric fact use {{evidence-id}}
-and include that ID in the same record's evidence_ids. The renderer substitutes
+watches, including dates, times, counts, and percentages, except bounded market
+labels such as 2Y, 5Y, 10Y, 30Y, 5-session, 20-session, 50-day, and 50-session,
+and index names such as S&P 500 or Nasdaq-100. The renderer already shows the
+session date. To quote a numeric fact use {{evidence-id}} and include that ID in
+the same record's evidence_ids. The renderer substitutes
 its exact formatted value and units. Do not calculate a number yourself. This
 rule makes numerical grounding mechanically testable.
 

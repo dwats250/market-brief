@@ -21,6 +21,7 @@ def test_openrouter_structured_transport_preserves_validator_contract():
             "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}}
 
     output, metadata = synthesize_openrouter(fixture_packet(), api_key="secret", requester=requester)
+    assert len(calls) == 1
     payload, key = calls[0]
     assert key == "secret"
     assert payload["model"] == OPENROUTER_MODEL
@@ -33,7 +34,7 @@ def test_openrouter_structured_transport_preserves_validator_contract():
     assert "temperature" not in payload and "top_p" not in payload
     wire = json.dumps(payload["response_format"]["json_schema"]["schema"])
     assert "maxLength" not in wire and "maxItems" not in wire and "uniqueItems" not in wire
-    assert payload["provider"] == {"allow_fallbacks": False, "require_parameters": True}
+    assert payload["provider"] == {"order": ["azure"], "allow_fallbacks": False, "require_parameters": True}
     assert output["mode"] == "SAMPLE"
     assert metadata["provider"] == "OpenRouter"
     assert metadata["usage"]["total_tokens"] == 30
@@ -52,7 +53,7 @@ def test_openrouter_never_retries_transient_transport_failures():
         synthesize_openrouter(fixture_packet(), api_key="secret", requester=requester,
                              sleeper=lambda _: pytest.fail("paid retry"))
     assert len(calls) == 1
-    assert calls[0]["provider"] == {"allow_fallbacks": False, "require_parameters": True}
+    assert calls[0]["provider"] == {"order": ["azure"], "allow_fallbacks": False, "require_parameters": True}
 
 
 def test_openrouter_accepts_fenced_json_transport_wrapper():
@@ -244,7 +245,7 @@ def test_transport_failure_makes_one_http_request_and_enables_metadata(monkeypat
         calls.append(request)
         assert request.get_header("X-openrouter-metadata") == "enabled"
         payload = json.loads(request.data)
-        assert payload["provider"] == {"allow_fallbacks": False, "require_parameters": True}
+        assert payload["provider"] == {"order": ["azure"], "allow_fallbacks": False, "require_parameters": True}
         assert payload["reasoning"] == {"effort": "low", "exclude": True}
         assert payload["response_format"]["json_schema"]["schema"] == json.loads(
             payload["messages"][1]["content"])["output_schema"]

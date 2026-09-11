@@ -40,6 +40,7 @@ METALS = ("GLD", "SLV", "GDX")
 INSTRUMENT_LABELS = {"GLD": "Gold fund", "SLV": "Silver fund", "GDX": "Gold miners"}
 HORIZON_LABELS = {"daily return": "1d", "twenty-session return": "20s", "fifty-session average": "50d avg",
                   "distance from 50DMA": "vs 50DMA"}
+LEDGER_NOTE = "Every cell is a ledger row; see the evidence ledger for exact values and baselines."
 SIGNED_METRICS = {"daily return", "daily yield change", "premarket return", "intraday return", "distance from 50DMA"}
 
 
@@ -93,6 +94,21 @@ def observed_label(value):
     if isinstance(value, str) and "T" in value:
         return pacific_time(value, True)
     return value
+
+
+def compact_clock(value):
+    """Reader-facing clock above the audit layer: `Thu, Sep 10` for a dated row, `1:02 PM PT` for a print."""
+    if not isinstance(value, str) or not value:
+        return ""
+    return pacific_time(value) if "T" in value else short_date(value)
+
+
+def change_head(label):
+    """Short column header for the change column; the full label sits in the table caption."""
+    for prefix, head in (("Daily", "Daily"), ("Session-ending", "Session end"), ("Intraday", "Intraday")):
+        if label.startswith(prefix):
+            return head
+    return "Change"
 
 
 def direction(row):
@@ -223,10 +239,24 @@ def presentation(packet, narrative, context=None):
     def expand(text):
         return TOKEN.sub(lambda m: formatted(values[m[1]]), text)
 
+    def refs(ids):
+        """The cited rows behind one block, formatted for a quiet expandable marker; IDs are unchanged."""
+        rows = []
+        for ref in ids:
+            row = values.get(ref)
+            if row is None:
+                continue
+            label = (measure_label(row) if row.get("metric") and row.get("topic")
+                     else row.get("title") or row.get("topic") or ref)
+            rows.append(dict(id=ref, label=label, display=formatted(row) if "value" in row else "",
+                             anchor=ref in catalog))
+        return rows
+
     def paragraph(p):
         return {**p, "text": expand(p["text"]), "uncertainty": expand(p["uncertainty"]),
                 "alternative": expand(p["alternative"]),
-                "context": " ".join(filter(None, (expand(p["uncertainty"]), expand(p["alternative"]))))}
+                "context": " ".join(filter(None, (expand(p["uncertainty"]), expand(p["alternative"])))),
+                "refs": refs(p["evidence_ids"])}
 
     facts = []
     for row in [*packet["observations"], *packet["derived"]]:
@@ -250,10 +280,15 @@ def presentation(packet, narrative, context=None):
                 "treasury-2y-change", "treasury-10y-change"]
     chips = [dict(catalog[i], display=formatted(catalog[i]), direction=direction(catalog[i]),
                   metric_label=metric_label(catalog[i]),
-                  observed_label=observed_label(catalog[i]["observed_at"]))
+                  observed_label=observed_label(catalog[i]["observed_at"]),
+                  observed_short=compact_clock(catalog[i]["observed_at"]))
              for i in dict.fromkeys(priority) if i and i in catalog][:6]
     if not chips:
-        chips = [dict(row, metric_label=metric_label(row)) for row in facts[:4]]
+        chips = [dict(row, metric_label=metric_label(row), observed_short=compact_clock(row["observed_at"]))
+                 for row in facts[:4]]
+    # The page shows three figures: the first three of the same deterministic priority order
+    # (SPY, QQQ, then the leading current sector print when one exists, else GLD). No new ranking.
+    figures = chips[:3]
     # After a close whose daily bar is not yet published, the retained daily return is two
     # sessions old relative to the completed session and must not pose as today.
     daily_today = not packet.get("history_lag")
@@ -275,7 +310,8 @@ def presentation(packet, narrative, context=None):
         except ValueError:
             horizon = dict(declared=w["horizon"], phrase=w["horizon"].replace("_", " ").title())
         watches.append({**w, **{k: expand(w[k]) for k in ("condition", "confirmation", "contradiction")},
-                        "phrase": horizon["phrase"], "expires_session": horizon.get("expires_session")})
+                        "phrase": horizon["phrase"], "expires_session": horizon.get("expires_session"),
+                        "refs": refs(w["evidence_ids"])})
     prior = (context or {}).get("prior_state") or {"status": "cold_start", "reason": ""}
     available = prior.get("status") == "available"
     updates = {u["carried_id"]: u for u in narrative.get("watch_updates", [])}
@@ -289,15 +325,17 @@ def presentation(packet, narrative, context=None):
                             evaluability=watch["evaluability"],
                             assessment=update["assessment"] if update else "not reassessed",
                             reason=expand(update["reason"]) if update else "",
-                            evidence_ids=update["evidence_ids"] if update else watch["evidence_refs"]))
+                            evidence_ids=update["evidence_ids"] if update else watch["evidence_refs"],
+                            refs=refs(update["evidence_ids"] if update else watch["evidence_refs"])))
     selected = set(narrative["attention_ids"])
     attention_why = {item["id"]: item["why"] for item in narrative.get("attention", [])}
     attention = [{**a, "why": attention_why.get(a["id"], ""),
                   "display_symbol": (f"{SECTOR_LABELS[a['symbol']]} · {a['symbol']}"
-                                     if a["symbol"] in SECTOR_LABELS else a["symbol"])}
+                                     if a["symbol"] in SECTOR_LABELS else a["symbol"]),
+                  "date_label": short_date(a.get("date")), "refs": refs(a["evidence_ids"])}
                  for a in packet["attention"] if a["id"] in selected]
     events = [{**event, "scheduled_label": pacific_time(event["scheduled_at"], True),
-               "relation_label": event.get("session_relation", "").lower()}
+               "relation_label": event.get("session_relation", "").lower(), "refs": refs([event["id"]])}
               for event in packet["events"][:4]]
 
     # What changed: deterministic comparisons plus the analyst's interpretation of changed ones.
@@ -313,22 +351,24 @@ def presentation(packet, narrative, context=None):
         since_label = "Since " + " and ".join(parts)
     changed = [c for c in comparisons if c["status"] == "changed"]
     repeated = [c for c in comparisons if c["status"] == "no_new_observation"]
-    since_entries = [dict(kind="change", text=expand(c["text"]), evidence_ids=c["evidence_ids"])
-                   for c in narrative.get("changes", [])]
+    since_entries = [dict(kind="change", text=expand(c["text"]), evidence_ids=c["evidence_ids"],
+                          refs=refs(c["evidence_ids"]))
+                     for c in narrative.get("changes", [])]
     for r in narrative.get("relationships", []):
         if r["carried_id"] is not None:
             since_entries.append(dict(kind="relationship", text=expand(r["statement"]), assessment=r["assessment"],
-                                    reason=expand(r["reason"]), evidence_ids=r["evidence_ids"]))
+                                    reason=expand(r["reason"]), evidence_ids=r["evidence_ids"],
+                                    refs=refs(r["evidence_ids"])))
     since_note = ""
     if available and not changed:
         since_note = (f"No comparable measurement has changed: {len(repeated)} repeated prior-close "
                       "observations and no new session prints." if repeated else
                       "No comparable measurement is available yet.")
     elif not available:
-        reason = prior.get("reason", "")
-        since_note = ("Close continuity unavailable" if checkpoint == "PREMARKET"
-                      else "No earlier edition of this session was admitted")
-        since_note += f": {reason}." if reason else "."
+        # Reader copy; the admission reason stays in Technical details.
+        since_note = ("No accepted close to carry forward, so this is a baseline read."
+                      if checkpoint == "PREMARKET"
+                      else "First edition of this session; nothing is carried forward yet.")
 
     cuttingboard_visible = (packet["cuttingboard"].get("status") == "AVAILABLE"
                             or bool(narrative["sections"]["cuttingboard"]))
@@ -370,6 +410,11 @@ def presentation(packet, narrative, context=None):
         phase = f", {PHASE_PHRASES[checkpoint]}" if checkpoint in PHASE_PHRASES else ""
         truth = (f"LIVE COMMISSIONING RUN — collected {pacific_time(actual_started_at)}{phase}, "
                  "not a scheduled checkpoint.")
+    evidence_rows = [dict(r, display=formatted(r) if "value" in r else r["title"]) for r in catalog.values()]
+    groups = {}
+    for row in evidence_rows:
+        groups.setdefault(row.get("topic") or row.get("title") or row["id"], []).append(row)
+    evidence_groups = [dict(topic=topic, rows=rows) for topic, rows in groups.items()]
     return dict(
         mode=packet["run"]["mode"], status=status, commissioning=commissioning,
         live_commissioning=live_commissioning, checkpoint=checkpoint,
@@ -384,27 +429,30 @@ def presentation(packet, narrative, context=None):
         truth=truth,
         technical=technical, coverage=packet["coverage"], limitations=limitations,
         banner={**narrative["banner"], "title": expand(narrative["banner"]["title"]),
-                "limitation": expand(narrative["banner"]["limitation"])},
+                "limitation": expand(narrative["banner"]["limitation"]),
+                "refs": refs(narrative["banner"]["evidence_ids"])},
         character=expand(narrative["character"]["text"]),
         character_ids=narrative["character"]["evidence_ids"],
-        chips=chips,
+        character_refs=refs(narrative["character"]["evidence_ids"]),
+        chips=chips, figures=figures,
         summary=[paragraph(p) for p in narrative["summary"]],
         since=dict(label=since_label, entries=since_entries, note=since_note, status=prior.get("status", "cold_start")),
         next=dict(watches=watches, carried=carried, attention=attention, events=events,
                   paragraphs=[paragraph(p) for key in ("attention", "events") for p in narrative["sections"][key]]),
         equities=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["equities"]],
-                      rows=mega_rows, change_label=mega_change, asof=mega_asof,
+                      rows=mega_rows, change_label=mega_change, change_head=change_head(mega_change), asof=mega_asof,
                       lookback={s: v for s, v in packet.get("lookback", {}).items() if v["r20"] != "available"}),
         macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]],
                    yields=yields, yields_asof=yields_asof, facts=other_macro),
-        sectors=dict(rows=sector_rows, change_label=sector_change, asof=sector_asof,
+        sectors=dict(rows=sector_rows, change_label=sector_change, change_head=change_head(sector_change),
+                     asof=sector_asof,
                      spread_label="20-session spread vs SPY, strongest to weakest"),
-        cross_asset=dict(rows=metal_rows, change_label=metal_change, asof=metal_asof),
+        cross_asset=dict(rows=metal_rows, change_label=metal_change, change_head=change_head(metal_change),
+                         asof=metal_asof),
         cuttingboard_section=dict(visible=cuttingboard_visible,
                                   paragraphs=[paragraph(p) for p in narrative["sections"]["cuttingboard"]]),
         sources=packet["sources"], cuttingboard=packet["cuttingboard"],
-        evidence=[dict(r, display=formatted(r) if "value" in r else r["title"])
-                  for r in catalog.values()], context_items=packet["context_items"])
+        evidence=evidence_rows, evidence_groups=evidence_groups, context_items=packet["context_items"])
 
 
 def markdown(view):
@@ -428,9 +476,9 @@ def markdown(view):
               f"{refs(view['character_ids'])}", "", esc(view["banner"]["limitation"]), ""]
     for p in view["summary"]:
         lines += [para(p), ""]
-    if view["chips"]:
+    if view["figures"]:
         lines += ["**OBSERVED SNAPSHOT**", "", "| Measure | Observation | As of |", "|---|---:|---|"]
-        for chip in view["chips"]:
+        for chip in view["figures"]:
             lines.append(f"| {esc(chip['topic'])} · {esc(chip['metric_label'])} | {chip['display']} | "
                          f"{esc(chip['observed_label'])} · {chip['status']} {refs([chip['id']])} |")
         lines.append("")
@@ -453,13 +501,14 @@ def markdown(view):
     for p in nxt["paragraphs"]:
         lines += [para(p), ""]
     for w in nxt["watches"]:
-        lines.append(f"- **WATCH · {esc(w['phrase'])}** — {esc(w['condition'])} Check: {esc(w['confirmation'])} "
-                     f"If not: {esc(w['contradiction'])} {refs(w['evidence_ids'])}")
+        changes_it = f" Changes it: {esc(w['contradiction'])}" if w["contradiction"] else ""
+        lines.append(f"- **WATCH · {esc(w['phrase'])}** — {esc(w['condition'])} Confirm: {esc(w['confirmation'])}"
+                     f"{changes_it} {refs(w['evidence_ids'])}")
     for c in nxt["carried"]:
         lines.append(f"- **CARRIED WATCH · {c['assessment']}** — {esc(c['hypothesis'])} {esc(c['reason'])}")
     for a in nxt["attention"]:
         lines.append(f"- **{esc(a['display_symbol'])}** — {esc(a['reason'])}. {esc(a['why'])} "
-                     f"({a['date']}) {refs(a['evidence_ids'])}")
+                     f"({esc(a['date_label'])}) {refs(a['evidence_ids'])}")
     for e in nxt["events"]:
         lines.append(f"- **Event** — {esc(e['title'])} · {esc(e['scheduled_label'])} · {esc(e['relation_label'])} "
                      f"{refs([e['id']])}")
@@ -477,7 +526,7 @@ def markdown(view):
             for row in eq["rows"]:
                 lines.append(f"| {row['symbol']} | {row['today']['display']} | {row['r20']['display']} | "
                              f"{row['relative']['display']} | {row['dma']['display']} |")
-            lines.append("")
+            lines += ["", LEDGER_NOTE, ""]
         for symbol, state in eq["lookback"].items():
             lines.append(f"{esc(symbol)} 20s: n/a ({state['sessions']} sessions)")
         if eq["lookback"]:
@@ -494,14 +543,14 @@ def markdown(view):
             for row in mac["yields"]:
                 note = f" ({esc(row['change_note'])})" if row["change_note"] else ""
                 lines.append(f"| {row['maturity']} | {row['level']['display']} | {row['change']['display']}{note} | "
-                             f"{esc(row['date'])} {refs(row['ids'])} |")
-            lines.append("")
+                             f"{esc(row['date'])} |")
+            lines += ["", LEDGER_NOTE, ""]
         if mac["facts"]:
             lines += ["| Measure | Observation | Date / source |", "|---|---:|---|"]
             for row in mac["facts"]:
                 lines.append(f"| {esc(row['measure'])} | {row['display']} | "
-                             f"{row['observed_label']} · {row['status']} · {refs([row['id']])} |")
-            lines.append("")
+                             f"{row['observed_label']} · {row['status']} |")
+            lines += ["", LEDGER_NOTE, ""]
     sec = view["sectors"]
     if sec["rows"]:
         asof = f" · {esc(sec['asof'])}" if sec["asof"] else ""
@@ -511,7 +560,7 @@ def markdown(view):
         for row in sec["rows"]:
             lines.append(f"| {esc(row['label'])} ({row['symbol']}) | {row['relative']['display']} | "
                          f"{row['r20']['display']} | {row['today']['display']} | {row['dma']['display']} |")
-        lines.append("")
+        lines += ["", LEDGER_NOTE, ""]
     cross = view["cross_asset"]
     if cross["rows"]:
         asof = f" · {esc(cross['asof'])}" if cross["asof"] else ""
@@ -522,7 +571,7 @@ def markdown(view):
             lines.append(f"| {esc(row['label'])} ({row['symbol']}) | {row['today']['display']} | "
                          f"{row['r20']['display']} | {row['relative']['display']} vs {row['relative_label']} | "
                          f"{row['dma']['display']} |")
-        lines.append("")
+        lines += ["", LEDGER_NOTE, ""]
     cb = view["cuttingboard"]
     if view["cuttingboard_section"]["visible"]:
         lines += ["## Cuttingboard context", ""]
@@ -541,12 +590,14 @@ def markdown(view):
         lines += [f"- [{esc(s['name'])}](<{s['url']}>) · {esc(s['kind'])} · {esc(s['status'])} "
                   f"· retrieved {esc(s['retrieved_at'])}"]
     lines += ["", "### Evidence ledger", ""]
-    for row in view["evidence"]:
-        lines += [f'<a id="evidence-{row["id"]}"></a>',
-                  f"**{esc(row['id'])}** · {esc(row.get('topic', row.get('title', '')))} · "
-                  f"{esc(row['display'])} · {esc(row.get('baseline', 'published / scheduled item'))} "
-                  f"· observed/published {esc(row.get('observed_at') or row.get('published_at') or 'not exposed')} "
-                  f"· source {esc(row['source_id'])}", ""]
+    for group in view["evidence_groups"]:
+        lines += [f"**{esc(group['topic'])}**", ""]
+        for row in group["rows"]:
+            lines += [f'<a id="evidence-{row["id"]}"></a>',
+                      f"**{esc(row['id'])}** · {esc(row.get('topic', row.get('title', '')))} · "
+                      f"{esc(row['display'])} · {esc(row.get('baseline', 'published / scheduled item'))} "
+                      f"· observed/published {esc(row.get('observed_at') or row.get('published_at') or 'not exposed')} "
+                      f"· source {esc(row['source_id'])}", ""]
     technical = view["technical"]
     lines += ["", "### Technical details", "",
               f"Generated UTC: {esc(technical['generated_utc'])}",

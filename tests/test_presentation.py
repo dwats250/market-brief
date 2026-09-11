@@ -62,7 +62,7 @@ def test_populated_sections_still_render_in_reading_order():
     assert order == sorted(order)
     # Attention items and today's event live inside What matters next, not in their own sections.
     matters = page.split("<h2>What matters next</h2>", 1)[1].split("</section>", 1)[0]
-    assert "<h3>NVDA</h3>" in matters and "Fictional manufacturing survey" in matters
+    assert '<li><b>NVDA</b>' in matters and "Fictional manufacturing survey" in matters
     assert "On the attention list" not in page and "Event risk" not in page
 
 
@@ -192,7 +192,7 @@ def test_no_workflow_or_horizon_enums_are_visible():
         body = visible(page)
         for token in ("PREMARKET", "OPEN_1M", "OPEN_30M", "AFTERNOON", "CLOSE_1M", "NEXT_BRIEF", "NEXT_CLOSE",
                       "OPENING_HOUR", "SESSION", "INTERPRETATION", "OBSERVED"):
-            assert token not in body.split("<details>", 1)[0], token
+            assert token not in body.split('<details class="drawer"', 1)[0], token
         assert 'data-checkpoint="' in page  # machine marker stays in the head
 
 

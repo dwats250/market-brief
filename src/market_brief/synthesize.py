@@ -29,9 +29,15 @@ REFS = {"type": "array", "items": IDENTIFIER, "minItems": 1,
         "maxItems": 4, "uniqueItems": True}
 HORIZONS = ["OPENING_HOUR", "SESSION", "NEXT_CLOSE", "NEXT_BRIEF"]
 EVENT_HORIZON = re.compile(r"^EVENT\([a-zA-Z][\w-]{0,79}\)$")
-# Tenor/window labels and index names carry digits without stating a measurement.
-ALLOWED_LABELS = re.compile(r"\b(?:2Y|5Y|10Y|30Y|5-session|20-session|50-day|50-session"
-                            r"|S&P 500|Nasdaq[- ]100|Russell [12]000|Dow 30)\b")
+# Bounded labels carry digits without stating a measurement: the Treasury tenors, the configured
+# five/twenty/fifty-session windows in their grammatical forms ("20-session", "over 20 sessions",
+# "50-day", "50DMA"), and index names. Any other digit in prose is a literal numeric claim.
+# Run 34554487893 was rejected on "over 20 sessions" while every placeholder was grounded.
+ALLOWED_LABELS = re.compile(
+    r"\b(?:(?:2|5|10|30)[- ]?(?:Y|yr|year)s?"
+    r"|(?:5|20|50)[- ]?(?:trading[- ])?(?:sessions?|days?)"
+    r"|50[- ]?DMA"
+    r"|S&P[ -]?500|Nasdaq[- ]100|Russell [12]000|Dow 30)\b", re.IGNORECASE)  # Title Case headlines
 TRADE_LANGUAGE = re.compile(r"\b(entry|target|sizing|buy|sell|execute|execution|order)\b", re.I)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "anthropic/claude-fable-5.1"
@@ -242,7 +248,9 @@ def validate_narrative(narrative, packet, context=None, schema=None):
     for record in records:
         refs = set(record["evidence_ids"])
         if not refs <= catalog.keys():
-            raise ValueError("unknown, unavailable, or unsupplied evidence reference")
+            # The analyst's own identifiers: naming them costs nothing and explains the rejection.
+            raise ValueError("unknown, unavailable, or unsupplied evidence reference: "
+                             + ", ".join(sorted(refs - catalog.keys())))
     validate_state(narrative, context, set(catalog), {row["topic"] for row in catalog.values() if "topic" in row})
     values = {ident: row for ident, row in catalog.items()}
     values.update(prior_values(context))

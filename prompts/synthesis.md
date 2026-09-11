@@ -79,9 +79,9 @@ availability separately. Never cite a source ID in place of an evidence ID.
 
 NUMBERS: do not write literal digits anywhere in narrative prose, titles, or
 watches, including dates, times, counts, and percentages, except bounded market
-labels such as 2Y, 5Y, 10Y, 30Y, 5-session, 20-session, 50-day, and 50-session,
-and index names such as S&P 500 or Nasdaq-100. The renderer already shows the
-session date. To quote a numeric fact use {{evidence-id}} and include that ID in
+labels such as 2Y, 5Y, 10Y, 30Y, 5-session, 20-session, 50-day, and 50-session
+in their natural forms (over 20 sessions, 10-year, 50DMA), and index names such
+as S&P 500 or Nasdaq-100. The renderer already shows the session date. To quote a numeric fact use {{evidence-id}} and include that ID in
 the same record's evidence_ids. The renderer substitutes
 its exact formatted value and units. Do not calculate a number yourself. This
 rule makes numerical grounding mechanically testable.
@@ -115,6 +115,9 @@ deterministic: a `changed` row is a valid move of the same measurement; `unavail
 Prior facts are namespaced `anchor:evidence-id` (for example `premarket:SPY-intraday`).
 Cite them only in `changes`, `relationships`, and `watch_updates`, alongside current
 IDs; the banner, summary, sections, character, and new watches cite current IDs only.
+A comparison row's `id` (`cmp-...`) is never an evidence ID: it belongs only in
+`comparison_id`. To cite what a comparison measured, use its `prior_ref` and
+`current_ref`.
 Numeric placeholders may use a prior ref exactly like a current one.
 
 - `character`: one short paragraph on the session's character as of this edition,

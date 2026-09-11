@@ -7,6 +7,7 @@ the same replay wrote "Nasdaq-100", which the digit rule read as a numeric claim
 """
 
 import json
+import re
 
 import pytest
 from test_pipeline import fixture_packet, narrative
@@ -15,7 +16,9 @@ from market_brief import cli
 from market_brief import synthesize as synthesize_module
 from market_brief.context import analyst_context, edition_profile
 from market_brief.synthesize import (
+    ALLOWED_LABELS,
     EDITORIAL_HEADROOM,
+    TOKEN,
     acceptance_schema,
     editorial_notes,
     narrative_schema,
@@ -178,3 +181,73 @@ def test_accepted_run_records_editorial_notes_without_failing(tmp_path, monkeypa
     assert metadata["editorial"] == [dict(path="sections.macro.0.text", keyword="maxLength", limit=240,
                                           actual=len(prose(281)))]
     assert (folder / "brief.html").exists() and not (folder / "narrative.rejected.json").exists()
+
+
+# Run 34554487893 (CLOSE_1M, Azure, finish=stop) was rejected by the digit rule on "over 20 sessions":
+# the noun form of the configured twenty-session window. Every other digit fragment in that narrative
+# was an accepted label or a grounded placeholder. Bounded labels are a grammar, not a phrase list.
+PRODUCTION_LABEL_PHRASES = [
+    "GDX leads GLD by {{GDX-spread20}} over 20 sessions while XLI trails SPY by {{XLI-spread20}}.",
+    "Energy leads SPY over 20 sessions while industrials lag furthest.",
+    "Over the 20-session horizon the picture is not uniform.",
+    "The Treasury curve moved higher across 2Y, 5Y and 10Y with little curve shape change.",
+    "Four downward 50-day crosses (SPY, QQQ, XLF, XLV) arrived on one session.",
+    "NVDA and META fell and the Nasdaq-100 proxy declined, so index weakness was concentrated.",
+    "GDX retains a large 20-session lead over GLD but fell far more than bullion.",
+    "Benchmarks sit just under their 50-day averages while the 50DMA gap is small.",
+    "The 10-year yield rose while 2-year and 30 year tenors barely moved; the 5-session read is thin.",
+    "Leadership held over the last 20 trading sessions and across 50 days of closes.",
+    # A fresh replay wrote a Title Case headline; label recognition is case-insensitive.
+    "S&P 500 And Nasdaq-100 Slip Below Their 50-Day Averages As Energy Leads",
+    "OVER 20 SESSIONS THE 10Y TENOR LED; the 50dma gap stayed small.",
+]
+
+
+@pytest.mark.parametrize("text", PRODUCTION_LABEL_PHRASES)
+def test_grammatical_variants_of_configured_labels_are_accepted(text):
+    value = narrative()
+    value["sections"]["equities"][0]["text"] = text
+    value["sections"]["equities"][0]["evidence_ids"] = ["GDX-spread20", "XLI-spread20"]
+    assert validate_narrative(value, fixture_packet())
+    value["attention"][0]["why"] = TOKEN.sub("", text)[:120]
+    assert validate_narrative(value, fixture_packet())
+
+
+@pytest.mark.parametrize("text", [
+    "XLE leads SPY by 3 percent over 20 sessions.",
+    "Energy led for 7 sessions while industrials lagged.",
+    "Yields rose 10 basis points over 20 sessions.",
+    "The 10-year yield reached 4.5 percent.",
+    "Breadth was weak: 3 of 11 sectors rose.",
+    "The session on 2026-09-10 closed lower.",
+    "Volume ran 2x its 20-session average.",
+    "SPY closed at 500 after a 50-day slide.",
+])
+def test_numeric_claims_beside_labels_remain_fatal(text):
+    value = narrative()
+    value["sections"]["equities"][0]["text"] = text
+    with pytest.raises(ValueError, match="literal numeric claim"):
+        validate_narrative(value, fixture_packet())
+
+
+def test_every_label_the_prompt_names_is_accepted():
+    from test_contract import PROMPT
+    numbers = PROMPT.split("NUMBERS:", 1)[1].split("\n\n", 1)[0]
+    named = re.findall(r"\b(?:\d+[- ]?(?:Y|session|day|sessions|days)|S&P 500|Nasdaq-100)\b", numbers)
+    assert {"2Y", "5Y", "10Y", "30Y", "5-session", "20-session", "50-day", "50-session",
+            "S&P 500", "Nasdaq-100"} <= set(named)
+    for label in named:
+        assert not re.search(r"\d", ALLOWED_LABELS.sub("", f"Leadership over the {label} window.")), label
+
+
+def test_comparison_ids_are_not_evidence_and_the_rejection_names_them():
+    """A fresh continuity replay cited `cmp-previous_close-QQQ-spread20` as evidence. That stays fatal:
+    the prompt says comparison ids belong only in `comparison_id`, and the error names the offender."""
+    from test_contract import PROMPT
+    continuity = PROMPT.split("CONTINUITY.", 1)[1]
+    assert "`cmp-...`" in continuity and "never an evidence ID" in continuity
+    assert "`prior_ref`" in continuity and "`current_ref`" in continuity
+    value = narrative()
+    value["summary"][0]["evidence_ids"] = ["cmp-previous_close-QQQ-spread20", "QQQ-spread20"]
+    with pytest.raises(ValueError, match="unsupplied evidence reference: cmp-previous_close-QQQ-spread20$"):
+        validate_narrative(value, fixture_packet())

@@ -455,7 +455,7 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
                    messages=[{"role": "system", "content": system},
                              {"role": "user", "content": user}],
                    plugins=[{"id": "response-healing"}],
-                   provider={"allow_fallbacks": False, "require_parameters": True},
+                   provider={"order": ["azure"], "allow_fallbacks": False, "require_parameters": True},
                    response_format={"type": "json_schema", "json_schema": {
                        "name": "market_brief_narrative", "strict": True, "schema": schema}},
                    reasoning={"effort": profile["reasoning_effort"], "exclude": True})

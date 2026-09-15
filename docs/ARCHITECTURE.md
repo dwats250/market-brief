@@ -227,7 +227,11 @@ without any observation from the session publishes nothing and does not hand off
 an interpretation still hands the observed session off, without a page. Cloudflare wakes one minute
 past each hour 13:00–21:00 UTC plus the :31 candidates, never two wakes within a minute; the Python
 scheduler resolves the checkpoint, skips hourly refreshes at or after an early close, and stays
-idempotent per checkpoint. A `NEXT_BRIEF` watch horizon resolves to the next synthesis checkpoint,
+idempotent per checkpoint. A synthesis checkpoint is due only within twenty minutes of its scheduled
+minute (`schedule.TOLERANCE_MINUTES`), so the :31 wake that serves the other Pacific season's open +1M
+(7:31 PT or 5:31 PT here) resolves to SKIP and can never become a second paid attempt at the 7:00
+update; refreshes and the close keep a forty-five-minute window because a late deterministic run costs
+nothing. A `NEXT_BRIEF` watch horizon resolves to the next synthesis checkpoint,
 the next time an analyst can judge it; refreshes in between only carry it.
 
 The bundle (`runs/continuity/bundle.json`, schema `market-brief.continuity-bundle.v1`, every

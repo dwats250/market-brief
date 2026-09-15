@@ -34,12 +34,24 @@ STATIC_LOCAL_TIMES = {
     "HOURLY_1100": (11, 0),
     "HOURLY_1200": (12, 0),
 }
+# How late a wake may be and still count as a checkpoint's own attempt. A synthesis is attempted once, by
+# the wake that naturally follows its scheduled minute; the wake candidates that exist for the other
+# Pacific season land thirty-one minutes later (14:31 UTC is 7:31 PDT) and must never become a second
+# paid attempt, whatever the first attempt's outcome. Deterministic refreshes and the close keep the wider
+# window because a late deterministic run costs nothing and repeats nothing.
+TOLERANCE_MINUTES = {"synthesis": 20, "refresh": 45, "close": 45}
 
 
 def checkpoint_kind(checkpoint):
     if checkpoint not in CHECKPOINT_KINDS:
         raise ValueError("unsupported checkpoint")
     return CHECKPOINT_KINDS[checkpoint]
+
+
+def tolerance_minutes(checkpoint, override=None):
+    """The due window for one checkpoint; an explicit override never widens a synthesis window."""
+    own = TOLERANCE_MINUTES[checkpoint_kind(checkpoint)]
+    return own if override is None else min(own, override)
 
 
 def checkpoint_session(now, checkpoint="PREMARKET"):
@@ -67,25 +79,23 @@ def checkpoint_session(now, checkpoint="PREMARKET"):
                 scheduled_local=scheduled.astimezone(VANCOUVER).isoformat())
 
 
-def due(now, checkpoint, tolerance_minutes=45):
+def due(now, checkpoint, tolerance=None):
+    """Whether `now` falls inside the checkpoint's own due window (see TOLERANCE_MINUTES)."""
     info = checkpoint_session(now, checkpoint)
     if not info["applicable"]:
         return False, info
     scheduled = datetime.fromisoformat(info["scheduled_at"])
     delta = (now - scheduled).total_seconds()
-    return 0 <= delta <= tolerance_minutes * 60, info
+    return 0 <= delta <= tolerance_minutes(checkpoint, tolerance) * 60, info
 
 
-def scheduled_checkpoint(now, tolerance_minutes=45):
-    """Resolve a UTC scheduler candidate to the nearest due Pacific checkpoint."""
+def scheduled_checkpoint(now, tolerance=None):
+    """Resolve a UTC scheduler candidate to the nearest due Pacific checkpoint, or None (a SKIP)."""
     candidates = []
     for checkpoint in CHECKPOINTS:
-        info = checkpoint_session(now, checkpoint)
-        if not info["applicable"]:
-            continue
-        delta = (now - datetime.fromisoformat(info["scheduled_at"])).total_seconds()
-        if 0 <= delta <= tolerance_minutes * 60:
-            candidates.append((delta, checkpoint))
+        ready, info = due(now, checkpoint, tolerance)
+        if ready:
+            candidates.append(((now - datetime.fromisoformat(info["scheduled_at"])).total_seconds(), checkpoint))
     return min(candidates)[1] if candidates else None
 
 

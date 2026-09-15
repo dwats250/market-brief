@@ -63,6 +63,38 @@ def test_early_close_candidates_resolve_to_close_plus_one():
     assert next_checkpoint(close - timedelta(hours=1), before)["checkpoint"] == "CLOSE_1M"
 
 
+def test_alternate_season_wakes_never_reach_a_synthesis_checkpoint():
+    """Both :31 wakes exist so OPEN_1M lands at 6:31 PT in either season. The one that belongs to the
+    other season is 7:31 PT or 5:31 PT and resolves to nothing: in particular it is never a second
+    attempt at the 7:00 synthesis, whatever happened at 7:01."""
+    from market_brief.schedule import TOLERANCE_MINUTES, due
+    # PDT (2026-07-06): 13:31 UTC is 6:31 PT, 14:31 UTC is 7:31 PT.
+    assert scheduled_checkpoint(utc("2026-07-06T13:31:00+00:00")) == "OPEN_1M"
+    assert scheduled_checkpoint(utc("2026-07-06T14:31:00+00:00")) is None
+    assert not due(utc("2026-07-06T14:31:00+00:00"), "OPEN_30M")[0]
+    # PST (2026-01-12): 13:31 UTC is 5:31 PT, 14:31 UTC is 6:31 PT.
+    assert scheduled_checkpoint(utc("2026-01-12T13:31:00+00:00")) is None
+    assert scheduled_checkpoint(utc("2026-01-12T14:31:00+00:00")) == "OPEN_1M"
+    assert not due(utc("2026-01-12T14:31:00+00:00"), "PREMARKET")[0]  # 6:31 is not a premarket retry either
+    # A synthesis is due only inside its own short window; an explicit wider tolerance never widens it.
+    assert TOLERANCE_MINUTES["synthesis"] < 31 <= TOLERANCE_MINUTES["refresh"]
+    assert due(utc("2026-07-06T14:15:00+00:00"), "OPEN_30M")[0]
+    assert not due(utc("2026-07-06T14:31:00+00:00"), "OPEN_30M", 45)[0]
+    assert scheduled_checkpoint(utc("2026-07-06T14:31:00+00:00"), 45) is None
+
+
+def test_hourly_refresh_and_close_windows_are_unchanged():
+    from market_brief.schedule import TOLERANCE_MINUTES, due
+    assert TOLERANCE_MINUTES["refresh"] == 45 and TOLERANCE_MINUTES["close"] == 45
+    for hour, checkpoint in ((15, "HOURLY_0800"), (16, "HOURLY_0900"), (17, "HOURLY_1000"),
+                             (18, "HOURLY_1100"), (19, "HOURLY_1200")):
+        assert scheduled_checkpoint(utc(f"2026-07-06T{hour:02d}:01:00+00:00")) == checkpoint
+        assert scheduled_checkpoint(utc(f"2026-01-12T{hour + 1:02d}:01:00+00:00")) == checkpoint
+    assert due(utc("2026-07-06T15:40:00+00:00"), "HOURLY_0800")[0]  # a late deterministic wake still refreshes
+    assert due(utc("2026-07-06T20:40:00+00:00"), "CLOSE_1M")[0]
+    assert scheduled_checkpoint(utc("2026-07-06T20:01:00+00:00")) == "CLOSE_1M"
+
+
 def test_next_synthesis_is_where_an_analyst_can_next_judge():
     from market_brief.schedule import next_synthesis
     assert next_synthesis(utc("2026-09-08T13:00:00+00:00"), "PREMARKET")["checkpoint"] == "OPEN_30M"

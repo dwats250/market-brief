@@ -53,7 +53,7 @@ class Day:
         self.calls, self.published, self.narratives = [], [], {}
 
     def run(self, now, checkpoint, *, intraday=True, value=None, mutate=None, last_history_date="2026-09-04",
-            print_at=None, fail_synthesis=False):
+            print_at=None, fail_synthesis=False, command="premarket"):
         freeze_clock(self.monkeypatch, now)
         raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
         raw["mode"] = "LIVE"
@@ -93,7 +93,12 @@ class Day:
         self.monkeypatch.setattr(cli, "RUN_ROOT", self.root)
         self.monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
         self.monkeypatch.setattr(cli, "publish_latest", lambda root: self.published.append(checkpoint))
-        return cli.main(["premarket", "--checkpoint", checkpoint])
+        return cli.main([command, "--checkpoint", checkpoint])
+
+    def attempts(self, checkpoint, session=TUE):
+        prefix = f"live-{checkpoint.lower()}-"
+        folder = self.root / "runs" / session
+        return [p for p in folder.iterdir() if p.name.startswith(prefix)] if folder.exists() else []
 
     def folder(self, checkpoint, session=TUE):
         prefix = f"live-{checkpoint.lower()}-"
@@ -345,6 +350,33 @@ def test_a_replayed_refresh_never_reaches_the_analyst_and_dates_its_sample_inter
 
 
 # --- the observed record on a refresh page is this run's; anchors stay intact -------------------------
+
+@pytest.mark.parametrize("first_attempt_fails", [True, False])
+def test_the_alternate_season_wake_never_retries_or_reruns_the_opening_structure_synthesis(
+        day, capsys, first_attempt_fails):
+    """PDT: the 14:01 UTC wake is the 7:00 update's one natural attempt. The 14:31 UTC wake exists for
+    PST's open +1M; at 7:31 PDT it resolves to SKIP and never reaches the analyst, whether the first
+    attempt failed or succeeded."""
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
+    assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M", command="schedule") == 0
+    expected = 2 if first_attempt_fails else 0
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", command="schedule", fail_synthesis=first_attempt_fails) \
+        == expected
+    assert day.calls == ["PREMARKET", "OPEN_30M"] and len(day.attempts("OPEN_30M")) == 1
+    # 7:31 PDT: the scheduler resolves nothing, and an explicit OPEN_30M dispatch is outside its window.
+    freeze_clock(day.monkeypatch, f"{TUE}T14:31:00+00:00")
+    capsys.readouterr()
+    assert cli.main(["resolve-scheduled"]) == 0 and capsys.readouterr().out.strip() == "SKIP"
+    assert day.run(f"{TUE}T14:31:00+00:00", "OPEN_30M", command="schedule") == 0
+    assert "SKIP / OPEN_30M / outside checkpoint window" in capsys.readouterr().out
+    assert day.calls == ["PREMARKET", "OPEN_30M"] and len(day.attempts("OPEN_30M")) == 1
+    assert day.published == ["PREMARKET", "OPEN_1M"] + ([] if first_attempt_fails else ["OPEN_30M"])
+    # The hourly refreshes that follow are unaffected and still make no analyst call.
+    assert day.run(f"{TUE}T15:01:00+00:00", "HOURLY_0800", command="schedule") == 0
+    assert day.calls == ["PREMARKET", "OPEN_30M"]
+    interpreted = day.metadata("HOURLY_0800")["interpretation"]["checkpoint"]
+    assert interpreted == ("PREMARKET" if first_attempt_fails else "OPEN_30M")
+
 
 def test_a_failed_opening_structure_synthesis_leaves_refreshes_on_the_premarket_interpretation(day):
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0

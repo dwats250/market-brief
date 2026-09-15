@@ -73,8 +73,10 @@ def test_live_header_uses_pacific_time_and_hides_plumbing():
     value["mode"] = "LIVE"
     _, page = render(packet, value)
     header = page.split("<h1>", 1)[0]
-    assert "LIVE · Open +1M edition · Tuesday, Sep 8 · as of 5:45 AM PT" in header
-    assert header.count("PT") == 1  # one status/date/as-of line
+    assert "LIVE · Opening refresh · Tuesday, Sep 8" in header
+    # One clocks line: the data clock, and the scheduler's next update (here today's premarket synthesis).
+    assert "As of 5:45 AM PT · Next update · 6:00 AM PT · interpretation" in header
+    assert header.count("PT") == 2
     assert "Evidence cutoff" not in header
     assert "Generated 2026-" not in header
     assert "+00:00" not in header
@@ -140,8 +142,9 @@ def test_citations_are_quiet_markers_and_the_evidence_chain_is_intact():
     body = page.split("<body>", 1)[1].split('<details class="drawer"', 1)[0]
     assert body.count('<details class="cite">') >= 1 + len(value["summary"]) + len(value["watches"])
     visible = " ".join(parsed.visible)
+    assert "Every cell is a ledger row" not in visible and "open the evidence ledger" not in visible
     assert ">evidence</a>" not in page  # the per-row and per-paragraph link word is gone
-    assert visible.count("open the evidence ledger") == page.count("<table")  # one affordance per table
+    assert page.count('<details class="cite proof">') == page.count("<table")  # one local proof per table
     cited = set(value["banner"]["evidence_ids"]) | set(value["character"]["evidence_ids"])
     for record in (*value["summary"], *value["watches"], *value["attention"],
                    *(p for key in value["sections"] for p in value["sections"][key])):

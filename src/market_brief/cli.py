@@ -15,12 +15,16 @@ from .collect import ALPACA_UNIVERSE, alpaca_probe, collect_live, cuttingboard_r
 from .context import analyst_context, edition_profile
 from .continuity import (
     ARTIFACT_NAME,
+    SLOTS,
+    admit_interpretation,
     admit_prior_state,
     advance_bundle,
     bundle_path,
+    carried_state,
     compare_all,
     continuity_context,
     edition_state,
+    interpretation_record,
     load_bundle,
     restore_bundle,
     select_artifact,
@@ -30,7 +34,14 @@ from .continuity import (
 from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_json, timestamp
 from .metrics import annotate_magnitude, derive
 from .render import render
-from .schedule import CHECKPOINTS, checkpoint_session, current_phase, due, scheduled_checkpoint
+from .schedule import (
+    CHECKPOINTS,
+    checkpoint_kind,
+    checkpoint_session,
+    current_phase,
+    due,
+    scheduled_checkpoint,
+)
 from .synthesize import (
     NARRATIVE_SCHEMA,
     construct_prompt,
@@ -43,6 +54,7 @@ from .synthesize import (
 # Assets (prompt, config, templates) come from ROOT; generated state lives under RUN_ROOT.
 RUN_ROOT = ROOT
 SAMPLE_CONTINUITY = ROOT / "tests/fixtures/continuity.sample.json"
+CLOSING_DATA_FOR_HANDOFF = {"COMPLETED_SESSION", "PROVISIONAL_NEAR_CLOSE"}
 
 
 def output_directory(root, mode, target, checkpoint="PREMARKET"):
@@ -147,6 +159,21 @@ def merge_input(collected, supplied):
     return collected
 
 
+def sample_interpretation(packet, prior, comparisons):
+    """A fictional replay of a deterministic checkpoint renders the fixture narrative as the carried
+    interpretation, dated to the session's premarket so the two clocks read as they would in production."""
+    profile = edition_profile("PREMARKET")
+    context = dict(analyst_context(packet, profile, comparisons, prior),
+                   **continuity_context(prior, comparisons, profile))
+    fixture = "narrative.continuity.json" if prior["status"] == "available" else "narrative.sample.json"
+    narrative = validate_narrative(read_json(ROOT / "tests/fixtures" / fixture), packet, context)
+    premarket = checkpoint_session(timestamp(packet["run"]["target_time"]), "PREMARKET")
+    # Never dated after the replayed data: a fixture targeted before its premarket slot keeps its own clock.
+    interpreted_at = min(premarket["scheduled_at"], packet["run"]["target_time"], key=timestamp)
+    origin = dict(run_id="sample-premarket-fixture", checkpoint="PREMARKET", target_time=interpreted_at)
+    return interpretation_record(packet, narrative, context, __version__, digest(context), origin)
+
+
 def run(args):
     started = datetime.now(timezone.utc)
     mode = "SAMPLE" if args.replay else "LIVE"
@@ -166,6 +193,7 @@ def run(args):
             raw = merge_input(raw, read_json(args.input))
     # A commissioning run describes the market phase it actually collected in.
     checkpoint = current_phase(target) if commissioning else args.checkpoint
+    kind = checkpoint_kind(checkpoint)
     packet = normalize_packet(raw, target, mode, checkpoint)
     if commissioning:
         packet["run"]["commissioning"] = True
@@ -201,62 +229,101 @@ def run(args):
                                 comparisons=comparisons)
     write_json(folder / "evidence.json", packet)
     evidence_hash = digest(packet)
-    # The analyst reads exactly this saved projection; the validator checks references against it.
-    profile = edition_profile(checkpoint)
-    context = dict(analyst_context(packet, profile, comparisons, prior),
-                   **continuity_context(prior, comparisons, profile))
-    write_json(folder / "analyst_context.json", context)
+    context, interpretation, interpretation_note = None, None, ""
+    if kind == "synthesis":
+        # The analyst reads exactly this saved projection; the validator checks references against it.
+        profile = edition_profile(checkpoint)
+        context = dict(analyst_context(packet, profile, comparisons, prior),
+                       **continuity_context(prior, comparisons, profile))
+        write_json(folder / "analyst_context.json", context)
+    else:
+        # A deterministic checkpoint renders the last accepted synthesis of this session, unchanged.
+        interpretation, interpretation_note = admit_interpretation(bundle, packet)
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                               capture_output=True, text=True, check=False).stdout.strip()
     metadata = dict(app_version=__version__, code_revision=revision or "unknown", mode=mode,
                     run_id=folder.name,
                     target_time=target.isoformat(), started_at=started.isoformat(),
                     meaningful_premarket=packet["run"]["session"]["meaningful_premarket"],
-                    checkpoint=checkpoint, actual_started_at=started.isoformat(),
+                    checkpoint=checkpoint, kind=kind, actual_started_at=started.isoformat(),
                     scheduled_checkpoint_at=checkpoint_data["scheduled_at"],
                     coverage=packet["coverage"]["status"], evidence_hash=evidence_hash,
-                    context_schema=context["schema_version"], context_hash=digest(context),
-                    validation="NOT_RUN", model_route="none", experiment=experiment,
-                    commissioning=commissioning, synthesis_projection="full" if full else "compact",
+                    context_schema=context["schema_version"] if context else None,
+                    context_hash=digest(context) if context else None,
+                    validation="NOT_RUN", model_route="none", synthesis=dict(kind=kind, calls=0),
+                    experiment=experiment, commissioning=commissioning,
+                    synthesis_projection="full" if full else "compact",
                     continuity=dict(status=prior["status"], reason=prior["reason"],
                                     anchors={k: v["run_id"] for k, v in prior["anchors"].items()},
                                     comparisons=len(comparisons), advanced=False))
     try:
         if packet["coverage"]["status"] == "INSUFFICIENT":
             raise ValueError("no usable observations/events/context; evidence diagnostic only")
-        if args.replay and not args.synthesize:
-            fixture = "narrative.continuity.json" if prior["status"] == "available" else "narrative.sample.json"
-            narrative = read_json(ROOT / "tests/fixtures" / fixture)
-            validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)
-            system, prompt = construct_prompt(packet, full=full, context=context)
-            model = dict(route="fixture-replay", resolved_models=[],
-                         prompt_hash=digest(dict(system=system, user=prompt)),
-                         evidence_hash=evidence_hash)
+        narrative = None
+        if kind == "synthesis":
+            if args.replay and not args.synthesize:
+                fixture = "narrative.continuity.json" if prior["status"] == "available" else "narrative.sample.json"
+                narrative = read_json(ROOT / "tests/fixtures" / fixture)
+                validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)
+                system, prompt = construct_prompt(packet, full=full, context=context)
+                model = dict(route="fixture-replay", resolved_models=[],
+                             prompt_hash=digest(dict(system=system, user=prompt)),
+                             evidence_hash=evidence_hash)
+            else:
+                print("Evidence collected; requesting one isolated structured synthesis.", flush=True)
+                narrative, model = synthesize(packet, full=full, context=context)
+                metadata["synthesis"]["calls"] = 1
+            notes = editorial_notes(narrative, NARRATIVE_SCHEMA if full else narrative_schema(context["edition"]))
+            metadata["editorial"] = notes
+            for note in notes:
+                print(f"Editorial overshoot kept: {note['path']} {note['keyword']} {note['actual']} > {note['limit']}",
+                      flush=True)
+            metadata.update(model_route=model["route"], model=model, narrative_hash=digest(narrative))
+            # The accepted response is on disk before anything else can fail; it is paid for.
+            write_json(folder / "narrative.json", narrative)
+            # Package this edition's state from the same validated response; no second model call.
+            state = edition_state(packet, narrative, prior, comparisons, metadata["context_hash"],
+                                  metadata["narrative_hash"], __version__)
+            interpretation = interpretation_record(packet, narrative, context, __version__, metadata["context_hash"])
         else:
-            print("Evidence collected; requesting one isolated structured synthesis.", flush=True)
-            narrative, model = synthesize(packet, full=full, context=context)
-        notes = editorial_notes(narrative, NARRATIVE_SCHEMA if full else narrative_schema(context["edition"]))
-        metadata["editorial"] = notes
-        for note in notes:
-            print(f"Editorial overshoot kept: {note['path']} {note['keyword']} {note['actual']} > {note['limit']}",
-                  flush=True)
-        markdown, page = render(packet, narrative, context)
-        (folder / "brief.md").write_text(markdown)
-        (folder / "brief.html").write_text(page)
-        update_latest(RUN_ROOT, page)
-        if mode == "LIVE" and not experiment:
-            publish_latest(RUN_ROOT)
-        write_json(folder / "narrative.json", narrative)
-        metadata.update(validation="PASS", model_route=model["route"], model=model,
-                        narrative_hash=digest(narrative),
-                        markdown_hash=digest(markdown), html_hash=digest(page))
-        # Package this edition's state from the same validated response; no second model call.
-        state = edition_state(packet, narrative, prior, comparisons, metadata["context_hash"],
-                              metadata["narrative_hash"], __version__)
+            if interpretation is None and args.replay:
+                # A fictional replay carries the fixture narrative; a fixture mismatch is a diagnosed rejection.
+                interpretation, interpretation_note = sample_interpretation(packet, prior, comparisons), ""
+            if kind == "refresh":
+                if interpretation is None:
+                    raise ValueError(interpretation_note)
+                if not packet["coverage"].get("current_premarket"):
+                    raise ValueError("refresh has no timestamped current prints; the last accepted page stands")
+            state = carried_state(packet, prior, comparisons, interpretation, __version__)
+            closing = state["observed"]["data_status"]
+            if kind == "close" and closing["status"] not in CLOSING_DATA_FOR_HANDOFF:
+                raise ValueError(f"close snapshot has no observation from this session ({closing['reason']}); "
+                                 "the last accepted page stands")
+            metadata["interpretation"] = None if interpretation is None else dict(
+                run_id=interpretation["origin"]["run_id"], checkpoint=interpretation["origin"]["checkpoint"],
+                target_time=interpretation["origin"]["target_time"], content_hash=interpretation["content_hash"])
         write_json(folder / "edition_state.json", state)
         handoff, handoff_reason = session_handoff(state)
         if handoff is not None:
             write_json(folder / "session_handoff.json", handoff)
+        published = False
+        if interpretation is not None:
+            try:
+                markdown, page = render(packet, narrative, context, interpretation=interpretation)
+            except Exception as exc:  # noqa: BLE001 - any rendering defect is diagnosed like a rejection
+                # The accepted narrative is already on disk; nothing has been published.
+                raise ValueError(f"render failed after acceptance ({type(exc).__name__}: {exc})") from None
+            (folder / "brief.md").write_text(markdown)
+            (folder / "brief.html").write_text(page)
+            update_latest(RUN_ROOT, page)
+            if mode == "LIVE" and not experiment:
+                publish_latest(RUN_ROOT)
+            metadata.update(markdown_hash=digest(markdown), html_hash=digest(page))
+            published = True
+        else:
+            # Only a close reaches here: the session hands off even when no synthesis was accepted today.
+            print(f"Close snapshot recorded without a page ({interpretation_note}).", flush=True)
+        metadata.update(validation="PASS", published=published)
         metadata["continuity"].update(data_status=state["observed"]["data_status"],
                                       handoff="written" if handoff else handoff_reason,
                                       watches=[w["id"] for w in state["assessment"]["watches"]])
@@ -269,8 +336,10 @@ def run(args):
             write_json(temporary, {"run": str(folder.relative_to(RUN_ROOT)), "evidence_hash": digest(packet)})
             temporary.replace(pointer)
             # Only accepted production state advances the bundle; SAMPLE, experiment and
-            # commissioning runs never touch it.
-            write_bundle(bundle_path(RUN_ROOT), advance_bundle(bundle, state, handoff, datetime.now(timezone.utc)))
+            # commissioning runs never touch it. A refresh never rewrites the frozen interpretation.
+            write_bundle(bundle_path(RUN_ROOT),
+                         advance_bundle(bundle, state, handoff, datetime.now(timezone.utc),
+                                        interpretation if kind == "synthesis" else None))
             metadata["continuity"]["advanced"] = True
     except ValueError as exc:
         metadata.update(validation="FAILED", error=str(exc))
@@ -283,7 +352,8 @@ def run(args):
     finally:
         metadata["completed_at"] = datetime.now(timezone.utc).isoformat()
         write_json(folder / "metadata.json", metadata)
-    print(f"{mode} / {packet['coverage']['status']} / validated: {folder / 'brief.html'}")
+    outcome = "validated" if kind == "synthesis" else "refreshed" if published else "recorded"
+    print(f"{mode} / {packet['coverage']['status']} / {outcome}: {folder / 'brief.html'}")
     return 0
 
 
@@ -325,8 +395,7 @@ def restore_continuity(args, runner=subprocess.run):
             source = download / "bundle.json"
             origin = f"artifact {artifact.get('id')} from run {artifact['workflow_run']['id']}"
         bundle, note = restore_bundle(source, destination)
-        slots = {slot: (bundle[slot]["origin"]["run_id"] if bundle.get(slot) else None)
-                 for slot in ("close", "premarket", "latest")}
+        slots = {slot: (bundle[slot]["origin"]["run_id"] if bundle.get(slot) else None) for slot in SLOTS}
         if any(slots.values()):
             print(f"Continuity: restored {origin}; " + ", ".join(f"{k}={v}" for k, v in slots.items())
                   + (f"; {note}" if note else ""))
@@ -335,6 +404,20 @@ def restore_continuity(args, runner=subprocess.run):
     except (ValueError, OSError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
         print(f"Continuity: cold start; restore failed ({type(exc).__name__}).")
     return 0
+
+
+def completed_in_bundle(root, session_date, checkpoint):
+    """Whether the restored continuity bundle already holds an accepted production record of this
+    checkpoint for this session. The bundle survives runner boundaries, so a wake whose checkout predates
+    the earlier run's publish still sees that the checkpoint (and any paid synthesis) already happened."""
+    bundle, _ = load_bundle(bundle_path(root))
+    for slot in SLOTS:
+        origin = (bundle.get(slot) or {}).get("origin") or {}
+        if (origin.get("session_date") == session_date and origin.get("checkpoint") == checkpoint
+                and origin.get("mode") == "LIVE" and not origin.get("commissioning")
+                and not origin.get("experiment")):
+            return True
+    return False
 
 
 def scheduled(args):
@@ -351,7 +434,7 @@ def scheduled(args):
     already_published = (published.is_file()
                          and f'data-session-date="{info["session_date"]}"' in published.read_text()
                          and f'data-checkpoint="{args.checkpoint}"' in published.read_text())
-    if marker.is_file() or already_published:
+    if marker.is_file() or already_published or completed_in_bundle(RUN_ROOT, info["session_date"], args.checkpoint):
         print(f"SKIP / {args.checkpoint} / already completed for {info['session_date']}")
         return 0
     args.replay = False

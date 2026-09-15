@@ -19,6 +19,8 @@ ET = ZoneInfo("America/New_York")
 USABLE = {"AVAILABLE", "DELAYED", "BACKGROUND", "PROVISIONAL"}
 FRESHNESS = {"LIVE", "DELAYED", "NEAR_CLOSE", "PRIOR_CLOSE", "DATED", "STALE", "UNAVAILABLE", "INVALID"}
 SCHEMA = "market-brief.evidence.v0"
+# A numeric placeholder in narrative prose: `{{evidence-id}}` or `{{anchor:evidence-id}}`.
+PLACEHOLDER = re.compile(r"\{\{([a-zA-Z][\w-]*(?::[a-zA-Z][\w-]*)?)\}\}")
 # A post-close run may admit one labeled session-ending print per instrument: an intraday trade
 # from the final minutes before the exchange close, collected within a bounded grace period.
 # It is never an official closing bar; the provider's completed daily bar arrives the next day.

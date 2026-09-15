@@ -199,7 +199,7 @@ the comparisons, and appends the analyst's assessment. A watch without comparabl
 evidence can only be `unresolved`; `reversed` retires it; a passed horizon expires it. At most
 three watches and three relationships carry forward.
 
-A post-close edition classifies its closing data: `COMPLETED_SESSION`, `PROVISIONAL_NEAR_CLOSE`
+A post-close run classifies its closing data: `COMPLETED_SESSION`, `PROVISIONAL_NEAR_CLOSE`
 (labeled), `EARLIER_HISTORY_ONLY`, or `NONE`. Because the provider's completed daily bar is
 admitted only from the next day and the scheduler fires 30–40 minutes late, a CLOSE_1M run may
 admit one labeled `PROVISIONAL` print per instrument: an intraday trade from the final fifteen
@@ -208,6 +208,41 @@ cited, and carried with that status and never presented as an official closing b
 first two classifications produce a close handoff; the
 bundle's close pointer and edition pointers are separate, so a premarket never overwrites the
 previous close and a run without session observations leaves the last close untouched.
+
+## Cadence: two syntheses, deterministic refreshes
+
+`schedule.CHECKPOINT_KINDS` is the one statement of the day, and every checkpoint is anchored to
+the exchange session (never to a Pacific wall clock; British Columbia no longer follows New York's
+seasonal offset): `PREMARKET` (NYSE open −30 minutes, rich) and `OPEN_30M` (open +30 minutes,
+light) are the only `synthesis` checkpoints and the only checkpoints with an edition profile.
+`OPEN_1M` (open +1 minute) and `HOURLY_1100` … `HOURLY_1500` (exchange-clock hours inside the
+session) are `refresh` checkpoints; `CLOSE_1M` (close +1 minute) is the `close`. Times are displayed
+in Pacific time, so the opening-structure update reads 7:00 AM PT in New York daylight time and
+8:00 AM PT in standard time. A refresh collects, normalizes, derives, compares and
+publishes exactly as a synthesis does, but instead of calling the analyst it admits the bundle's
+`interpretation` slot: the last accepted synthesis of this session, frozen as a hashed continuity
+record (`kind: interpretation`) holding the narrative, every row it cites at the values the
+analyst saw, the prior state it assessed, its resolved watch horizons and its selected triggers.
+The page renders that record under this run's observed record and states both clocks. A refresh
+advances `latest` with a `carried` edition state (fresh snapshots, the carried assessment
+unchanged) and never writes the interpretation slot. Fail-closed rules: a refresh without a
+same-session interpretation or without timestamped current prints publishes nothing; a close
+without any observation from the session publishes nothing and does not hand off; a close without
+an interpretation still hands the observed session off, without a page. Cloudflare wakes one minute
+past each hour 13:00–21:00 UTC plus the :31 candidates, never two wakes within a minute; the Python
+scheduler resolves the checkpoint, skips hourly refreshes at or after an early close, and stays
+idempotent per checkpoint. A synthesis checkpoint is due only within twenty minutes of its scheduled
+minute (`schedule.TOLERANCE_MINUTES`), so the :31 UTC wake that serves the other New York season's
+open +1M (10:31 ET or 8:31 ET here) resolves to SKIP and can never become a second paid attempt at
+the opening-structure update; refreshes and the close keep a forty-five-minute window because a late
+deterministic run costs nothing. The restored continuity bundle is also a completion proof: a wake
+whose checkout predates an earlier run's publish still skips a checkpoint the bundle already records.
+Held as a bounded follow-up: two fresh runners both starting inside one synthesis window after a
+failed first attempt (an unusual queue delay) could still attempt twice; closing it needs a durable
+attempt record across runners. A `NEXT_BRIEF` watch horizon resolves to the next synthesis checkpoint,
+the next time an analyst can judge it; refreshes in between only carry it. A watch's criteria carry
+the rows they quote at the values their author saw (`values` on the watch record), so a carried
+criterion never drifts with newer data; a later synthesis may reassess or replace it.
 
 The bundle (`runs/continuity/bundle.json`, schema `market-brief.continuity-bundle.v1`, every
 record content-hashed) is written only by accepted LIVE, non-experiment, non-commissioning runs.

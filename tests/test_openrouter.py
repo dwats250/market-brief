@@ -120,10 +120,7 @@ def test_analyst_identity_and_edition_budget_are_configured_and_recorded(monkeyp
     assert meta["input_bytes"] > 1000 and meta["output_bytes"] > 100
 
 
-@pytest.mark.parametrize("checkpoint,total", [
-    ("PREMARKET", 7000), ("CLOSE_1M", 7000),
-    ("OPEN_1M", 4500), ("OPEN_30M", 4500), ("AFTERNOON", 4500),
-])
+@pytest.mark.parametrize("checkpoint,total", [("PREMARKET", 7000), ("OPEN_30M", 4500)])
 def test_each_edition_sends_low_adaptive_effort_and_unchanged_total_ceiling(checkpoint, total):
     from test_contract import edition_response
 

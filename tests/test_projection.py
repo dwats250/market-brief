@@ -265,4 +265,4 @@ def test_full_packet_diagnostics_validate_against_the_schema_advertised(tmp_path
     monkeypatch.setattr(cli, "RUN_ROOT", tmp_path)
     monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
     # A light checkpoint with the full diagnostic payload still accepts the two-paragraph sample.
-    assert cli.main(["premarket", "--replay", "--full-packet", "--checkpoint", "OPEN_1M"]) == 0
+    assert cli.main(["premarket", "--replay", "--full-packet", "--checkpoint", "OPEN_30M"]) == 0

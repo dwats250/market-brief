@@ -33,9 +33,9 @@ description states its maximum characters or items; those limits are checked
 after generation, so a response that is truncated by the generation limit, or
 that runs well past a stated limit, is discarded unpublished with no second attempt.
 
-HEADLINE: exactly one market claim, roughly 8 to 12 words, no caveat clause,
+HEADLINE: exactly one market claim, roughly eight to ten words, no caveat clause,
 no semicolon, no multi-part thesis. Specific rather than clever, and it must make
-sense read alone. Coverage caveats never belong in the headline.
+sense read alone on a phone. Coverage caveats never belong in the headline.
 
 COVERAGE CAVEAT: state the routine feed, venue, delay, breadth, or coverage
 limitation once, in the banner `limitation`. Do not repeat that general caveat in

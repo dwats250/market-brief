@@ -29,7 +29,13 @@ not filler. Avoid repeated summaries of the same moves in multiple sections.
 | Footer | Sources & coverage (collapsed) | Basis, limitations, source ledger, evidence ledger, technical details including continuity status |
 
 Editions share one contract; `config/editions.json` sets the budget profile and word guidance
-per checkpoint (rich premarket/close, light open/opening-structure/afternoon).
+for the two synthesis checkpoints (rich premarket, light opening structure). Deterministic
+checkpoints (open +1M, hourly refreshes, close snapshot) render the last accepted synthesis from
+its frozen interpretation record (`market-brief.continuity.v1`, kind `interpretation`: the
+narrative, every cited row at the values the analyst saw, the prior state it assessed, resolved
+horizons, selected triggers) under this run's observed record. The header therefore carries two
+clocks, "Interpretation as of" and "Data as of", and the scheduler's next update; the "What
+changed" heading carries a sub-caption naming the anchors.
 
 ## Narrative record
 

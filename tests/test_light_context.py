@@ -191,8 +191,8 @@ def test_light_catalog_limits_large_magnitude_to_current_window_rows():
 
 # --- continuity chains from the premarket anchor ------------------------------------------------
 
-@pytest.mark.parametrize("now, checkpoint", [(OPEN_1M_TUE, "OPEN_1M"), (OPEN_30M_TUE, "OPEN_30M"),
-                                             (AFTERNOON_TUE, "AFTERNOON")])
+@pytest.mark.parametrize("now, checkpoint", [(OPEN_1M_TUE, "OPEN_30M"), (OPEN_30M_TUE, "OPEN_30M"),
+                                             (AFTERNOON_TUE, "OPEN_30M")])
 def test_light_editions_fit_their_budget_with_headroom(now, checkpoint):
     packet, prior, comparisons, context = light_edition(now, checkpoint, f"sample-{checkpoint.lower()}-tue",
                                                        intraday_value=0.21)
@@ -204,9 +204,9 @@ def test_light_editions_fit_their_budget_with_headroom(now, checkpoint):
 
 
 def test_a_change_can_name_a_retained_changed_comparison_but_not_an_omitted_one():
-    packet, prior, comparisons, context = light_edition(AFTERNOON_TUE, "AFTERNOON", "sample-afternoon-tue",
+    packet, prior, comparisons, context = light_edition(AFTERNOON_TUE, "OPEN_30M", "sample-afternoon-tue",
                                                        intraday_value=0.21)
-    value = trimmed(narrative(), edition_profile("AFTERNOON"))
+    value = trimmed(narrative(), edition_profile("OPEN_30M"))
     value["changes"] = [dict(comparison_id="cmp-premarket-SPY-intraday",
                              text="SPY moved from {{premarket:SPY-intraday}} to {{SPY-intraday}} since the premarket.",
                              evidence_ids=["SPY-intraday", "premarket:SPY-intraday"])]
@@ -221,5 +221,5 @@ def test_a_change_can_name_a_retained_changed_comparison_but_not_an_omitted_one(
 
 
 def test_saved_light_context_round_trips_through_json():
-    _, _, _, context = light_edition(OPEN_1M_TUE, "OPEN_1M", "sample-open_1m-tue", intraday_value=0.21)
+    _, _, _, context = light_edition(OPEN_1M_TUE, "OPEN_30M", "sample-open_1m-tue", intraday_value=0.21)
     assert json.loads(compact_json(context)) == context

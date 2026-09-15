@@ -14,7 +14,16 @@ from jsonschema import Draft202012Validator
 
 from .context import analyst_context, edition_profile, supplied_ids
 from .continuity import ASSESSMENTS, CARRIED_ASSESSMENTS, prior_values, validate_state
-from .evidence import ROOT, canonical, compact_model_record, digest, evidence_catalog, model_packet, read_json
+from .evidence import (
+    PLACEHOLDER,
+    ROOT,
+    canonical,
+    compact_model_record,
+    digest,
+    evidence_catalog,
+    model_packet,
+    read_json,
+)
 
 
 def text_field(limit, optional=False):
@@ -23,8 +32,10 @@ def text_field(limit, optional=False):
 
 TEXT = text_field(360)
 IDENTIFIER = text_field(96)
-# One claim of roughly eight to twelve words; the bound is a backstop, not the target.
+# One claim of roughly eight to ten words; the character bound is a backstop, not the target, and the
+# word target is editorial: a grounded eleven-word headline is kept and noted, never discarded.
 HEADLINE = {"type": "string", "minLength": 1, "maxLength": 160}
+HEADLINE_WORD_TARGET = 10
 REFS = {"type": "array", "items": IDENTIFIER, "minItems": 1,
         "maxItems": 4, "uniqueItems": True}
 HORIZONS = ["OPENING_HOUR", "SESSION", "NEXT_CLOSE", "NEXT_BRIEF"]
@@ -86,7 +97,7 @@ NARRATIVE_SCHEMA = obj({
     "changes": {"type": "array", "maxItems": 3, "items": obj({
         "comparison_id": IDENTIFIER, "text": text_field(140), "evidence_ids": REFS})},
 })
-TOKEN = re.compile(r"\{\{([a-zA-Z][\w-]*(?::[a-zA-Z][\w-]*)?)\}\}")
+TOKEN = PLACEHOLDER
 
 
 def narrative_schema(profile=None):
@@ -137,6 +148,9 @@ def editorial_notes(narrative, schema):
         if error.validator in EDITORIAL_KEYWORDS:
             notes.append(dict(path=".".join(map(str, error.absolute_path)), keyword=error.validator,
                               limit=error.validator_value, actual=len(error.instance)))
+    title = (narrative.get("banner") or {}).get("title") if isinstance(narrative, dict) else None
+    if isinstance(title, str) and len(title.split()) > HEADLINE_WORD_TARGET:
+        notes.append(dict(path="banner.title", keyword="words", limit=HEADLINE_WORD_TARGET, actual=len(title.split())))
     return sorted(notes, key=lambda note: note["path"])
 
 

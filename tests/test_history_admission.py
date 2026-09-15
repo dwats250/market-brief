@@ -108,10 +108,10 @@ def test_lagged_daily_return_never_fills_today_without_current_prints():
     assert packet["history_lag"]
     facts = [row for row in [*packet["observations"], *packet["derived"]] if row["value"] is not None]
     row = compact_equity_rows(facts, ["SPY"], allow_daily_today=False)[0]
-    assert row["today"]["display"] == "n/a"
-    assert row["r20"]["display"] != "n/a"
+    assert row["today"]["display"] == "no print"
+    assert row["r20"]["display"].endswith(" %")
     view = presentation(packet, narrative())
-    assert all(r["today"]["display"] == "n/a" for r in view["equities"]["rows"] + view["sectors"]["rows"])
+    assert all(r["today"]["display"] == "no print" for r in view["equities"]["rows"] + view["sectors"]["rows"])
 
 
 def test_daily_return_still_fills_today_before_the_open():

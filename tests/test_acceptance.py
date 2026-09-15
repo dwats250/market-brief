@@ -96,8 +96,8 @@ def test_headroom_applies_to_counts_but_never_to_cuttingboard_or_structure():
 def test_light_edition_counts_get_the_same_bounded_headroom():
     from test_contract import edition_response
     from test_history_admission import packet_at, utc
-    packet = packet_at(utc("2026-09-08T19:10:00+00:00"), checkpoint="AFTERNOON")
-    profile = edition_profile("AFTERNOON")
+    packet = packet_at(utc("2026-09-08T19:10:00+00:00"), checkpoint="OPEN_30M")
+    profile = edition_profile("OPEN_30M")
     context = analyst_context(packet, profile)
     value = edition_response(profile, context)
     assert profile["summary_paragraphs"] == 1

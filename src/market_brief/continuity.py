@@ -14,12 +14,17 @@ from pathlib import Path
 
 import exchange_calendars as xcals
 
-from .evidence import ET, USABLE, digest, evidence_catalog, model_packet, read_json, timestamp
+from .evidence import ET, PLACEHOLDER, USABLE, digest, evidence_catalog, model_packet, read_json, timestamp
 from .schedule import CHECKPOINT_TITLES, next_checkpoint, next_session_date
 
 CONTINUITY_SCHEMA = "market-brief.continuity.v1"
 BUNDLE_SCHEMA = "market-brief.continuity-bundle.v1"
 ANCHORS = ("previous_close", "premarket", "latest")
+# Bundle slots: the previous session's close handoff, this session's premarket and latest accepted
+# edition states, and the last accepted synthesis frozen for deterministic refreshes to render.
+SLOTS = ("close", "premarket", "latest", "interpretation")
+INTERPRETATION_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at", "frequency",
+                         "status", "magnitude", "title", "published_at", "scheduled_at", "session_relation")
 ASSESSMENTS = ("new", "strengthened", "weakened", "reversed", "unresolved")
 CARRIED_ASSESSMENTS = ("strengthened", "weakened", "reversed", "unresolved")
 LIFECYCLES = ("active", "expired", "retired")
@@ -98,7 +103,7 @@ def resolve_horizon(horizon, now, events=(), current_checkpoint=None):
 # --- bundle persistence -----------------------------------------------------------------------
 
 def empty_bundle():
-    return dict(schema_version=BUNDLE_SCHEMA, close=None, premarket=None, latest=None,
+    return dict(schema_version=BUNDLE_SCHEMA, close=None, premarket=None, latest=None, interpretation=None,
                 updated_at=None, updated_by_run=None)
 
 
@@ -119,7 +124,7 @@ def load_bundle(path):
         return empty_bundle(), "continuity bundle schema mismatch"
     bundle = empty_bundle()
     dropped = []
-    for slot in ("close", "premarket", "latest"):
+    for slot in SLOTS:
         record = value.get(slot)
         if record is None:
             continue
@@ -142,13 +147,19 @@ def write_bundle(path, bundle):
     return path
 
 
-def advance_bundle(bundle, state, handoff, now):
-    """Edition and close pointers stay separate: a premarket never overwrites the previous close."""
+def advance_bundle(bundle, state, handoff, now, interpretation=None):
+    """Edition and close pointers stay separate: a premarket never overwrites the previous close.
+
+    Only a synthesis edition supplies an `interpretation`; a deterministic refresh advances the observed
+    state and leaves the frozen interpretation exactly as the analyst produced it.
+    """
     updated = dict(bundle, latest=state, updated_at=now.isoformat(), updated_by_run=state["origin"]["run_id"])
     if state["origin"]["checkpoint"] == "PREMARKET":
         updated["premarket"] = state
     if handoff is not None:
         updated["close"] = handoff
+    if interpretation is not None:
+        updated["interpretation"] = interpretation
     return updated
 
 
@@ -181,7 +192,7 @@ def restore_bundle(source, destination, mode="LIVE"):
     """
     bundle, note = load_bundle(source)
     dropped = []
-    for slot in ("close", "premarket", "latest"):
+    for slot in SLOTS:
         record = bundle.get(slot)
         if record is None:
             continue
@@ -191,7 +202,7 @@ def restore_bundle(source, destination, mode="LIVE"):
             dropped.append(slot)
     if dropped:
         note = "; ".join(filter(None, [note, "non-production records dropped: " + ", ".join(dropped)]))
-    if any(bundle[slot] for slot in ("close", "premarket", "latest")):
+    if any(bundle[slot] for slot in SLOTS):
         write_bundle(destination, bundle)
     return bundle, note
 
@@ -281,6 +292,20 @@ def admit_prior_state(bundle, packet):
             result["watches"].append(carried)
     result["relationships"] = json.loads(json.dumps(carrier["assessment"]["relationships"]))
     return result
+
+
+def admit_interpretation(bundle, packet):
+    """The frozen synthesis a deterministic refresh may render: this session's, production, hash-verified.
+
+    Returns (record, reason); a refresh without an admitted interpretation has nothing to publish.
+    """
+    record = bundle.get("interpretation")
+    reason = _origin_reason(record, packet, "interpretation")
+    if reason is None and record["session"]["date"] != packet["run"]["session"]["date"]:
+        reason = f"belongs to session {record['session']['date']}, not {packet['run']['session']['date']}"
+    if reason:
+        return None, f"no accepted interpretation for this session: {reason}"
+    return record, ""
 
 
 # --- deterministic comparisons ----------------------------------------------------------------
@@ -624,7 +649,11 @@ def edition_state(packet, narrative, prior, comparisons, context_hash, narrative
 
 
 def session_handoff(state):
-    """The close-designated state, derived from the same validated response without another call."""
+    """The close-designated state, derived from the same accepted state without another model call.
+
+    A deterministic close carries the last accepted character forward (labeled with the checkpoint that
+    interpreted it); without any same-session interpretation the handoff still carries the observed close.
+    """
     if state["origin"]["checkpoint"] != "CLOSE_1M":
         return None, "not a post-close edition"
     closing = state["observed"]["data_status"]
@@ -634,7 +663,141 @@ def session_handoff(state):
     handoff = json.loads(json.dumps(handoff))
     handoff["kind"] = "session_handoff"
     handoff["observed"]["closing_data"] = closing
-    handoff["assessment"]["closing_character"] = dict(state["assessment"]["character"],
-                                                      provisional=closing["status"] == "PROVISIONAL_NEAR_CLOSE")
+    character = state["assessment"].get("character")
+    handoff["assessment"]["closing_character"] = (
+        dict(character, provisional=closing["status"] == "PROVISIONAL_NEAR_CLOSE") if character else None)
     return _hashed(handoff), ""
+
+
+# --- frozen interpretation and deterministic refreshes -----------------------------------------
+
+def cited_ids(narrative, attention=()):
+    """Every evidence reference the narrative depends on: cited IDs and numeric placeholders."""
+    ids = set()
+    records = [narrative["banner"], narrative["character"], *narrative["summary"], *narrative["watches"],
+               *narrative.get("relationships", []), *narrative.get("watch_updates", []),
+               *narrative.get("changes", [])]
+    records += [p for section in narrative["sections"].values() for p in section]
+    for record in records:
+        ids |= set(record.get("evidence_ids", []))
+        for value in record.values():
+            if isinstance(value, str):
+                ids |= set(PLACEHOLDER.findall(value))
+    for item in attention:
+        ids |= set(item.get("evidence_ids", []))
+    return ids
+
+
+def interpretation_record(packet, narrative, context=None, app_version="", context_hash=None, origin=None):
+    """Freeze one accepted synthesis for the deterministic refreshes that follow it.
+
+    The record holds the narrative, every row it cites at the values the analyst saw, the prior state it
+    assessed, its resolved watch horizons, and its selected attention triggers. A refresh renders exactly
+    this record under a later data clock; nothing in it is recomputed from newer evidence.
+    `origin` overrides identity fields for a fictional replay only.
+    """
+    run = packet["run"]
+    now = timestamp(run["target_time"])
+    context = context or {}
+    prior = context.get("prior_state") or {"status": "cold_start", "reason": ""}
+    values = dict(evidence_catalog(packet), **prior_values(context))
+    attention = [dict(id=a["id"], symbol=a["symbol"], reason=a["reason"], date=a.get("date"),
+                      evidence_ids=list(a["evidence_ids"]))
+                 for a in packet.get("attention", []) if a["id"] in narrative.get("attention_ids", [])]
+    ids = cited_ids(narrative, attention)
+    evidence = {ident: {key: row[key] for key in INTERPRETATION_FIELDS if key in row}
+                for ident, row in values.items() if ident in ids}
+    counts = {}
+    for comparison in context.get("comparisons", []):
+        counts[comparison["status"]] = counts.get(comparison["status"], 0) + 1
+    horizons = []
+    for watch in narrative["watches"]:
+        try:
+            horizons.append(resolve_horizon(watch["horizon"], now, packet.get("events", []), run["checkpoint"]))
+        except ValueError:
+            horizons.append(dict(declared=watch["horizon"], phrase=watch["horizon"].replace("_", " ").title()))
+    record = dict(
+        schema_version=CONTINUITY_SCHEMA, kind="interpretation",
+        origin=dict(run_id=run.get("run_id"), mode=run["mode"], checkpoint=run["checkpoint"],
+                    session_date=run["session"]["date"], target_time=run["target_time"],
+                    evidence_hash=digest(packet), context_hash=context_hash, narrative_hash=digest(narrative),
+                    app_version=app_version, commissioning=bool(run.get("commissioning")),
+                    experiment=bool(run.get("experiment"))),
+        session=dict(date=run["session"]["date"], previous_session=run["session"]["previous_session"],
+                     close=run["session"]["close"], evidence_cutoff=run["target_time"]),
+        narrative=narrative, evidence=evidence,
+        prior_state=dict(status=prior.get("status", "cold_start"), reason=prior.get("reason", ""),
+                         anchors=prior.get("anchors", {}),
+                         watches=[{key: watch[key] for key in ("id", "lifecycle", "evaluability", "hypothesis",
+                                                               "horizon", "evidence_refs") if key in watch}
+                                  for watch in prior.get("watches", [])]),
+        continuity=dict(comparisons=sum(counts.values()), changed=counts.get("changed", 0),
+                        repeated=counts.get("no_new_observation", 0)),
+        horizons=horizons, attention=attention)
+    if origin:
+        record["origin"].update(origin)
+    return _hashed(record)
+
+
+def carried_state(packet, prior, comparisons, interpretation, app_version=""):
+    """Package a deterministic refresh: fresh observed state, the carried assessment unchanged.
+
+    Watches keep their lifecycle as admitted (a passed horizon has expired, nothing is reassessed),
+    relationships carry unchanged, and the character is the interpretation's, labeled with the checkpoint
+    that produced it. Snapshots come from this run's evidence so the next comparison sees fresh values.
+    """
+    run = packet["run"]
+    run_id = run["run_id"]
+    catalog = {ident: row for ident, row in evidence_catalog(model_packet(packet)).items() if "value" in row}
+    watches = []
+    for watch in prior.get("watches", []):
+        record = json.loads(json.dumps(watch))
+        record["evaluability"] = evaluability(record, prior, comparisons)
+        watches.append(record)
+    watches = watches[:CARRY_LIMIT]
+    relationships = [json.loads(json.dumps(r)) for r in prior.get("relationships", [])][:CARRY_LIMIT]
+    character, interpreted_by = None, None
+    if interpretation is not None:
+        narrative = interpretation["narrative"]
+        interpreted_by = interpretation["origin"]["run_id"]
+        character = dict(text=narrative["character"]["text"], label=narrative["banner"]["label"],
+                         evidence_refs=list(narrative["character"]["evidence_ids"]),
+                         interpreted_at=interpretation["origin"]["target_time"],
+                         checkpoint=interpretation["origin"]["checkpoint"], run_id=interpreted_by)
+    wanted = {ident for ident, row in catalog.items() if row["topic"] in ANCHOR_INSTRUMENTS}
+    for watch in watches:
+        wanted |= set(watch["evidence_refs"])
+    for relationship in relationships:
+        wanted |= set(relationship["evidence_refs"])
+    if character:
+        wanted |= set(character["evidence_refs"])
+    snapshots = {ident: _snapshot(catalog[ident], run_id) for ident in sorted(wanted) if ident in catalog}
+    for watch in watches:
+        for ref in watch["evidence_refs"]:
+            if ref not in snapshots:
+                for anchor_rows in prior.get("snapshots", {}).values():
+                    if ref in anchor_rows:
+                        snapshots[ref] = anchor_rows[ref]
+                        break
+    state = dict(
+        schema_version=CONTINUITY_SCHEMA, kind="edition_state",
+        origin=dict(run_id=run_id, mode=run["mode"], checkpoint=run["checkpoint"],
+                    session_date=run["session"]["date"], target_time=run["target_time"],
+                    evidence_hash=digest(packet), context_hash=None, narrative_hash=None,
+                    app_version=app_version, commissioning=bool(run.get("commissioning")),
+                    experiment=bool(run.get("experiment")), interpretation_run_id=interpreted_by),
+        session=dict(date=run["session"]["date"], previous_session=run["session"]["previous_session"],
+                     next_session=run["session"].get("next_session"), close=run["session"]["close"],
+                     evidence_cutoff=run["target_time"]),
+        observed=dict(data_status=data_status(packet), anchors=prior.get("anchors", {}),
+                      continuity=prior["status"], continuity_reason=prior.get("reason", ""),
+                      comparisons=comparisons, snapshots=snapshots),
+        assessment={"class": "INTERPRETATION", "origin": "carried", "interpretation_run_id": interpreted_by,
+                    "character": character, "relationships": relationships, "watches": watches,
+                    "retired": [], "changes": []},
+        next_events=[dict(id=e["id"], title=e["title"], scheduled_at=e["scheduled_at"],
+                          session_date=e.get("session_date"))
+                     for e in packet["events"] if e.get("session_relation") == "NEXT SESSION"],
+    )
+    return _hashed(state)
 

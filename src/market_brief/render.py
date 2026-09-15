@@ -4,29 +4,35 @@ Order: header → headline / character / short executive read → compact snapsh
 what matters next → equity interpretation and support → macro interpretation and rates → sector
 view → cross-asset structure → collapsed sources & coverage. Deterministic rows are the record;
 the analyst's interpretation sits above them and is labeled once.
+
+Two clocks. The interpretation (headline, character, read, what changed, watches, section
+paragraphs, flagged reasons) is rendered from a frozen interpretation record at the values the analyst
+saw; the observed record (figures, tables, events, sources, ledger) is this run's. A synthesis edition
+freezes its own record, so both clocks coincide; a deterministic refresh carries the record forward.
 """
 
 import html
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from .continuity import prior_values, resolve_horizon
-from .evidence import ROOT, USABLE, evidence_catalog, timestamp
+from .continuity import interpretation_record
+from .evidence import PLACEHOLDER, ROOT, USABLE, evidence_catalog, timestamp
 from .metrics import rank_by_spread
-from .synthesize import TOKEN
+from .schedule import CHECKPOINT_KINDS, checkpoint_kind, next_checkpoint
 
 PACIFIC = ZoneInfo("America/Vancouver")
 DISPLAY_STATUSES = {"LIVE", "LIVE COMMISSIONING", "LAST GOOD BRIEF", "SAMPLE"}
-CHECKPOINT_LABELS = {"PREMARKET": "PREMARKET", "OPEN_1M": "OPEN +1M", "OPEN_30M": "OPENING STRUCTURE",
-                     "AFTERNOON": "AFTERNOON", "CLOSE_1M": "CLOSE +1M"}
-EDITION_LABELS = {"PREMARKET": "Pre-market edition", "OPEN_1M": "Open +1M edition",
-                  "OPEN_30M": "Opening structure edition", "AFTERNOON": "Afternoon edition",
-                  "CLOSE_1M": "Close +1M edition"}
+EDITION_LABELS = {"PREMARKET": "Premarket edition", "OPEN_1M": "Opening refresh",
+                  "OPEN_30M": "Opening structure edition", "HOURLY_0800": "Hourly refresh",
+                  "HOURLY_0900": "Hourly refresh", "HOURLY_1000": "Hourly refresh", "HOURLY_1100": "Hourly refresh",
+                  "HOURLY_1200": "Hourly refresh", "CLOSE_1M": "Close snapshot"}
 PHASE_PHRASES = {"PREMARKET": "before the open", "OPEN_1M": "in the opening minutes",
-                 "OPEN_30M": "during the morning session", "AFTERNOON": "during the afternoon session",
+                 "OPEN_30M": "during the morning session", "HOURLY_0800": "during the morning session",
+                 "HOURLY_0900": "during the morning session", "HOURLY_1000": "during the morning session",
+                 "HOURLY_1100": "during the morning session", "HOURLY_1200": "during the afternoon session",
                  "CLOSE_1M": "after the close"}
 SECTOR_LABELS = {
     "XLK": "Technology", "XLF": "Financials", "XLE": "Energy",
@@ -52,6 +58,17 @@ SOURCE_KIND_LABELS = {"price": "prices", "quote": "current prints", "economic_se
 SOURCE_STATUS_LABELS = {"AVAILABLE": "Available", "UNAVAILABLE": "Unavailable", "DEGRADED": "Degraded",
                         "STALE": "Stale", "DELAYED": "Delayed"}
 SIGNED_METRICS = {"daily return", "daily yield change", "premarket return", "intraday return", "distance from 50DMA"}
+# Absence vocabulary. `no print`: the current observation is missing while useful history exists.
+# `—`: structurally not applicable. `not collected`: the source or input is not automated.
+NO_PRINT = "no print"
+NOT_APPLICABLE = "—"
+NOT_COLLECTED = "not collected"
+# Rows whose print is this far behind the table's shared clock carry their own clock.
+SHARED_CLOCK_TOLERANCE = timedelta(minutes=5)
+# Deterministic attention triggers, compressed to a short tag; the analyst's sentence is the body.
+TRIGGER_TAGS = (("Material twenty-session return spread versus ", "20-session spread vs "),
+                ("Daily close crossed up through its moving average", "Crossed above its 50DMA"),
+                ("Daily close crossed down through its moving average", "Crossed below its 50DMA"))
 
 
 def pacific_time(value, include_date=False):
@@ -61,8 +78,8 @@ def pacific_time(value, include_date=False):
 
 
 def short_date(value):
-    """`2026-09-04` → `Fri, Sep 4`; an intraday clock keeps its Pacific time."""
-    if not isinstance(value, str):
+    """`2026-09-04` → `Fri, Sep 4`; an intraday clock keeps its Pacific time. The one daily-date formatter."""
+    if not isinstance(value, str) or not value:
         return ""
     if "T" in value:
         return pacific_time(value, True)
@@ -116,6 +133,14 @@ def instrument_label(symbol):
     return f"{name} · {symbol}" if name else symbol
 
 
+def trigger_tag(reason):
+    """`Material twenty-session return spread versus SPY` → `20-session spread vs SPY`."""
+    for prefix, tag in TRIGGER_TAGS:
+        if reason.startswith(prefix):
+            return tag + reason[len(prefix):] if prefix.endswith(" ") else tag
+    return reason
+
+
 def source_rows(sources):
     """Reader-facing source ledger rows: what each source is, whether it worked, and why not."""
     rows = []
@@ -124,9 +149,12 @@ def source_rows(sources):
         name = s["name"]
         redundant = any(word in name.lower() for word in kind.lower().split())
         status = s.get("status", "AVAILABLE")
+        reason = s.get("reason") or ""
+        if reason.startswith("not automated"):
+            reason = NOT_COLLECTED
         rows.append(dict(s, kind_label="" if redundant else kind,
                          status_label=SOURCE_STATUS_LABELS.get(status, status.title()),
-                         unavailable=status != "AVAILABLE",
+                         unavailable=status != "AVAILABLE", reason=reason,
                          retrieved=compact_clock(s.get("retrieved_at", "")),
                          detail=" · ".join(filter(None, (s.get("provider"), s.get("feed"), s.get("data_delay"))))))
     return rows
@@ -145,43 +173,43 @@ def compact_clock(value):
     return pacific_time(value) if "T" in value else short_date(value)
 
 
-def change_head(label):
-    """Short column header for the change column; the full label sits in the table caption."""
-    for prefix, head in (("Daily", "Daily"), ("Session-ending", "Session end"), ("Intraday", "Intraday")):
-        if label.startswith(prefix):
-            return head
-    return "Change"
-
-
 def direction(row):
     if row.get("metric") not in SIGNED_METRICS and not row.get("metric", "").startswith("relative to "):
         return "neutral"
     value = row.get("value")
-    if not isinstance(value, (int, float)) or value == 0:
+    if not isinstance(value, (int, float)) or round(value, 2) == 0:
         return "neutral"
     return "positive" if value > 0 else "negative"
 
 
 def formatted(row):
     if row.get("value") is None:
-        return "Unavailable"
+        return NO_PRINT
     value = row["value"]
     signed = row["unit"] in {"bp", "pp", "%"}
-    number = f"{value:+.2f}" if signed else f"{value:.2f}"
+    # A value that rounds to zero is shown as zero: no sign, no colour.
+    number = "0.00" if signed and round(value, 2) == 0 else f"{value:+.2f}" if signed else f"{value:.2f}"
     return f"{number} {row['unit']}"
 
 
-def cell(row, bare=False):
-    return dict(display=(formatted(row).removesuffix(" USD") if bare else formatted(row)) if row else "n/a",
-                value=row.get("value") if row else None,
-                direction=direction(row) if row else "neutral",
-                id=row.get("id") if row else None, status=row.get("status") if row else None,
-                observed=observed_label(row.get("observed_at")) if row else "",
-                observed_at=row.get("observed_at") if row else None)
+def absent_cell(text=NOT_APPLICABLE):
+    return dict(display=text, value=None, direction="neutral", id=None, status=None, observed="",
+                observed_at=None, absent=True)
+
+
+def cell(row, bare=False, absent=NOT_APPLICABLE):
+    if not row:
+        return absent_cell(absent)
+    return dict(display=formatted(row).removesuffix(" USD") if bare else formatted(row),
+                value=row.get("value"), direction=direction(row), id=row.get("id"), status=row.get("status"),
+                observed=observed_label(row.get("observed_at")), observed_at=row.get("observed_at"), absent=False)
 
 
 def compact_equity_rows(rows, symbols, allow_daily_today=True):
-    """One row per instrument: current-or-daily change, 20s return, labeled spread, 50DMA distance."""
+    """One row per instrument: current-or-daily change, 20s return, labeled spread, 50DMA distance.
+
+    `today` starts as the intraday print or the daily return; `change_column` settles the table's mode.
+    """
     result = []
     for symbol in symbols:
         symbol_rows = [row for row in rows if row["topic"] == symbol]
@@ -190,57 +218,56 @@ def compact_equity_rows(rows, symbols, allow_daily_today=True):
         current = next((row for row in symbol_rows
                         if row.get("frequency") == "intraday" and row["status"] in USABLE), None)
         daily = next((row for row in symbol_rows if row.get("metric") == "daily return"), None)
-        if allow_daily_today:
-            current = current or daily
+        today = current or (daily if allow_daily_today else None)
         r20 = next((row for row in symbol_rows if row.get("metric") == "twenty-session return"), None)
         relative = next((row for row in symbol_rows
                          if row.get("metric", "").startswith("relative to ")), None)
         average = next((row for row in symbol_rows if row.get("metric") == "fifty-session average"), None)
         distance = next((row for row in symbol_rows if row.get("metric") == "distance from 50DMA"), None)
         result.append(dict(symbol=symbol, label=SECTOR_LABELS.get(symbol) or INSTRUMENT_LABELS.get(symbol, symbol),
-                           today=cell(current), daily=cell(daily), r20=cell(r20), relative=cell(relative),
+                           today=cell(today, absent=NO_PRINT), intraday=cell(current, absent=NO_PRINT),
+                           daily=cell(daily, absent=NO_PRINT), r20=cell(r20), relative=cell(relative),
                            relative_label=(relative.get("metric", "").removeprefix("relative to ")
                                            if relative else "benchmark"),
                            average=cell(average, bare=True), dma=cell(distance),
-                           current_is_intraday=bool(current and current.get("frequency") == "intraday")))
+                           current_is_intraday=bool(current)))
     return result
 
 
-def table_asof(observed_at_values, tolerance_minutes=5):
-    """One table-level clock when every row's intraday print is within a few minutes."""
-    clocks = []
-    for value in observed_at_values:
-        if not (isinstance(value, str) and "T" in value):
-            return None
-        clocks.append(timestamp(value))
-    if not clocks or (max(clocks) - min(clocks)).total_seconds() > tolerance_minutes * 60:
-        return None
-    return f"as of {pacific_time(max(clocks).isoformat())}"
+def change_column(rows, allow_daily_today=True):
+    """Settle one table's change column: one shared intraday clock with per-row exceptions, or one daily date.
 
-
-def collapse_shared_clock(rows):
-    asof = table_asof([row["today"]["observed_at"] for row in rows]) if rows else None
-    if asof:
+    Intraday mode applies as soon as any row has a usable print: the caption carries the latest print's
+    clock, a row whose print is older than the tolerance carries its own clock, and a row without a print
+    says so. Without any print the column is the dated daily return. Mixed columns never happen.
+    """
+    printed = [row for row in rows if row["intraday"]["id"]]
+    if printed:
+        provisional = all(row["intraday"]["status"] == "PROVISIONAL" for row in printed)
+        label = "Session-ending print vs prior close · provisional" if provisional else "Intraday vs prior close"
+        latest = max(timestamp(row["intraday"]["observed_at"]) for row in printed)
         for row in rows:
-            row["today"]["observed"] = ""
-    return asof
-
-
-def change_column(rows):
-    """Label the change column by what it is: a shared intraday clock or a dated daily return."""
-    filled = [row for row in rows if row["today"]["id"]]
-    if not filled:
-        return "Change", None
-    if all(row["current_is_intraday"] for row in filled):
-        label = ("Session-ending print vs prior close · provisional"
-                 if all(row["today"]["status"] == "PROVISIONAL" for row in filled) else "Intraday vs prior close")
-        return label, collapse_shared_clock(rows)
-    dates = {row["today"]["observed_at"] for row in filled}
-    if len(dates) == 1 and all(not row["current_is_intraday"] for row in filled):
+            if row["intraday"]["id"]:
+                row["today"] = dict(row["intraday"])
+                behind = latest - timestamp(row["today"]["observed_at"])
+                row["today"]["observed"] = (compact_clock(row["today"]["observed_at"])
+                                            if behind > SHARED_CLOCK_TOLERANCE else "")
+            else:
+                row["today"] = absent_cell(NO_PRINT)
+        return label, f"as of {pacific_time(latest.isoformat())}"
+    dated = [row for row in rows if row["daily"]["id"]] if allow_daily_today else []
+    if dated:
+        dates = {row["daily"]["observed_at"] for row in dated}
         for row in rows:
-            row["today"]["observed"] = ""
-        return f"Daily · {short_date(next(iter(dates)))}", None
-    return "Change · dated per row", None
+            row["today"] = dict(row["daily"]) if row["daily"]["id"] else absent_cell(NO_PRINT)
+            row["today"]["observed"] = (short_date(row["today"]["observed_at"])
+                                        if len(dates) > 1 and row["today"]["id"] else "")
+        if len(dates) == 1:
+            return f"Daily change · {short_date(next(iter(dates)))}", None
+        return "Daily change · dated per row", None
+    for row in rows:
+        row["today"] = absent_cell(NO_PRINT)
+    return "Change", None
 
 
 def treasury_rows(facts):
@@ -255,7 +282,7 @@ def treasury_rows(facts):
         paired = bool(level and change and level["observed_at"] == change["observed_at"]
                       and level["source_id"] == change["source_id"])
         anchor = level or change
-        result.append(dict(maturity=term, level=cell(level), change=cell(change if paired else None),
+        result.append(dict(maturity=term, level=cell(level, absent=NO_PRINT), change=cell(change if paired else None),
                            change_note="" if paired or not change else
                            f"change dated {short_date(change['observed_at'])} not paired",
                            date=short_date(anchor["observed_at"]), observed_at=anchor["observed_at"],
@@ -268,39 +295,78 @@ def treasury_rows(facts):
     return result, asof
 
 
-def presentation(packet, narrative, context=None):
+def next_update_label(info, session_date):
+    """`Next update · 10:00 AM PT`, naming an interpretation or the close snapshot, or the next session."""
+    clock = pacific_time(info["scheduled_at"])
+    if info["session_date"] != session_date:
+        return f"Next update · {short_date(info['session_date'])} · {clock} premarket"
+    if info["kind"] == "synthesis":
+        return f"Next update · {clock} · interpretation"
+    if info["kind"] == "close":
+        return f"Next update · {clock} · close snapshot"
+    return f"Next update · {clock}"
+
+
+def since_caption(anchors):
+    """`vs the previous close · Fri, Sep 11` or `vs premarket and the 7:00 AM update`."""
+    if "previous_close" in anchors:
+        return f"vs the previous close · {short_date(anchors['previous_close']['session_date'])}"
+    parts = []
+    for name, anchor in anchors.items():
+        if name == "premarket":
+            parts.append("premarket")
+        else:
+            noun = "refresh" if CHECKPOINT_KINDS.get(anchor.get("checkpoint")) == "refresh" else "update"
+            parts.append(f"the {pacific_time(anchor['evidence_cutoff'])} {noun}")
+    return "vs " + " and ".join(parts) if parts else None
+
+
+def presentation(packet, narrative=None, context=None, interpretation=None):
+    if interpretation is None:
+        interpretation = interpretation_record(packet, narrative, context)
+    narrative = interpretation["narrative"]
     catalog = evidence_catalog(packet)
-    values = dict(catalog, **prior_values(context))
+    frozen = interpretation["evidence"]
     actual_started_at = packet["run"].get("actual_started_at", packet["run"]["target_time"])
     status = status_for(packet)
     commissioning = (status == "SAMPLE" and packet["run"]["mode"] == "LIVE")
     live_commissioning = status == "LIVE COMMISSIONING"
     checkpoint = packet["run"]["checkpoint"]
+    kind = checkpoint_kind(checkpoint)
     target = timestamp(packet["run"]["target_time"])
+    interpreted = interpretation["origin"]
+    # Carried: the interpretation was made by an earlier run, so the page has two clocks.
+    carried = (interpreted.get("run_id") != packet["run"].get("run_id")
+               or interpreted["target_time"] != packet["run"]["target_time"])
+    session_date = packet["run"]["session"]["date"]
 
     def expand(text):
-        return TOKEN.sub(lambda m: formatted(values[m[1]]), text)
+        return PLACEHOLDER.sub(lambda m: formatted(frozen[m[1]]), text)
 
-    def refs(ids):
-        """The cited rows behind one block, formatted for a quiet expandable marker; IDs are unchanged."""
-        rows = []
+    def refs(ids, rows=None):
+        """The rows behind one block, formatted for a quiet expandable marker; IDs are unchanged.
+
+        Prose cites the frozen rows the analyst saw; table proofs cite this run's rows.
+        """
+        rows = frozen if rows is None else rows
+        result = []
         for ref in ids:
-            row = values.get(ref)
+            row = rows.get(ref)
             if row is None:
                 continue
             if row.get("metric") and row.get("topic"):
                 label = f"{instrument_label(row['topic'])} · {reader_metric_label(row)}"
             else:
                 label = row.get("title") or row.get("topic") or ref
-            rows.append(dict(id=ref, label=label, display=formatted(row) if "value" in row else "",
-                             when=compact_clock(row.get("observed_at") or row.get("published_at") or ""),
-                             anchor=ref in catalog))
-        return rows
+            result.append(dict(id=ref, label=label, display=formatted(row) if "value" in row else "",
+                               when=compact_clock(row.get("observed_at") or row.get("published_at") or ""),
+                               anchor=ref in catalog))
+        return result
 
     def proof(rows, keys=("today", "relative", "r20", "dma")):
         """Every cell of one instrument table, as the same compact proof lines the markers use."""
         ids = [row[key]["id"] for row in rows for key in keys if row.get(key) and row[key].get("id")]
-        return refs(list(dict.fromkeys(ids)))
+        return refs(list(dict.fromkeys(ids)), catalog)
 
     def paragraph(p):
         return {**p, "text": expand(p["text"]), "uncertainty": expand(p["uncertainty"]),
@@ -323,6 +389,14 @@ def presentation(packet, narrative, context=None):
     def current_or_daily(symbol):
         return next((i for i in (f"{symbol}-intraday", f"{symbol}-daily") if i in catalog), None)
 
+    def figure_clock(row):
+        """A figure carries its own clock only when it is dated or trails the page's data clock."""
+        observed = row["observed_at"]
+        if "T" not in observed:
+            return compact_clock(observed)
+        behind = timestamp(actual_started_at) - timestamp(observed)
+        return compact_clock(observed) if behind > SHARED_CLOCK_TOLERANCE else ""
+
     current_sectors = sorted((r for r in facts if r["frequency"] == "intraday" and r["topic"] in SECTORS),
                              key=lambda r: abs(r["value"]), reverse=True)
     priority = [current_or_daily("SPY"), current_or_daily("QQQ"),
@@ -331,10 +405,10 @@ def presentation(packet, narrative, context=None):
     chips = [dict(catalog[i], display=formatted(catalog[i]), direction=direction(catalog[i]),
                   metric_label=metric_label(catalog[i]),
                   observed_label=observed_label(catalog[i]["observed_at"]),
-                  observed_short=compact_clock(catalog[i]["observed_at"]))
+                  observed_short=figure_clock(catalog[i]))
              for i in dict.fromkeys(priority) if i and i in catalog][:6]
     if not chips:
-        chips = [dict(row, metric_label=metric_label(row), observed_short=compact_clock(row["observed_at"]))
+        chips = [dict(row, metric_label=metric_label(row), observed_short=figure_clock(row))
                  for row in facts[:4]]
     # The page shows three figures: the first three of the same deterministic priority order
     # (SPY, QQQ, then the leading current sector print when one exists, else GLD). No new ranking.
@@ -345,62 +419,52 @@ def presentation(packet, narrative, context=None):
 
     # Tables: mega-caps, sectors ranked by the labeled twenty-session spread, metals structure.
     mega_rows = compact_equity_rows(facts, MEGACAPS, daily_today)
-    mega_change, mega_asof = change_column(mega_rows)
+    mega_change, mega_asof = change_column(mega_rows, daily_today)
     sector_rows = rank_by_spread(compact_equity_rows(facts, list(SECTOR_LABELS), daily_today), list(SECTOR_LABELS))
-    sector_change, sector_asof = change_column(sector_rows)
+    sector_change, sector_asof = change_column(sector_rows, daily_today)
     metal_rows = compact_equity_rows(facts, METALS, daily_today)
-    metal_change, metal_asof = change_column(metal_rows)
+    metal_change, metal_asof = change_column(metal_rows, daily_today)
     yields, yields_asof = treasury_rows(treasuries)
 
-    # What matters next: watches with natural horizons, carried watches, attention, events.
+    # What matters next: watches with their frozen horizons, carried watches, attention, events.
     watches = []
-    for w in narrative["watches"]:
-        try:
-            horizon = resolve_horizon(w["horizon"], target, packet["events"], checkpoint)
-        except ValueError:
-            horizon = dict(declared=w["horizon"], phrase=w["horizon"].replace("_", " ").title())
+    for w, horizon in zip(narrative["watches"], interpretation["horizons"]):
+        expires = horizon.get("expires_at")
         watches.append({**w, **{k: expand(w[k]) for k in ("condition", "confirmation", "contradiction")},
                         "phrase": horizon["phrase"], "expires_session": horizon.get("expires_session"),
+                        "expired": bool(expires) and timestamp(expires) <= target,
                         "refs": refs(w["evidence_ids"])})
-    prior = (context or {}).get("prior_state") or {"status": "cold_start", "reason": ""}
+    prior = interpretation["prior_state"]
     available = prior.get("status") == "available"
     updates = {u["carried_id"]: u for u in narrative.get("watch_updates", [])}
-    carried = []
+    carried_watches = []
     for watch in prior.get("watches", []) if available else []:
         update = updates.get(watch["id"])
         if update is None and watch["lifecycle"] != "active":
             continue  # a horizon that passed without reassessment is history, not a live item
-        carried.append(dict(id=watch["id"], hypothesis=expand(watch["hypothesis"]),
-                            phrase=watch["horizon"].get("phrase", ""), lifecycle=watch["lifecycle"],
-                            evaluability=watch["evaluability"],
-                            assessment=update["assessment"] if update else "not reassessed",
-                            reason=expand(update["reason"]) if update else "",
-                            evidence_ids=update["evidence_ids"] if update else watch["evidence_refs"],
-                            refs=refs(update["evidence_ids"] if update else watch["evidence_refs"])))
-    selected = set(narrative["attention_ids"])
+        expires = watch["horizon"].get("expires_at")
+        carried_watches.append(dict(
+            id=watch["id"], hypothesis=expand(watch["hypothesis"]),
+            phrase=watch["horizon"].get("phrase", ""), lifecycle=watch["lifecycle"],
+            expired=watch["lifecycle"] == "expired" or (bool(expires) and timestamp(expires) <= target),
+            evaluability=watch["evaluability"],
+            assessment=update["assessment"] if update else "not reassessed",
+            reason=expand(update["reason"]) if update else "",
+            evidence_ids=update["evidence_ids"] if update else watch["evidence_refs"],
+            refs=refs(update["evidence_ids"] if update else watch["evidence_refs"])))
     attention_why = {item["id"]: item["why"] for item in narrative.get("attention", [])}
-    attention = [{**a, "why": attention_why.get(a["id"], ""),
+    attention = [{**a, "why": attention_why.get(a["id"], ""), "trigger": trigger_tag(a["reason"]),
                   "display_symbol": (f"{SECTOR_LABELS[a['symbol']]} · {a['symbol']}"
                                      if a["symbol"] in SECTOR_LABELS else a["symbol"]),
                   "date_label": short_date(a.get("date")), "refs": refs(a["evidence_ids"])}
-                 for a in packet["attention"] if a["id"] in selected]
+                 for a in interpretation["attention"]]
     events = [{**event, "scheduled_label": pacific_time(event["scheduled_at"], True),
-               "relation_label": event.get("session_relation", "").lower(), "refs": refs([event["id"]])}
+               "relation_label": event.get("session_relation", "").lower(), "refs": refs([event["id"]], catalog)}
               for event in packet["events"][:4]]
 
-    # What changed: deterministic comparisons plus the analyst's interpretation of changed ones.
-    comparisons = (context or {}).get("comparisons", [])
+    # What changed: the analyst's interpretation of deterministic changed comparisons, frozen with it.
     anchors = prior.get("anchors", {}) if available else {}
-    since_label = None
-    if "previous_close" in anchors:
-        since_label = f"Since the previous close · {short_date(anchors['previous_close']['session_date'])}"
-    elif anchors:
-        parts = ["the premarket edition" if name == "premarket" else
-                 f"the {EDITION_LABELS.get(anchor['checkpoint'], 'latest edition').lower()} at "
-                 f"{pacific_time(anchor['evidence_cutoff'])}" for name, anchor in anchors.items()]
-        since_label = "Since " + " and ".join(parts)
-    changed = [c for c in comparisons if c["status"] == "changed"]
-    repeated = [c for c in comparisons if c["status"] == "no_new_observation"]
+    continuity = interpretation["continuity"]
     since_entries = [dict(kind="change", text=expand(c["text"]), evidence_ids=c["evidence_ids"],
                           refs=refs(c["evidence_ids"]))
                      for c in narrative.get("changes", [])]
@@ -410,14 +474,14 @@ def presentation(packet, narrative, context=None):
                                     reason=expand(r["reason"]), evidence_ids=r["evidence_ids"],
                                     refs=refs(r["evidence_ids"])))
     since_note = ""
-    if available and not changed:
-        since_note = (f"No comparable measurement has changed: {len(repeated)} repeated prior-close "
-                      "observations and no new session prints." if repeated else
+    if available and not continuity["changed"]:
+        since_note = (f"No comparable measurement has changed: {continuity['repeated']} repeated prior-close "
+                      "observations and no new session prints." if continuity["repeated"] else
                       "No comparable measurement is available yet.")
     elif not available:
         # Reader copy; the admission reason stays in Technical details.
         since_note = ("No accepted close to carry forward, so this is a baseline read."
-                      if checkpoint == "PREMARKET"
+                      if interpreted["checkpoint"] == "PREMARKET"
                       else "First edition of this session; nothing is carried forward yet.")
 
     cuttingboard_visible = (packet["cuttingboard"].get("status") == "AVAILABLE"
@@ -436,15 +500,25 @@ def presentation(packet, narrative, context=None):
     limitations = list(packet["coverage"]["limitations"])
     if omitted:
         limitations.append("No admitted material for: " + ", ".join(omitted))
+    run_continuity = packet.get("continuity") or dict(status=prior.get("status", "cold_start"),
+                                                      reason=prior.get("reason", ""), anchors=anchors,
+                                                      comparisons=[])
+    run_comparisons = run_continuity.get("comparisons", [])
     technical = dict(
         generated_utc=actual_started_at,
         evidence_cutoff_utc=packet["run"]["target_time"],
-        checkpoint=checkpoint,
+        checkpoint=checkpoint, kind=kind,
+        synthesis=("this edition's one analyst call" if kind == "synthesis" else
+                   f"none; deterministic {kind} under interpretation run {interpreted.get('run_id') or 'sample'}"),
+        interpretation=dict(run_id=interpreted.get("run_id"), checkpoint=interpreted.get("checkpoint"),
+                            evidence_cutoff=interpreted.get("target_time")),
         bootstrap=packet["coverage"]["bootstrap"],
         calendar=packet["coverage"].get("calendar", "unavailable"),
-        continuity=dict(status=prior.get("status", "cold_start"), reason=prior.get("reason", ""),
-                        anchors={k: v.get("run_id") for k, v in anchors.items()},
-                        comparisons=len(comparisons), changed=len(changed)),
+        basis=packet["coverage"].get("basis", ""), horizon=packet["coverage"].get("horizon", ""),
+        continuity=dict(status=run_continuity.get("status", "cold_start"), reason=run_continuity.get("reason", ""),
+                        anchors={k: v.get("run_id") for k, v in run_continuity.get("anchors", {}).items()},
+                        comparisons=len(run_comparisons),
+                        changed=sum(1 for c in run_comparisons if c.get("status") == "changed")),
         cuttingboard={key: packet["cuttingboard"].get(key) for key in
                       ("status", "generated_at", "captured_at", "schema_version")
                       if packet["cuttingboard"].get(key)},
@@ -476,17 +550,23 @@ def presentation(packet, narrative, context=None):
     sources = source_rows(packet["sources"])
     technical["sources_retrieved"] = [dict(id=s["id"], status=s.get("status", ""), reason=s.get("reason", ""),
                                            retrieved_at=s.get("retrieved_at", "")) for s in packet["sources"]]
+    # Two clocks: when the interpretation was made and when the observed record was collected.
+    data_clock = pacific_time(actual_started_at)
+    interpretation_clock = pacific_time(interpreted["target_time"])
+    next_label = next_update_label(next_checkpoint(target, checkpoint), session_date)
+    clocks = (f"Interpretation as of {interpretation_clock} · Data as of {data_clock}" if carried
+              else f"As of {data_clock}") + f" · {next_label}"
     return dict(
         mode=packet["run"]["mode"], status=status, commissioning=commissioning,
-        live_commissioning=live_commissioning, checkpoint=checkpoint,
+        live_commissioning=live_commissioning, checkpoint=checkpoint, kind=kind, carried=carried,
         # The scheduler's idempotency marker; a commissioning run never claims a scheduled slot.
         marker_checkpoint="COMMISSIONING" if packet["run"].get("commissioning") else checkpoint,
-        phase_label=CHECKPOINT_LABELS.get(checkpoint, checkpoint),
         edition_label=EDITION_LABELS.get(checkpoint, "Market edition"),
         session=packet["run"]["session"], target=packet["run"]["target_time"],
         actual_started_at=actual_started_at,
         status_line=f"{status} · {EDITION_LABELS.get(checkpoint, 'Market edition')} · "
-                    f"{pacific_time(actual_started_at, True).replace(' · ', ' · as of ')}",
+                    f"{pacific_time(actual_started_at, True).split(' · ')[0]}",
+        clocks=clocks, data_clock=data_clock, interpretation_clock=interpretation_clock, next_update=next_label,
         truth=truth,
         technical=technical, coverage=packet["coverage"], limitations=limitations,
         banner={**narrative["banner"], "title": expand(narrative["banner"]["title"]),
@@ -497,22 +577,24 @@ def presentation(packet, narrative, context=None):
         character_refs=refs(narrative["character"]["evidence_ids"]),
         chips=chips, figures=figures,
         summary=[paragraph(p) for p in narrative["summary"]],
-        since=dict(label=since_label, entries=since_entries, note=since_note, status=prior.get("status", "cold_start")),
-        next=dict(watches=watches, carried=carried, attention=attention, events=events,
+        since=dict(heading="What changed", label=since_caption(anchors), entries=since_entries, note=since_note,
+                   status=prior.get("status", "cold_start")),
+        next=dict(watches=watches, carried=carried_watches, attention=attention, events=events,
                   paragraphs=[paragraph(p) for key in ("attention", "events") for p in narrative["sections"][key]]),
         equities=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["equities"]],
-                      rows=mega_rows, change_label=mega_change, change_head=change_head(mega_change), asof=mega_asof,
-                      proof=proof(mega_rows),
+                      rows=mega_rows, change_label=mega_change, asof=mega_asof, proof=proof(mega_rows),
+                      spread_label="20-session return spread vs QQQ",
                       lookback={s: v for s, v in packet.get("lookback", {}).items() if v["r20"] != "available"}),
         macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]],
                    yields=yields, yields_asof=yields_asof, facts=other_macro,
-                   yields_proof=refs([i for row in yields for i in row["ids"]]),
-                   facts_proof=refs([row["id"] for row in other_macro])),
-        sectors=dict(rows=sector_rows, change_label=sector_change, change_head=change_head(sector_change),
-                     asof=sector_asof, proof=proof(sector_rows),
-                     spread_label="20-session spread vs SPY, strongest to weakest"),
-        cross_asset=dict(rows=metal_rows, change_label=metal_change, change_head=change_head(metal_change),
-                         asof=metal_asof, proof=proof(metal_rows)),
+                   yields_proof=refs([i for row in yields for i in row["ids"]], catalog),
+                   facts_proof=refs([row["id"] for row in other_macro], catalog)),
+        sectors=dict(rows=sector_rows, change_label=sector_change, asof=sector_asof, proof=proof(sector_rows),
+                     spread_label="20-session return spread vs SPY, strongest to weakest"),
+        cross_asset=dict(rows=metal_rows, change_label=metal_change, asof=metal_asof, proof=proof(metal_rows),
+                         spread_label="20-session return spread, "
+                         + ", ".join(f"{row['symbol']} vs {row['relative_label']}" for row in metal_rows
+                                     if row["relative"]["id"])),
         cuttingboard_section=dict(visible=cuttingboard_visible,
                                   paragraphs=[paragraph(p) for p in narrative["sections"]["cuttingboard"]]),
         sources=sources, unavailable_sources=sum(1 for s in sources if s["unavailable"]),
@@ -534,7 +616,7 @@ def markdown(view):
             text += f" {esc(p['context'])}"
         return text
 
-    lines = [f"# {esc(view['banner']['title'])}", "", esc(view["status_line"])]
+    lines = [f"# {esc(view['banner']['title'])}", "", esc(view["status_line"]), esc(view["clocks"])]
     if view["truth"]:
         lines.append(f"> {esc(view['truth'])}")
     lines += ["", f"**INTERPRETATION — {view['banner']['label']}** · {esc(view['character'])} "
@@ -550,13 +632,13 @@ def markdown(view):
     if view["coverage"]["missing_domains"]:
         lines += [f"Missing: {esc(' · '.join(view['coverage']['missing_domains']))}.", ""]
     since = view["since"]
-    if since["label"] or since["note"]:
-        lines += [f"## {esc(since['label'] or 'What changed')}", ""]
+    if since["entries"] or since["note"]:
+        lines += [f"## {since['heading']}" + (f" · {esc(since['label'])}" if since["label"] else ""), ""]
         for item in since["entries"]:
             if item["kind"] == "change":
                 lines.append(f"- {esc(item['text'])} {refs(item['evidence_ids'])}")
             else:
-                lines.append(f"- {esc(item['text'])} — **{item['assessment']}**. {esc(item['reason'])} "
+                lines.append(f"- **{item['assessment'].capitalize()}** — {esc(item['text'])} {esc(item['reason'])} "
                              f"{refs(item['evidence_ids'])}")
         if since["note"]:
             lines.append(esc(since["note"]))
@@ -567,13 +649,16 @@ def markdown(view):
         lines += [para(p), ""]
     for w in nxt["watches"]:
         changes_it = f" Changes it: {esc(w['contradiction'])}" if w["contradiction"] else ""
-        lines.append(f"- **WATCH · {esc(w['phrase'])}** — {esc(w['condition'])} Confirm: {esc(w['confirmation'])}"
-                     f"{changes_it} {refs(w['evidence_ids'])}")
+        passed = " · horizon passed" if w["expired"] else ""
+        lines.append(f"- **WATCH · {esc(w['phrase'])}{passed}** — {esc(w['condition'])} Confirm: "
+                     f"{esc(w['confirmation'])}{changes_it} {refs(w['evidence_ids'])}")
     for c in nxt["carried"]:
-        lines.append(f"- **CARRIED WATCH · {c['assessment']}** — {esc(c['hypothesis'])} {esc(c['reason'])}")
+        passed = " · horizon passed" if c["expired"] else ""
+        lines.append(f"- **CARRIED WATCH · {c['assessment']} · {esc(c['phrase'])}{passed}** — {esc(c['hypothesis'])} "
+                     f"{esc(c['reason'])}")
     for a in nxt["attention"]:
-        lines.append(f"- **{esc(a['display_symbol'])}** — {esc(a['reason'])}. {esc(a['why'])} "
-                     f"({esc(a['date_label'])}) {refs(a['evidence_ids'])}")
+        lines.append(f"- **{esc(a['display_symbol'])}** — {esc(a['why'] or a['reason'])} "
+                     f"({esc(a['trigger'])} · {esc(a['date_label'])}) {refs(a['evidence_ids'])}")
     for e in nxt["events"]:
         lines.append(f"- **Event** — {esc(e['title'])} · {esc(e['scheduled_label'])} · {esc(e['relation_label'])} "
                      f"{refs([e['id']])}")
@@ -585,15 +670,15 @@ def markdown(view):
             lines += [para(p), ""]
         if eq["rows"]:
             asof = f" · {esc(eq['asof'])}" if eq["asof"] else ""
-            lines += [f"**MEGA-CAP SNAPSHOT**{asof}", "",
-                      f"| Symbol | {esc(eq['change_label'])} | 20D | vs QQQ · 20s | vs 50DMA |",
+            lines += [f"**MEGA-CAP SNAPSHOT** · {esc(eq['spread_label'])} · {esc(eq['change_label'])}{asof}", "",
+                      "| Symbol | Change | 20D | vs QQQ | vs 50DMA |",
                       "|---|---:|---:|---:|---:|"]
             for row in eq["rows"]:
                 lines.append(f"| {row['symbol']} | {row['today']['display']} | {row['r20']['display']} | "
                              f"{row['relative']['display']} | {row['dma']['display']} |")
             lines += ["", LEDGER_NOTE, ""]
         for symbol, state in eq["lookback"].items():
-            lines.append(f"{esc(symbol)} 20s: n/a ({state['sessions']} sessions)")
+            lines.append(f"{esc(symbol)} 20-session return unavailable: {state['sessions']} sessions of history")
         if eq["lookback"]:
             lines.append("")
     mac = view["macro"]
@@ -619,8 +704,8 @@ def markdown(view):
     sec = view["sectors"]
     if sec["rows"]:
         asof = f" · {esc(sec['asof'])}" if sec["asof"] else ""
-        lines += ["## Sector view", "", f"{esc(sec['spread_label'])}{asof}", "",
-                  f"| Sector | vs SPY · 20s | 20D | {esc(sec['change_label'])} | vs 50DMA |",
+        lines += ["## Sector view", "", f"{esc(sec['spread_label'])} · {esc(sec['change_label'])}{asof}", "",
+                  "| Sector | vs SPY | 20D | Change | vs 50DMA |",
                   "|---|---:|---:|---:|---:|"]
         for row in sec["rows"]:
             lines.append(f"| {esc(row['label'])} ({row['symbol']}) | {row['relative']['display']} | "
@@ -629,13 +714,15 @@ def markdown(view):
     cross = view["cross_asset"]
     if cross["rows"]:
         asof = f" · {esc(cross['asof'])}" if cross["asof"] else ""
-        lines += ["## Cross-asset structure", "", f"**METALS STRUCTURE**{asof}", "",
-                  f"| Instrument | {esc(cross['change_label'])} | 20D | vs benchmark · 20s | vs 50DMA |",
+        lines += ["## Cross-asset structure", "",
+                  f"**METALS STRUCTURE** · {esc(cross['spread_label'])} · {esc(cross['change_label'])}{asof}", "",
+                  "| Instrument | Change | 20D | Spread | vs 50DMA |",
                   "|---|---:|---:|---:|---:|"]
         for row in cross["rows"]:
+            spread = (f"{row['relative']['display']} vs {row['relative_label']}" if row["relative"]["id"]
+                      else row["relative"]["display"])
             lines.append(f"| {esc(row['label'])} ({row['symbol']}) | {row['today']['display']} | "
-                         f"{row['r20']['display']} | {row['relative']['display']} vs {row['relative_label']} | "
-                         f"{row['dma']['display']} |")
+                         f"{row['r20']['display']} | {spread} | {row['dma']['display']} |")
         lines += ["", LEDGER_NOTE, ""]
     cb = view["cuttingboard"]
     if view["cuttingboard_section"]["visible"]:
@@ -648,7 +735,7 @@ def markdown(view):
                       "Read-only context captured; see Technical details.", ""]
         else:
             lines += [f"{esc(cb['status'])} — {esc(cb.get('reason', ''))}.", ""]
-    lines += ["## Sources & coverage", "", esc(view["coverage"]["basis"]), esc(view["coverage"]["horizon"]), ""]
+    lines += ["## Sources & coverage", "", esc(view["banner"]["limitation"]), ""]
     for limitation in view["limitations"]:
         lines += [f"- {esc(limitation)}"]
     for s in view["sources"]:
@@ -667,21 +754,25 @@ def markdown(view):
     lines += ["", "### Technical details", "",
               f"Generated UTC: {esc(technical['generated_utc'])}",
               f"Evidence cutoff UTC: {esc(technical['evidence_cutoff_utc'])}",
-              f"Checkpoint: {esc(technical['checkpoint'])}",
+              f"Checkpoint: {esc(technical['checkpoint'])} ({esc(technical['kind'])})",
+              f"Synthesis: {esc(technical['synthesis'])}",
               f"Bootstrap: {esc(technical['bootstrap'])}",
               f"Calendar: {esc(technical['calendar'])}",
+              f"{esc(technical['basis'])}. {esc(technical['horizon'])}",
               f"Continuity: {esc(technical['continuity']['status'])}"
               + (f" — {esc(technical['continuity']['reason'])}" if technical["continuity"]["reason"] else ""), "",
               (f"Cuttingboard: generated {esc(technical['cuttingboard'].get('generated_at'))}; "
                f"captured {esc(technical['cuttingboard'].get('captured_at'))}; "
                f"schema {esc(technical['cuttingboard'].get('schema_version'))}"
                if technical["cuttingboard"] else ""), "",
-              "Model-assisted interpretation; factual rows are deterministic. Personal local edition.", ""]
+              "Model-assisted interpretation; factual rows are deterministic.", ""]
     return "\n".join(lines)
 
 
-def render(packet, narrative, context=None):
-    view = presentation(packet, narrative, context)
+def render(packet, narrative=None, context=None, interpretation=None):
+    """Render one edition. A synthesis edition passes its narrative (and freezes it on the way); a
+    deterministic refresh passes the frozen `interpretation` record it carries."""
+    view = presentation(packet, narrative, context, interpretation)
     env = Environment(loader=FileSystemLoader(ROOT / "templates"),
                       autoescape=select_autoescape(default=True))
     return markdown(view), env.get_template("brief.html.j2").render(**view)

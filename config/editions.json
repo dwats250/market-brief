@@ -1,10 +1,10 @@
 {
-  "version": "v1",
+  "version": "v2",
   "analyst": {
     "route": "openrouter",
     "model": "anthropic/claude-fable-5.1",
     "cli_model": "sonnet",
-    "note": "One configured frontier analyst for every edition. MARKET_BRIEF_MODEL overrides the OpenRouter model ID; the resolved identity, route, and usage are recorded per run."
+    "note": "One configured frontier analyst for every synthesis edition. MARKET_BRIEF_MODEL overrides the OpenRouter model ID; the resolved identity, route, and usage are recorded per run."
   },
   "profiles": {
     "rich": {
@@ -30,14 +30,9 @@
   },
   "editions": {
     "PREMARKET": {"profile": "rich", "words": [350, 500],
-                  "guidance": "Prior close, overnight and current evidence, today's events, and the open questions carried from the previous close."},
-    "OPEN_1M": {"profile": "light", "words": [80, 140],
-                "guidance": "Immediate changes versus the available premarket evidence; distinguish opening noise from a changed read."},
+                  "guidance": "The day's one rich read: prior close, overnight and premarket evidence, cross-asset context, today's events, and the open questions carried from the previous close."},
     "OPEN_30M": {"profile": "light", "words": [140, 220],
-                 "guidance": "What persisted after the opening noise, using actual comparable evidence only."},
-    "AFTERNOON": {"profile": "light", "words": [120, 200],
-                  "guidance": "What is holding, fading, or reversing versus the premarket anchor and the latest edition."},
-    "CLOSE_1M": {"profile": "rich", "words": [350, 500],
-                 "guidance": "Session character, which relationships persisted or changed, and the handoff for the next session."}
-  }
+                 "guidance": "The one interpretive update after the open: what the opening structure did to the premarket read, using actual comparable evidence only. No later edition reinterprets the session."}
+  },
+  "cadence_note": "Only synthesis checkpoints carry an edition profile. OPEN_1M, the hourly refreshes and CLOSE_1M are deterministic: they refresh observed rows under the last accepted interpretation and never call the analyst (see schedule.CHECKPOINT_KINDS)."
 }

@@ -20,17 +20,26 @@ def test_current_phase_partitions_the_trading_day():
     assert current_phase(utc("2026-09-08T13:31:00+00:00")) == "OPEN_1M"
     assert current_phase(utc("2026-09-08T13:59:00+00:00")) == "OPEN_1M"
     assert current_phase(utc("2026-09-08T14:00:00+00:00")) == "OPEN_30M"
-    assert current_phase(utc("2026-09-08T18:00:00+00:00")) == "OPEN_30M"
-    assert current_phase(utc("2026-09-08T19:07:00+00:00")) == "AFTERNOON"
-    assert current_phase(utc("2026-09-08T19:59:00+00:00")) == "AFTERNOON"
+    assert current_phase(utc("2026-09-08T14:59:00+00:00")) == "OPEN_30M"
+    assert current_phase(utc("2026-09-08T18:00:00+00:00")) == "HOURLY_1100"
+    assert current_phase(utc("2026-09-08T19:07:00+00:00")) == "HOURLY_1200"
+    assert current_phase(utc("2026-09-08T19:59:00+00:00")) == "HOURLY_1200"
     assert current_phase(utc("2026-09-08T20:00:00+00:00")) == "CLOSE_1M"
     assert current_phase(utc("2026-09-08T23:30:00+00:00")) == "CLOSE_1M"
 
 
 def test_current_phase_respects_holidays_and_early_closes():
+    from datetime import timedelta
+
+    from market_brief.schedule import checkpoint_session
     assert current_phase(utc("2026-09-07T15:00:00+00:00")) == "PREMARKET"
-    assert current_phase(utc("2026-11-27T17:30:00+00:00")) == "OPEN_30M"
-    assert current_phase(utc("2026-11-27T18:05:00+00:00")) == "CLOSE_1M"
+    # The day after Thanksgiving closes at 13:00 ET. Half an hour before it the phase is the last hourly
+    # refresh scheduled before the close (whichever local hour that is under the runner's tz database).
+    close = utc("2026-11-27T18:00:00+00:00")
+    phase = current_phase(close - timedelta(minutes=30))
+    assert phase.startswith("HOURLY_")
+    assert utc(checkpoint_session(close - timedelta(minutes=30), phase)["scheduled_at"]) < close
+    assert current_phase(close + timedelta(minutes=5)) == "CLOSE_1M"
 
 
 def test_commissioning_run_resolves_phase_from_clock(tmp_path, monkeypatch):
@@ -40,6 +49,12 @@ def test_commissioning_run_resolves_phase_from_clock(tmp_path, monkeypatch):
         row["retrieved_at"] = raw["target_time"]
     for row in raw["observations"]:
         row["retrieved_at"] = raw["target_time"]
+    # A close snapshot needs an observation from the session: one session-ending print.
+    raw["observations"].append(dict(
+        id="SPY-intraday", topic="SPY", metric="premarket return", value=0.4, unit="%",
+        baseline="latest trade versus previous regular close", frequency="intraday",
+        observed_at="2026-09-08T19:59:58+00:00", retrieved_at=raw["target_time"],
+        source_id="sample-prices", status="AVAILABLE", reason=""))
     fixture = tmp_path / "postclose.json"
     fixture.write_text(json.dumps(raw))
     original = cli.output_directory
@@ -51,11 +66,13 @@ def test_commissioning_run_resolves_phase_from_clock(tmp_path, monkeypatch):
     evidence = json.loads((folder / "evidence.json").read_text())
     assert evidence["run"]["checkpoint"] == "CLOSE_1M"
     assert evidence["run"]["commissioning"] is True
+    metadata = json.loads((folder / "metadata.json").read_text())
+    assert metadata["kind"] == "close" and metadata["synthesis"]["calls"] == 0
     page = (folder / "brief.html").read_text()
     head = page.split("<h1>", 1)[0]
     assert 'data-checkpoint="COMMISSIONING"' in head
-    assert "pre-market edition" not in head.lower()
-    assert "close +1m" in head.lower()
+    assert "premarket edition" not in head.lower()
+    assert "close snapshot" in head.lower()
 
 
 def test_replay_commissioning_stays_sample_and_never_publishes(tmp_path, monkeypatch):
@@ -76,18 +93,18 @@ def test_replay_commissioning_stays_sample_and_never_publishes(tmp_path, monkeyp
 def test_live_commissioning_header_names_the_phase():
     packet = fixture_packet()
     packet["run"]["mode"] = "LIVE"
-    packet["run"]["checkpoint"] = "AFTERNOON"
+    packet["run"]["checkpoint"] = "HOURLY_1200"
     packet["run"]["commissioning"] = True
     value = narrative()
     value["mode"] = "LIVE"
     md, page = render(packet, value)
     head = page.split("<h1>", 1)[0]
     assert "LIVE COMMISSIONING" in head
-    assert "Afternoon edition" in head
-    assert "pre-market edition" not in head.lower()
+    assert "Hourly refresh" in head
+    assert "premarket edition" not in head.lower()
     assert 'data-checkpoint="COMMISSIONING"' in head
-    assert "as of 5:45 AM PT" in head and "collected 5:45 AM PT" in head
-    assert "Afternoon edition" in md
+    assert "As of 5:45 AM PT" in head and "collected 5:45 AM PT" in head
+    assert "Hourly refresh" in md
 
 
 def test_scheduled_header_uses_human_checkpoint_labels():

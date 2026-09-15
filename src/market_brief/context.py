@@ -21,9 +21,14 @@ def editions_config():
 
 
 def edition_profile(checkpoint, config=None):
-    """The edition's budget profile plus its editorial guidance, from one small configuration."""
+    """The edition's budget profile plus its editorial guidance, from one small configuration.
+
+    Only synthesis checkpoints have a profile; a deterministic refresh never reaches the analyst.
+    """
     config = config or editions_config()
-    edition = config["editions"].get(checkpoint, config["editions"]["PREMARKET"])
+    edition = config["editions"].get(checkpoint)
+    if edition is None:
+        raise ValueError(f"{checkpoint} is a deterministic checkpoint without a synthesis profile")
     profile = config["profiles"][edition["profile"]]
     return dict(checkpoint=checkpoint, profile=edition["profile"], words=edition["words"],
                 guidance=edition["guidance"], **profile)

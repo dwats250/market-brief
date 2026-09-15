@@ -1,4 +1,9 @@
-"""Exchange-aware checkpoint timing for local and scheduled briefing runs."""
+"""Exchange-aware checkpoint timing for local and scheduled briefing runs.
+
+The daily cadence keeps rich interpretation scarce: one premarket synthesis and one interpretive
+update after the open. Every later checkpoint is a deterministic refresh of the observed record under
+the last accepted interpretation, and the close is a deterministic snapshot that hands the session off.
+"""
 
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -7,15 +12,34 @@ import exchange_calendars as xcals
 
 VANCOUVER = ZoneInfo("America/Vancouver")
 ET = ZoneInfo("America/New_York")
-CHECKPOINTS = ("PREMARKET", "OPEN_1M", "OPEN_30M", "AFTERNOON", "CLOSE_1M")
+CHECKPOINTS = ("PREMARKET", "OPEN_1M", "OPEN_30M", "HOURLY_0800", "HOURLY_0900", "HOURLY_1000",
+               "HOURLY_1100", "HOURLY_1200", "CLOSE_1M")
+# synthesis: one model call under the edition's budget profile; refresh: no model call, fresh
+# observed rows under the carried interpretation; close: a refresh that also hands the session off.
+CHECKPOINT_KINDS = {"PREMARKET": "synthesis", "OPEN_1M": "refresh", "OPEN_30M": "synthesis",
+                    "HOURLY_0800": "refresh", "HOURLY_0900": "refresh", "HOURLY_1000": "refresh",
+                    "HOURLY_1100": "refresh", "HOURLY_1200": "refresh", "CLOSE_1M": "close"}
+SYNTHESIS_CHECKPOINTS = tuple(c for c in CHECKPOINTS if CHECKPOINT_KINDS[c] == "synthesis")
 CHECKPOINT_TITLES = {"PREMARKET": "Premarket", "OPEN_1M": "Open +1M", "OPEN_30M": "Opening structure",
-                     "AFTERNOON": "Afternoon", "CLOSE_1M": "Close +1M"}
+                     "HOURLY_0800": "8:00 AM refresh", "HOURLY_0900": "9:00 AM refresh",
+                     "HOURLY_1000": "10:00 AM refresh", "HOURLY_1100": "11:00 AM refresh",
+                     "HOURLY_1200": "12:00 PM refresh", "CLOSE_1M": "Close +1M"}
 STATIC_LOCAL_TIMES = {
     "PREMARKET": (6, 0),
     "OPEN_1M": (6, 31),
     "OPEN_30M": (7, 0),
-    "AFTERNOON": (12, 0),
+    "HOURLY_0800": (8, 0),
+    "HOURLY_0900": (9, 0),
+    "HOURLY_1000": (10, 0),
+    "HOURLY_1100": (11, 0),
+    "HOURLY_1200": (12, 0),
 }
+
+
+def checkpoint_kind(checkpoint):
+    if checkpoint not in CHECKPOINT_KINDS:
+        raise ValueError("unsupported checkpoint")
+    return CHECKPOINT_KINDS[checkpoint]
 
 
 def checkpoint_session(now, checkpoint="PREMARKET"):
@@ -32,8 +56,12 @@ def checkpoint_session(now, checkpoint="PREMARKET"):
         hour, minute = STATIC_LOCAL_TIMES[checkpoint]
         scheduled = datetime(local.year, local.month, local.day, hour, minute,
                              tzinfo=VANCOUVER).astimezone(timezone.utc)
-    return dict(checkpoint=checkpoint, session_date=session.date().isoformat(),
-                trading_day=bool(trading_day), scheduled_at=scheduled.isoformat(),
+    kind = CHECKPOINT_KINDS[checkpoint]
+    # An hourly refresh at or after an early close has nothing to refresh; the close snapshot covers it.
+    applicable = bool(trading_day) and (kind != "refresh" or scheduled < close)
+    return dict(checkpoint=checkpoint, kind=kind, title=CHECKPOINT_TITLES[checkpoint],
+                session_date=session.date().isoformat(),
+                trading_day=bool(trading_day), applicable=applicable, scheduled_at=scheduled.isoformat(),
                 exchange_open=cal.session_open(session).isoformat(),
                 exchange_close=close.isoformat(),
                 scheduled_local=scheduled.astimezone(VANCOUVER).isoformat())
@@ -41,7 +69,7 @@ def checkpoint_session(now, checkpoint="PREMARKET"):
 
 def due(now, checkpoint, tolerance_minutes=45):
     info = checkpoint_session(now, checkpoint)
-    if not info["trading_day"]:
+    if not info["applicable"]:
         return False, info
     scheduled = datetime.fromisoformat(info["scheduled_at"])
     delta = (now - scheduled).total_seconds()
@@ -53,7 +81,7 @@ def scheduled_checkpoint(now, tolerance_minutes=45):
     candidates = []
     for checkpoint in CHECKPOINTS:
         info = checkpoint_session(now, checkpoint)
-        if not info["trading_day"]:
+        if not info["applicable"]:
             continue
         delta = (now - datetime.fromisoformat(info["scheduled_at"])).total_seconds()
         if 0 <= delta <= tolerance_minutes * 60:
@@ -64,10 +92,9 @@ def scheduled_checkpoint(now, tolerance_minutes=45):
 def current_phase(now):
     """Map a clock time to the checkpoint whose session phase it falls in.
 
-    Phases partition the trading day by the scheduled checkpoints themselves:
-    before the open is PREMARKET, the first half hour is OPEN_1M, then OPEN_30M
-    until the afternoon checkpoint, AFTERNOON until the close, and CLOSE_1M after.
-    Non-trading days resolve to PREMARKET of the next session.
+    Phases partition the trading day by the scheduled checkpoints themselves: before the open is
+    PREMARKET, then each checkpoint's phase runs until the next applicable checkpoint, and everything
+    from the close onward is CLOSE_1M. Non-trading days resolve to PREMARKET of the next session.
     """
     cal = xcals.get_calendar("XNYS")
     local = now.astimezone(ET)
@@ -76,16 +103,18 @@ def current_phase(now):
         return "PREMARKET"
     opening = cal.session_open(day).to_pydatetime()
     closing = cal.session_close(day).to_pydatetime()
-    afternoon = datetime.fromisoformat(checkpoint_session(now, "AFTERNOON")["scheduled_at"])
     if now < opening:
         return "PREMARKET"
     if now >= closing:
         return "CLOSE_1M"
-    if now < opening + timedelta(minutes=30):
-        return "OPEN_1M"
-    if now < afternoon:
-        return "OPEN_30M"
-    return "AFTERNOON"
+    phase = "PREMARKET"
+    for checkpoint in CHECKPOINTS:
+        if checkpoint == "CLOSE_1M":
+            continue
+        info = checkpoint_session(now, checkpoint)
+        if info["applicable"] and datetime.fromisoformat(info["scheduled_at"]) <= now:
+            phase = checkpoint
+    return phase
 
 
 def session_relation(when, exchange_open, exchange_close):
@@ -112,7 +141,7 @@ def next_checkpoint(now, current=None):
     `current` is the checkpoint of the running edition, which is never its own next update.
     """
     later = [checkpoint_session(now, checkpoint) for checkpoint in CHECKPOINTS if checkpoint != current]
-    later = [info for info in later if info["trading_day"] and datetime.fromisoformat(info["scheduled_at"]) > now]
+    later = [info for info in later if info["applicable"] and datetime.fromisoformat(info["scheduled_at"]) > now]
     if later:
         return min(later, key=lambda info: info["scheduled_at"])
     # Nothing later today: the next session's premarket, probed at a time inside that day.

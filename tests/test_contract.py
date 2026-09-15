@@ -15,7 +15,7 @@ PROMPT = (ROOT / "prompts/synthesis.md").read_text()
 def test_headline_contract_is_one_short_claim():
     headline = PROMPT.split("HEADLINE", 1)[1].split("\n\n", 1)[0].lower()
     assert "one" in headline and "claim" in headline
-    assert "8" in headline and "12" in headline and "words" in headline
+    assert "eight" in headline and "ten" in headline and "words" in headline
     assert "no caveat" in headline
     assert "no semicolon" in headline
     assert NARRATIVE_SCHEMA["properties"]["banner"]["properties"]["title"]["maxLength"] <= 160
@@ -78,10 +78,8 @@ def test_numeric_grounding_and_fail_closed_rules_unchanged():
     assert re.search(r"\bNUMBERS\b", PROMPT)
 
 
-# Edition profiles: one contract, five checkpoints, smaller bounds for light editions.
-EDITIONS = (("2026-09-08T12:45:00+00:00", "PREMARKET"), ("2026-09-08T13:35:00+00:00", "OPEN_1M"),
-            ("2026-09-08T14:05:00+00:00", "OPEN_30M"), ("2026-09-08T19:10:00+00:00", "AFTERNOON"),
-            ("2026-09-08T20:03:00+00:00", "CLOSE_1M"))
+# Edition profiles: one contract, two synthesis checkpoints, smaller bounds for the light one.
+EDITIONS = (("2026-09-08T12:45:00+00:00", "PREMARKET"), ("2026-09-08T14:05:00+00:00", "OPEN_30M"))
 
 
 def edition_response(profile, context=None):
@@ -133,8 +131,8 @@ def test_light_edition_rejects_responses_beyond_its_bounds():
     from test_history_admission import packet_at, utc
 
     from market_brief.context import analyst_context, edition_profile
-    packet = packet_at(utc("2026-09-08T19:10:00+00:00"), checkpoint="AFTERNOON")
-    context = analyst_context(packet, edition_profile("AFTERNOON"))
+    packet = packet_at(utc("2026-09-08T19:10:00+00:00"), checkpoint="OPEN_30M")
+    context = analyst_context(packet, edition_profile("OPEN_30M"))
     value = narrative()
     # Two summary paragraphs sit within the light edition's acceptance headroom; three do not.
     value["summary"].append(dict(value["summary"][0]))
@@ -147,14 +145,14 @@ def test_omitted_light_context_rows_cannot_be_cited():
 
     from market_brief.context import analyst_context, edition_profile, supplied_ids
     from market_brief.evidence import evidence_catalog, model_packet
-    packet = packet_at(utc("2026-09-08T19:10:00+00:00"), checkpoint="AFTERNOON")
-    context = analyst_context(packet, edition_profile("AFTERNOON"))
+    packet = packet_at(utc("2026-09-08T19:10:00+00:00"), checkpoint="OPEN_30M")
+    context = analyst_context(packet, edition_profile("OPEN_30M"))
     shown = supplied_ids(context)
     every = set(evidence_catalog(model_packet(packet)))
     omitted = every - shown
     assert omitted and {"SPY-daily", "QQQ-daily", "SPY-intraday", "treasury-2y-change"} <= shown
     assert set(context["selection"]["omitted_topics"]) & {"GDX", "GLD", "NVDA", "XLI"}
-    value = edition_response(edition_profile("AFTERNOON"))
+    value = edition_response(edition_profile("OPEN_30M"))
     value["summary"][0]["evidence_ids"] = [sorted(omitted)[0]]
     with pytest.raises(ValueError, match="unsupplied"):
         validate_narrative(value, packet, context)

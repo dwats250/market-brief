@@ -7,11 +7,13 @@ workers_dev = true
 GITHUB_REPOSITORY = "dwats250/market-brief"
 
 # Cloudflare Cron is UTC. These are wake candidates for both Pacific seasons;
-# the Python scheduler resolves DST, holidays, early closes, and idempotency.
+# the Python scheduler resolves DST, holidays, early closes, checkpoint kind, and idempotency.
+# On the hour 13:00–20:00 UTC covers the premarket (6:00 PT), the opening-structure update (7:00 PT)
+# and the hourly refreshes 8:00–12:00 PT in PDT and PST; :31 is the open +1M refresh; :01 candidates
+# are the close +1M snapshot after regular (13:01 PT) and early (10:01 PT) closes.
 [triggers]
 crons = [
-  "0 13-15 * * MON-FRI",
+  "0 13-20 * * MON-FRI",
   "31 13-14 * * MON-FRI",
-  "0 19-20 * * MON-FRI",
   "1 17,18,20,21 * * MON-FRI",
 ]

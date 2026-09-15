@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from test_history_admission import packet_at
 from test_pipeline import fixture_packet, narrative
 
-from market_brief.render import measure_label, presentation, render, table_asof
+from market_brief.render import change_column, compact_equity_rows, measure_label, presentation, render
 
 
 def utc(value):
@@ -74,10 +74,11 @@ def test_mega_cap_rows_do_not_repeat_the_symbol_as_a_sublabel():
 
 
 def test_shared_observation_times_collapse_to_one_as_of():
-    assert table_asof(["2026-09-08T19:59:00+00:00", "2026-09-08T20:02:00+00:00"]) == "as of 1:02 PM PT"
-    assert table_asof(["2026-09-08T19:59:00+00:00", "2026-09-08T20:30:00+00:00"]) is None
-    assert table_asof(["2026-09-08T19:59:00+00:00", "2026-09-04"]) is None
-    assert table_asof([]) is None
+    rows = compact_equity_rows([intraday("XLI", -0.47, "2026-09-08T19:59:00+00:00"),
+                                intraday("XLE", 1.09, "2026-09-08T20:02:00+00:00")], ["XLI", "XLE"])
+    assert change_column(rows) == ("Intraday vs prior close", "as of 1:02 PM PT")
+    assert all(row["today"]["observed"] == "" for row in rows)
+    assert change_column([]) == ("Change", None)
 
 
 def test_sector_table_moves_shared_timestamp_to_heading():
@@ -89,18 +90,32 @@ def test_sector_table_moves_shared_timestamp_to_heading():
     assert all(row["today"]["observed"] == "" for row in view["sectors"]["rows"])
     _, page = render(packet, narrative())
     assert page.count("Tuesday, Sep 8 · 12:59 PM PT") <= 3  # not repeated per sector row
-    assert "strongest to weakest · as of 12:59 PM PT" in page
+    assert "strongest to weakest<span>Intraday vs prior close · as of 12:59 PM PT" in page
 
 
-def test_divergent_observation_times_stay_on_rows():
+def test_divergent_observation_times_stay_on_exception_rows_only():
+    """One stale print does not push a full timestamp onto every row: the table keeps its shared clock
+    and only the row that trails it carries its own short clock."""
     packet = packet_at(utc("2026-09-08T20:03:00+00:00"))
     packet["observations"] += [intraday("XLI", -0.47, "2026-09-08T19:20:00+00:00"),
                                intraday("XLE", 1.09, "2026-09-08T19:59:59+00:00")]
     view = presentation(packet, narrative())
-    assert view["sectors"]["asof"] is None
+    assert view["sectors"]["asof"] == "as of 12:59 PM PT"
     observed = {row["symbol"]: row["today"]["observed"] for row in view["sectors"]["rows"]}
-    assert observed["XLI"] == "Tuesday, Sep 8 · 12:20 PM PT"
-    assert observed["XLE"] == "Tuesday, Sep 8 · 12:59 PM PT"
+    assert observed["XLI"] == "12:20 PM PT"
+    assert observed["XLE"] == ""
+    _, page = render(packet, narrative())
+    assert "Tuesday, Sep 8 · 12:20 PM PT" not in page.split("<h2>Sources", 1)[0]
+    assert "2026-09-04" not in page.split("<h2>Sources", 1)[0]  # no raw ISO dates on the reading surface
+    # An instrument without a print says so and keeps its history columns; the table stays in intraday mode.
+    history = [row for row in packet["derived"] if row["topic"] == "XLI"]
+    quiet_history = [dict(row, id=row["id"].replace("XLI", "XLK"), topic="XLK") for row in history]
+    rows = compact_equity_rows([*packet["observations"], *history, *quiet_history], ["XLI", "XLE", "XLK"])
+    label, asof = change_column(rows)
+    quiet = next(row for row in rows if row["symbol"] == "XLK")
+    assert label == "Intraday vs prior close" and asof == "as of 12:59 PM PT"
+    assert quiet["today"]["display"] == "no print" and quiet["today"]["absent"]
+    assert quiet["r20"]["display"].endswith(" %") and quiet["dma"]["display"].endswith(" %")
 
 
 # 9. Chip priority: current admitted market state outranks dated macro context.
@@ -121,22 +136,24 @@ def test_chips_fall_back_to_daily_when_no_current_prints():
     assert chips[:2] == ["SPY-daily", "QQQ-daily"]
 
 
-# 10. Basis is reader context inside Sources & coverage; plumbing lives in Technical details.
-def basis_line(page):
-    return page.split("<h2>Sources &amp; coverage</h2>", 1)[1].split("</p>", 1)[0]
+# 10. The analyst's coverage caveat is the reader-facing line inside Sources & coverage; the generated
+# Basis line and other plumbing live in Technical details, where "breadth available" (sector rows exist)
+# can no longer sit beside the analyst's "no breadth feed".
+def sources_reading_line(page):
+    return page.split("<h2>Sources &amp; coverage</h2>", 1)[1].split("<details", 1)[0]
 
 
 def test_basis_excludes_technical_plumbing():
     packet = fixture_packet()
     md, page = render(packet, narrative())
-    basis = basis_line(page)
-    for plumbing in ("Cuttingboard", "Bootstrap", "calendar", "BASELINE"):
-        assert plumbing not in basis
-    assert "prior close" in basis
+    reading = sources_reading_line(page)
+    for plumbing in ("Basis:", "Cuttingboard", "Bootstrap", "calendar", "BASELINE", "breadth available",
+                     "breadth unavailable"):
+        assert plumbing not in reading
+    assert narrative()["banner"]["limitation"][:40] in reading
     technical = page.split("Technical details", 1)[1]
-    assert "Bootstrap:" in technical
-    assert "Calendar" in technical
-    assert "Basis:" not in page.split("<h2>Sources &amp; coverage</h2>", 1)[0]
+    assert "Bootstrap:" in technical and "Calendar" in technical
+    assert "Basis:" in technical and "prior close" in technical
     header = md.split("## What matters next")[0]
     assert "Bootstrap" not in header and "Basis:" not in header
 
@@ -144,9 +161,9 @@ def test_basis_excludes_technical_plumbing():
 def test_basis_describes_current_prints_without_premarket_wording():
     packet = packet_at(utc("2026-09-08T20:03:00+00:00"))
     _, page = render(packet, narrative())
-    basis = basis_line(page)
-    assert "current prints available" in basis
-    assert "pre-market available" not in basis
+    technical = page.split("Technical details", 1)[1]
+    assert "current prints available" in technical
+    assert "pre-market available" not in technical
 
 
 def test_chips_use_horizon_neutral_label_for_current_prints():
@@ -190,7 +207,7 @@ def test_no_workflow_or_horizon_enums_are_visible():
         packet = packet_at(utc(now), checkpoint=checkpoint)
         _, page = render(packet, narrative())
         body = visible(page)
-        for token in ("PREMARKET", "OPEN_1M", "OPEN_30M", "AFTERNOON", "CLOSE_1M", "NEXT_BRIEF", "NEXT_CLOSE",
+        for token in ("PREMARKET", "OPEN_1M", "OPEN_30M", "HOURLY_", "CLOSE_1M", "NEXT_BRIEF", "NEXT_CLOSE",
                       "OPENING_HOUR", "SESSION", "INTERPRETATION", "OBSERVED"):
             assert token not in body.split('<details class="drawer"', 1)[0], token
         assert 'data-checkpoint="' in page  # machine marker stays in the head
@@ -218,14 +235,16 @@ def test_sectors_rank_by_labeled_spread_with_a_separate_dated_change_column():
     view = presentation(packet, narrative())
     rows = view["sectors"]["rows"]
     assert rows[0]["symbol"] == "XLI" and rows[0]["relative"]["value"] is not None
-    assert view["sectors"]["spread_label"].startswith("20-session spread vs SPY")
-    assert view["sectors"]["change_label"] == "Daily · Fri, Sep 4"
+    assert view["sectors"]["spread_label"].startswith("20-session return spread vs SPY")
+    assert view["sectors"]["change_label"] == "Daily change · Fri, Sep 4"
     _, page = render(packet, narrative())
-    assert "vs SPY · 20s" in page and "Daily · Fri, Sep 4" in page
+    assert '<th class="number">vs SPY</th>' in page and "Daily change · Fri, Sep 4" in page
+    assert "20S" not in page and "vs SPY · 20s" not in page  # the window is explained once, in the caption
     # The ranking horizon does not silently switch when current quotes disappear.
     lagged = packet_at(utc("2026-09-08T20:03:00+00:00"), intraday=False)
     assert presentation(lagged, narrative())["sectors"]["spread_label"] == view["sectors"]["spread_label"]
     assert presentation(lagged, narrative())["sectors"]["change_label"] == "Change"
+    assert all(row["today"]["display"] == "no print" for row in presentation(lagged, narrative())["sectors"]["rows"])
 
 
 def test_treasury_table_pairs_only_compatible_yields_and_changes():
@@ -239,7 +258,7 @@ def test_treasury_table_pairs_only_compatible_yields_and_changes():
     change["observed_at"] = "2026-09-03"
     view = presentation(packet, narrative())
     yields = {row["maturity"]: row for row in view["macro"]["yields"]}
-    assert yields["10Y"]["change"]["display"] == "n/a" and "not paired" in yields["10Y"]["change_note"]
+    assert yields["10Y"]["change"]["display"] == "—" and "not paired" in yields["10Y"]["change_note"]
     assert "Thu, Sep 3" in yields["10Y"]["change_note"]
     assert view["macro"]["yields_asof"] == "Fri, Sep 4"  # the levels still share one date
 
@@ -258,7 +277,7 @@ def test_carried_watches_and_changes_render_from_the_saved_context():
     from market_brief.context import edition_profile
     packet, context, _ = carried_setup()
     value = narrative()
-    profile = edition_profile("AFTERNOON")
+    profile = edition_profile("OPEN_30M")
     value["summary"] = value["summary"][:1]
     value["watches"] = value["watches"][:1]
     value["attention_ids"], value["attention"] = value["attention_ids"][:2], value["attention"][:2]
@@ -270,10 +289,12 @@ def test_carried_watches_and_changes_render_from_the_saved_context():
                              evidence_ids=["SPY-intraday", "premarket:SPY-intraday"])]
     assert profile["profile"] == "light"
     md, page = render(packet, value, context)
-    assert "Since the premarket edition" in page
+    assert "<h2>What changed</h2><p class=\"sub\">vs premarket</p>" in page
     assert "SPY moved from -0.53 % to +0.21 % since the premarket." in page
-    assert "Carried watch · weakened" in page
-    assert "## Since the premarket edition" in md and "CARRIED WATCH · weakened" in md
+    # An active carried watch still exposes its horizon, in sentence case, beside its assessment.
+    assert '<span class="meta">Carried · weakened · into the close</span>' in page
+    assert "CARRIED WATCH" not in page.split("<script>", 1)[0]
+    assert "## What changed · vs premarket" in md and "CARRIED WATCH · weakened · Into the close" in md
 
 
 def test_markdown_tables_keep_shared_clocks_out_of_header_rows():
@@ -284,7 +305,8 @@ def test_markdown_tables_keep_shared_clocks_out_of_header_rows():
     for line in md.splitlines():
         if line.startswith("|"):
             assert line.rstrip().endswith("|"), line
-    assert "**METALS STRUCTURE** · as of 12:59 PM PT" in md
+    assert ("**METALS STRUCTURE** · 20-session return spread, GDX vs GLD · Intraday vs prior close"
+            " · as of 12:59 PM PT") in md
 
 
 def test_provisional_session_ending_prints_are_labeled_in_the_brief():
@@ -304,5 +326,6 @@ def test_provisional_session_ending_prints_are_labeled_in_the_brief():
     assert view["sectors"]["change_label"] == "Session-ending print vs prior close · provisional"
     assert view["chips"][0]["status"] == "PROVISIONAL"
     md, page = render(packet, narrative())
-    assert "provisional" in page and "PROVISIONAL" in page
+    figures = page.split('<div class="figures">', 1)[1].split("</div></div>", 1)[0]
+    assert "provisional" in figures and "provisional" in page.split("<h2>Sector view</h2>", 1)[1]
     assert "not official closing bars" in page

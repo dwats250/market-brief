@@ -23,11 +23,13 @@ from market_brief.continuity import (
     write_bundle,
 )
 from market_brief.evidence import digest
+from market_brief.schedule import checkpoint_kind
 from market_brief.synthesize import validate_narrative
 
 CLOSE_FRI = "2026-09-04T20:03:00+00:00"
 PREMARKET_TUE = "2026-09-08T12:45:00+00:00"
-AFTERNOON_TUE = "2026-09-08T19:10:00+00:00"
+OPEN_30M_TUE = "2026-09-08T14:01:00+00:00"
+AFTERNOON_TUE = "2026-09-08T19:10:00+00:00"  # a later light-synthesis time; the checkpoint is OPEN_30M
 CLOSE_TUE = "2026-09-08T20:03:00+00:00"
 PREMARKET_WED = "2026-09-09T12:45:00+00:00"
 NEXT_EVENT = dict(id="wed-release", title="Fictional Wednesday release", source_id="bls", published_at=None,
@@ -41,12 +43,18 @@ def run_packet(now, run_id, **kwargs):
 
 
 def accept(packet, bundle, value=None):
-    """One edition end to end: admit, compare, build context, validate, package."""
+    """One synthesized edition end to end: admit, compare, build context, validate, package.
+
+    Production synthesizes only at PREMARKET and OPEN_30M; this fixture chain still models a synthesized
+    close (rich profile) so admission and comparison semantics are tested against a close that carries
+    analyst state. The deterministic close and refreshes are covered in test_cadence.
+    """
     prior = admit_prior_state(bundle, packet)
     comparisons = compare_all(prior, packet)
     packet["continuity"] = dict(status=prior["status"], reason=prior["reason"], anchors=prior["anchors"],
                                 comparisons=comparisons)
-    profile = edition_profile(packet["run"]["checkpoint"])
+    checkpoint = packet["run"]["checkpoint"]
+    profile = edition_profile(checkpoint if checkpoint_kind(checkpoint) == "synthesis" else "PREMARKET")
     context = dict(analyst_context(packet, profile, comparisons, prior),
                    **continuity_context(prior, comparisons, profile))
     value = trimmed(value or narrative(), profile)
@@ -164,7 +172,7 @@ def test_intraday_editions_compare_against_the_premarket_anchor_and_latest_editi
     _, _, _, state = accept(premarket, bundle)
     bundle = advance_bundle(bundle, state, None, utc(PREMARKET_TUE))
     assert bundle["close"] is handoff and bundle["premarket"] is state and bundle["latest"] is state
-    afternoon = run_packet(AFTERNOON_TUE, "sample-afternoon-191000-tue", checkpoint="AFTERNOON",
+    afternoon = run_packet(AFTERNOON_TUE, "sample-afternoon-191000-tue", checkpoint="OPEN_30M",
                            intraday_value=0.21)
     prior, comparisons, context, state = accept(afternoon, bundle)
     assert set(prior["anchors"]) == {"premarket"}  # latest is the same run as premarket: not duplicated
@@ -240,7 +248,7 @@ def test_carried_watch_assessment_and_lifecycle():
     premarket = run_packet(PREMARKET_TUE, "sample-premarket-124500-tue", intraday_value=-0.53)
     _, _, _, state = accept(premarket, bundle, session_watch_narrative())
     bundle = advance_bundle(bundle, state, None, utc(PREMARKET_TUE))
-    afternoon = run_packet(AFTERNOON_TUE, "sample-afternoon-191000-tue", checkpoint="AFTERNOON", intraday_value=0.21)
+    afternoon = run_packet(AFTERNOON_TUE, "sample-afternoon-191000-tue", checkpoint="OPEN_30M", intraday_value=0.21)
     prior = admit_prior_state(bundle, afternoon)
     lifecycles = {w["id"]: w["lifecycle"] for w in prior["watches"]}
     # Premarket's session watch is still live; its opening-hour sibling from Friday has expired.
@@ -270,10 +278,10 @@ def carried_setup():
     premarket = run_packet(PREMARKET_TUE, "sample-premarket-124500-tue", intraday_value=-0.53)
     _, _, _, state = accept(premarket, bundle, session_watch_narrative())
     bundle = advance_bundle(bundle, state, None, utc(PREMARKET_TUE))
-    afternoon = run_packet(AFTERNOON_TUE, "sample-afternoon-191000-tue", checkpoint="AFTERNOON", intraday_value=0.21)
+    afternoon = run_packet(AFTERNOON_TUE, "sample-afternoon-191000-tue", checkpoint="OPEN_30M", intraday_value=0.21)
     prior = admit_prior_state(bundle, afternoon)
     comparisons = compare_all(prior, afternoon)
-    profile = edition_profile("AFTERNOON")
+    profile = edition_profile("OPEN_30M")
     context = dict(analyst_context(afternoon, profile, comparisons, prior),
                    **continuity_context(prior, comparisons, profile))
     return afternoon, context, bundle
@@ -284,7 +292,7 @@ def carried_setup():
                                       "renamed-carried-watch"])
 def test_invalid_continuity_records_are_rejected(mutation):
     packet, context, bundle = carried_setup()
-    value = trimmed(narrative(), edition_profile("AFTERNOON"))
+    value = trimmed(narrative(), edition_profile("OPEN_30M"))
     if mutation == "unknown-watch":
         value["watch_updates"] = [dict(carried_id="watch-invented", assessment="weakened", reason="x",
                                        evidence_ids=["SPY-intraday"])]
@@ -312,7 +320,7 @@ def test_invalid_continuity_records_are_rejected(mutation):
 
 def test_valid_change_interpretation_cites_the_deterministic_comparison():
     packet, context, bundle = carried_setup()
-    value = trimmed(narrative(), edition_profile("AFTERNOON"))
+    value = trimmed(narrative(), edition_profile("OPEN_30M"))
     value["changes"] = [dict(comparison_id="cmp-premarket-SPY-intraday",
                              text="SPY moved from {{premarket:SPY-intraday}} to {{SPY-intraday}} since the premarket.",
                              evidence_ids=["SPY-intraday", "premarket:SPY-intraday"])]
@@ -437,10 +445,10 @@ def test_live_chain_advances_the_bundle_only_for_accepted_production_runs(tmp_pa
     evidence = json.loads((folder / "evidence.json").read_text())
     assert evidence["continuity"]["anchors"]["previous_close"]["session_date"] == "2026-09-04"
     # A failed synthesis leaves every pointer untouched.
-    cli = live_cli(monkeypatch, tmp_path, "2026-09-08T19:10:00+00:00", "AFTERNOON")
+    cli = live_cli(monkeypatch, tmp_path, "2026-09-08T14:01:00+00:00", "OPEN_30M")
     monkeypatch.setattr(cli, "synthesize", lambda packet, **kwargs: (_ for _ in ()).throw(ValueError("invalid")))
     before = bundle_path(tmp_path).read_text()
-    assert cli.main(["premarket", "--checkpoint", "AFTERNOON"]) == 2
+    assert cli.main(["premarket", "--checkpoint", "OPEN_30M"]) == 2
     assert bundle_path(tmp_path).read_text() == before
 
 

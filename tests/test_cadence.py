@@ -450,6 +450,10 @@ def test_a_placeholder_inside_a_watch_survives_synthesis_refreshes_the_close_and
         page = day.page(checkpoint)
         assert "holds its +0.06 % daily gain" in page and "{{" not in page, checkpoint
         assert day.metadata(checkpoint)["validation"] == "PASS"
+        # The carried watch's marker labels the quoted row like any other row, at the creation-time value.
+        carried_block = page.split("holds its +0.06 % daily gain", 2)[-1].split("</details>", 1)[0]
+        assert '<a href="#evidence-SPY-daily">SPY · Daily return</a><b>+0.06 %</b>' in carried_block, checkpoint
+        assert ">SPY-daily</a>" not in page
     # Wednesday: Tuesday's close moved SPY's daily return well away from the value the watch quoted. The
     # carried criterion still renders the number its author saw; only a new watch quotes the new one.
     def reassess(live):
@@ -469,7 +473,29 @@ def test_a_placeholder_inside_a_watch_survives_synthesis_refreshes_the_close_and
     context = json.loads((day.folder("PREMARKET", "2026-09-09") / "analyst_context.json").read_text())
     carried = next(w for w in context["prior_state"]["watches"] if w["id"] == carried_id)
     assert carried["values"]["SPY-daily"]["value"] == pytest.approx(0.06, abs=0.005)
+    assert carried["values"]["SPY-daily"]["topic"] == "SPY"
+    assert carried["values"]["SPY-daily"]["metric"] == "daily return"
     assert (day.folder("PREMARKET", "2026-09-09") / "narrative.json").exists()
+
+
+def test_a_watch_written_before_criteria_carried_values_is_frozen_at_its_first_carry(day):
+    """A live bundle from the previous release holds watches without `values`. The first edition that
+    carries such a watch freezes its quoted rows, so the criterion stops drifting from there on."""
+    value = narrative()
+    value["watches"][0].update(condition="If SPY holds its {{SPY-daily}} daily gain after the open, "
+                                         "check whether participation extends beyond the selected mega-cap.")
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False, value=value) == 0
+    bundle = json.loads(bundle_path(day.root).read_text())
+    from market_brief.continuity import _hashed
+    for slot in ("premarket", "latest"):
+        for watch in bundle[slot]["assessment"]["watches"]:
+            watch.pop("values", None)
+        bundle[slot] = _hashed({k: v for k, v in bundle[slot].items() if k != "content_hash"})
+    write_bundle(bundle_path(day.root), bundle)
+    assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M") == 0  # a refresh carries and freezes it
+    carried = next(w for w in day.bundle()["latest"]["assessment"]["watches"] if "{{" in w["hypothesis"])
+    assert carried["values"]["SPY-daily"]["value"] == pytest.approx(0.06, abs=0.005)
+    assert "holds its +0.06 % daily gain" in day.page("OPEN_1M")
 
 
 def test_refresh_page_keeps_every_anchor_and_cites_frozen_values_with_their_clock(day):

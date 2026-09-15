@@ -413,8 +413,10 @@ def continuity_context(prior, comparisons, profile=None):
                       evidence_refs=watch["evidence_refs"], origin_run_id=watch["origin_run_id"],
                       latest_assessment=watch["assessments"][-1]["status"])
         if watch.get("values"):
-            # The numbers the criteria quote, as the author saw them; they are not current evidence.
-            record["values"] = {ident: dict(value=row["value"], unit=row["unit"], observed_at=row.get("observed_at"))
+            # The numbers the criteria quote, as the author saw them, with the identity that labels them;
+            # they are not current evidence.
+            record["values"] = {ident: {key: row[key] for key in ("topic", "metric", "frequency", "value", "unit",
+                                                                 "observed_at") if key in row}
                                 for ident, row in watch["values"].items()}
         watches.append(record)
     relationships = [dict(id=r["id"], instruments=r["instruments"], statement=r["statement"],
@@ -581,6 +583,10 @@ def edition_state(packet, narrative, prior, comparisons, context_hash, narrative
     for watch in prior.get("watches", []):
         record = json.loads(json.dumps(watch))
         record["evaluability"] = evaluability(record, prior, comparisons)
+        if not record.get("values"):
+            # A record written before criteria carried their values is frozen at this carry, the best
+            # record available, so it stops drifting from here on.
+            record["values"] = criterion_values(record, catalog)
         update = updates.get(record["id"])
         if update:
             record["assessments"].append(dict(
@@ -779,6 +785,8 @@ def carried_state(packet, prior, comparisons, interpretation, app_version=""):
     for watch in prior.get("watches", []):
         record = json.loads(json.dumps(watch))
         record["evaluability"] = evaluability(record, prior, comparisons)
+        if not record.get("values"):
+            record["values"] = criterion_values(record, catalog)  # legacy record: freeze at this carry
         watches.append(record)
     watches = watches[:CARRY_LIMIT]
     relationships = [json.loads(json.dumps(r)) for r in prior.get("relationships", [])][:CARRY_LIMIT]

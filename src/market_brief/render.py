@@ -450,7 +450,9 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
             continue  # a horizon that passed without reassessment is history, not a live item
         expires = watch["horizon"].get("expires_at")
         # A carried criterion renders at the values its author saw; only a reassessment adds new text.
-        creation = watch.get("values") or {}
+        # Each creation-time value keeps the row's identity so its marker is labeled like any other.
+        creation = {ident: {**(frozen.get(ident) or catalog.get(ident) or {}), **row}
+                    for ident, row in (watch.get("values") or {}).items()}
         carried_watches.append(dict(
             id=watch["id"], hypothesis=expand(watch["hypothesis"], creation),
             phrase=watch["horizon"].get("phrase", ""), lifecycle=watch["lifecycle"],

@@ -19,12 +19,17 @@ python -m pytest
 ```
 
 The replay uses fictional evidence and is labeled in the generated brief.
-Scheduled runs resolve exchange sessions in `America/Vancouver`; the five
-checkpoints are `PREMARKET`, `OPEN_1M`, `OPEN_30M`, `AFTERNOON`, and `CLOSE_1M`.
+Scheduled runs resolve exchange sessions in `America/Vancouver`. Two checkpoints
+synthesize: `PREMARKET` (6:00 PT, the rich edition) and `OPEN_30M` (7:00 PT, the one
+interpretive update after the open). Every other checkpoint is deterministic and never
+calls the analyst: `OPEN_1M` (6:31 PT) and `HOURLY_0800` … `HOURLY_1200` refresh the
+observed record under the last accepted interpretation, and `CLOSE_1M` is a close
+snapshot that hands the session off to the next premarket. Every page carries two
+clocks, "Interpretation as of" and "Data as of", plus the scheduler's next update.
 
 ## Output
 
-The latest rendered brief is at `output/latest.html`. `python -m market_brief publish` copies only that human-facing HTML to `publish/index.html` for a static host. Each run under ignored `runs/<session>/<mode>-<checkpoint>-<time>-<id>/` holds `evidence.json`, `analyst_context.json`, `narrative.json`, `edition_state.json`, `session_handoff.json` (substantiated closes only), `metadata.json`, and the rendered brief. Accepted production state lives in `runs/continuity/bundle.json`, restored from and uploaded to Actions artifacts. Rendered fixture editions are in `examples/editions/`.
+The latest rendered brief is at `output/latest.html`. `python -m market_brief publish` copies only that human-facing HTML to `publish/index.html` for a static host. Each run under ignored `runs/<session>/<mode>-<checkpoint>-<time>-<id>/` holds `evidence.json`, `edition_state.json`, `session_handoff.json` (substantiated closes only), `metadata.json`, and the rendered brief; synthesis runs add `analyst_context.json` and `narrative.json`, and deterministic runs record which interpretation they carried in `metadata.json`. Accepted production state lives in `runs/continuity/bundle.json`, restored from and uploaded to Actions artifacts. Rendered fixture editions are in `examples/editions/`.
 
 ## Core principles
 

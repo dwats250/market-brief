@@ -199,7 +199,7 @@ the comparisons, and appends the analyst's assessment. A watch without comparabl
 evidence can only be `unresolved`; `reversed` retires it; a passed horizon expires it. At most
 three watches and three relationships carry forward.
 
-A post-close edition classifies its closing data: `COMPLETED_SESSION`, `PROVISIONAL_NEAR_CLOSE`
+A post-close run classifies its closing data: `COMPLETED_SESSION`, `PROVISIONAL_NEAR_CLOSE`
 (labeled), `EARLIER_HISTORY_ONLY`, or `NONE`. Because the provider's completed daily bar is
 admitted only from the next day and the scheduler fires 30–40 minutes late, a CLOSE_1M run may
 admit one labeled `PROVISIONAL` print per instrument: an intraday trade from the final fifteen
@@ -208,6 +208,25 @@ cited, and carried with that status and never presented as an official closing b
 first two classifications produce a close handoff; the
 bundle's close pointer and edition pointers are separate, so a premarket never overwrites the
 previous close and a run without session observations leaves the last close untouched.
+
+## Cadence: two syntheses, deterministic refreshes
+
+`schedule.CHECKPOINT_KINDS` is the one statement of the day. `PREMARKET` (6:00 PT, rich) and
+`OPEN_30M` (7:00 PT, light) are the only `synthesis` checkpoints and the only checkpoints with an
+edition profile. `OPEN_1M` (6:31 PT) and `HOURLY_0800` … `HOURLY_1200` are `refresh`
+checkpoints; `CLOSE_1M` is the `close`. A refresh collects, normalizes, derives, compares and
+publishes exactly as a synthesis does, but instead of calling the analyst it admits the bundle's
+`interpretation` slot: the last accepted synthesis of this session, frozen as a hashed continuity
+record (`kind: interpretation`) holding the narrative, every row it cites at the values the
+analyst saw, the prior state it assessed, its resolved watch horizons and its selected triggers.
+The page renders that record under this run's observed record and states both clocks. A refresh
+advances `latest` with a `carried` edition state (fresh snapshots, the carried assessment
+unchanged) and never writes the interpretation slot. Fail-closed rules: a refresh without a
+same-session interpretation or without timestamped current prints publishes nothing; a close
+without any observation from the session publishes nothing and does not hand off; a close without
+an interpretation still hands the observed session off, without a page. Cloudflare wakes on the
+hour 13:00–20:00 UTC plus the :31 and :01 candidates; the Python scheduler resolves the checkpoint,
+skips hourly refreshes at or after an early close, and stays idempotent per checkpoint.
 
 The bundle (`runs/continuity/bundle.json`, schema `market-brief.continuity-bundle.v1`, every
 record content-hashed) is written only by accepted LIVE, non-experiment, non-commissioning runs.

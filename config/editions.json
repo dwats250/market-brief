@@ -34,5 +34,5 @@
     "OPEN_30M": {"profile": "light", "words": [140, 220],
                  "guidance": "The one interpretive update after the open: what the opening structure did to the premarket read, using actual comparable evidence only. No later edition reinterprets the session."}
   },
-  "cadence_note": "Only synthesis checkpoints carry an edition profile. OPEN_1M, the hourly refreshes and CLOSE_1M are deterministic: they refresh observed rows under the last accepted interpretation and never call the analyst (see schedule.CHECKPOINT_KINDS)."
+  "cadence_note": "Only synthesis checkpoints carry an edition profile: PREMARKET (NYSE open minus thirty minutes) and OPEN_30M (open plus thirty minutes). OPEN_1M (open plus one minute), the hourly refreshes (exchange-clock hours inside the session) and CLOSE_1M (close plus one minute) are deterministic: they refresh observed rows under the last accepted interpretation and never call the analyst (see schedule.CHECKPOINT_KINDS)."
 }

@@ -211,10 +211,14 @@ previous close and a run without session observations leaves the last close unto
 
 ## Cadence: two syntheses, deterministic refreshes
 
-`schedule.CHECKPOINT_KINDS` is the one statement of the day. `PREMARKET` (6:00 PT, rich) and
-`OPEN_30M` (7:00 PT, light) are the only `synthesis` checkpoints and the only checkpoints with an
-edition profile. `OPEN_1M` (6:31 PT) and `HOURLY_0800` … `HOURLY_1200` are `refresh`
-checkpoints; `CLOSE_1M` is the `close`. A refresh collects, normalizes, derives, compares and
+`schedule.CHECKPOINT_KINDS` is the one statement of the day, and every checkpoint is anchored to
+the exchange session (never to a Pacific wall clock; British Columbia no longer follows New York's
+seasonal offset): `PREMARKET` (NYSE open −30 minutes, rich) and `OPEN_30M` (open +30 minutes,
+light) are the only `synthesis` checkpoints and the only checkpoints with an edition profile.
+`OPEN_1M` (open +1 minute) and `HOURLY_1100` … `HOURLY_1500` (exchange-clock hours inside the
+session) are `refresh` checkpoints; `CLOSE_1M` (close +1 minute) is the `close`. Times are displayed
+in Pacific time, so the opening-structure update reads 7:00 AM PT in New York daylight time and
+8:00 AM PT in standard time. A refresh collects, normalizes, derives, compares and
 publishes exactly as a synthesis does, but instead of calling the analyst it admits the bundle's
 `interpretation` slot: the last accepted synthesis of this session, frozen as a hashed continuity
 record (`kind: interpretation`) holding the narrative, every row it cites at the values the
@@ -228,11 +232,17 @@ an interpretation still hands the observed session off, without a page. Cloudfla
 past each hour 13:00–21:00 UTC plus the :31 candidates, never two wakes within a minute; the Python
 scheduler resolves the checkpoint, skips hourly refreshes at or after an early close, and stays
 idempotent per checkpoint. A synthesis checkpoint is due only within twenty minutes of its scheduled
-minute (`schedule.TOLERANCE_MINUTES`), so the :31 wake that serves the other Pacific season's open +1M
-(7:31 PT or 5:31 PT here) resolves to SKIP and can never become a second paid attempt at the 7:00
-update; refreshes and the close keep a forty-five-minute window because a late deterministic run costs
-nothing. A `NEXT_BRIEF` watch horizon resolves to the next synthesis checkpoint,
-the next time an analyst can judge it; refreshes in between only carry it.
+minute (`schedule.TOLERANCE_MINUTES`), so the :31 UTC wake that serves the other New York season's
+open +1M (10:31 ET or 8:31 ET here) resolves to SKIP and can never become a second paid attempt at
+the opening-structure update; refreshes and the close keep a forty-five-minute window because a late
+deterministic run costs nothing. The restored continuity bundle is also a completion proof: a wake
+whose checkout predates an earlier run's publish still skips a checkpoint the bundle already records.
+Held as a bounded follow-up: two fresh runners both starting inside one synthesis window after a
+failed first attempt (an unusual queue delay) could still attempt twice; closing it needs a durable
+attempt record across runners. A `NEXT_BRIEF` watch horizon resolves to the next synthesis checkpoint,
+the next time an analyst can judge it; refreshes in between only carry it. A watch's criteria carry
+the rows they quote at the values their author saw (`values` on the watch record), so a carried
+criterion never drifts with newer data; a later synthesis may reassess or replace it.
 
 The bundle (`runs/continuity/bundle.json`, schema `market-brief.continuity-bundle.v1`, every
 record content-hashed) is written only by accepted LIVE, non-experiment, non-commissioning runs.

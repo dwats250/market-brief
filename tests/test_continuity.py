@@ -375,7 +375,7 @@ def test_horizons_resolve_from_the_exchange_calendar_not_from_tomorrow():
     next_brief = resolve_horizon("NEXT_BRIEF", premarket, current_checkpoint="PREMARKET")
     assert next_brief["next_checkpoint"] == "OPEN_30M" and next_brief["phrase"] == "By the 7:00 AM PT update"
     assert resolve_horizon("NEXT_BRIEF", premarket)["expires_session"] == "2026-09-08"
-    late_morning = resolve_horizon("NEXT_BRIEF", utc("2026-09-08T15:30:00+00:00"), current_checkpoint="HOURLY_0800")
+    late_morning = resolve_horizon("NEXT_BRIEF", utc("2026-09-08T15:30:00+00:00"), current_checkpoint="HOURLY_1100")
     assert late_morning["next_checkpoint"] == "PREMARKET" and late_morning["expires_session"] == "2026-09-09"
     assert late_morning["phrase"] == "By the next session's premarket"
     after_close = utc(CLOSE_TUE)

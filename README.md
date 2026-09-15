@@ -19,13 +19,14 @@ python -m pytest
 ```
 
 The replay uses fictional evidence and is labeled in the generated brief.
-Scheduled runs resolve exchange sessions in `America/Vancouver`. Two checkpoints
-synthesize: `PREMARKET` (6:00 PT, the rich edition) and `OPEN_30M` (7:00 PT, the one
-interpretive update after the open). Every other checkpoint is deterministic and never
-calls the analyst: `OPEN_1M` (6:31 PT) and `HOURLY_0800` … `HOURLY_1200` refresh the
-observed record under the last accepted interpretation, and `CLOSE_1M` is a close
-snapshot that hands the session off to the next premarket. Every page carries two
-clocks, "Interpretation as of" and "Data as of", plus the scheduler's next update.
+Scheduled runs are anchored to the NYSE session and displayed in Pacific time. Two
+checkpoints synthesize: `PREMARKET` (open −30 minutes, the rich edition) and `OPEN_30M`
+(open +30 minutes, the one interpretive update after the open). Every other checkpoint is
+deterministic and never calls the analyst: `OPEN_1M` (open +1 minute) and `HOURLY_1100` …
+`HOURLY_1500` (exchange-clock hours inside the session) refresh the observed record under
+the last accepted interpretation, and `CLOSE_1M` (close +1 minute) is a close snapshot that
+hands the session off to the next premarket. Every page carries two clocks, "Interpretation
+as of" and "Data as of", plus the scheduler's next update.
 
 ## Output
 

@@ -53,7 +53,7 @@ class Day:
         self.calls, self.published, self.narratives = [], [], {}
 
     def run(self, now, checkpoint, *, intraday=True, value=None, mutate=None, last_history_date="2026-09-04",
-            print_at=None, fail_synthesis=False, command="premarket"):
+            print_at=None, fail_synthesis=False, command="premarket", scale_last_close=None):
         freeze_clock(self.monkeypatch, now)
         raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
         raw["mode"] = "LIVE"
@@ -63,6 +63,8 @@ class Day:
             if row["dates"][-1] != last_history_date:
                 sessions = cal.sessions_in_range("2026-01-01", last_history_date)
                 row["dates"] = [s.date().isoformat() for s in sessions[-len(row["closes"]):]]
+            if scale_last_close and row["symbol"] in scale_last_close:
+                row["closes"][-1] = round(row["closes"][-1] * scale_last_close[row["symbol"]], 4)
         for row in raw["observations"] + raw["events"]:
             row["retrieved_at"] = now
             if "checked_at" in row:
@@ -155,7 +157,7 @@ def test_next_update_label_follows_the_scheduler():
     assert label(f"{TUE}T13:00:00+00:00", "PREMARKET") == "Next update · 6:31 AM PT"
     assert label(f"{TUE}T13:31:00+00:00", "OPEN_1M") == "Next update · 7:00 AM PT · interpretation"
     assert label(f"{TUE}T14:01:00+00:00", "OPEN_30M") == "Next update · 8:00 AM PT"
-    assert label(f"{TUE}T19:00:00+00:00", "HOURLY_1200") == "Next update · 1:01 PM PT · close snapshot"
+    assert label(f"{TUE}T19:00:00+00:00", "HOURLY_1500") == "Next update · 1:01 PM PT · close snapshot"
     assert label(f"{TUE}T20:03:00+00:00", "CLOSE_1M") == "Next update · Wed, Sep 9 · 6:00 AM PT premarket"
     # Friday's close points at Tuesday: Labor Day is skipped.
     assert next_update_label(next_checkpoint(utc("2026-09-04T20:03:00+00:00"), "CLOSE_1M"), "2026-09-04") \
@@ -213,10 +215,10 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert structure_interpretation != premarket_interpretation
 
     # 10:00 and 11:00 AM PT: hourly refreshes, zero analyst calls, the 7:00 interpretation byte for byte.
-    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1000") == 0
-    assert day.run(f"{TUE}T18:00:00+00:00", "HOURLY_1100") == 0
+    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
+    assert day.run(f"{TUE}T18:00:00+00:00", "HOURLY_1400") == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]
-    ten, eleven = day.page("HOURLY_1000"), day.page("HOURLY_1100")
+    ten, eleven = day.page("HOURLY_1300"), day.page("HOURLY_1400")
     assert "Interpretation as of 7:01 AM PT · Data as of 10:00 AM PT · Next update · 11:00 AM PT" in ten
     assert "Interpretation as of 7:01 AM PT · Data as of 11:00 AM PT · Next update · 12:00 PM PT" in eleven
     assert interpretation_fragments(ten) == interpretation_fragments(structure)
@@ -224,15 +226,15 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert ten != eleven  # the observed record moved: clocks, tables, ledger
     # Deterministic state a refresh may add: the 7:00 opening-hour watch has run out by 10:00.
     assert PASSED not in structure and f"Through the opening hour{PASSED}" in ten
-    assert 'data-checkpoint="HOURLY_1000"' in ten and 'data-checkpoint="HOURLY_1100"' in eleven
+    assert 'data-checkpoint="HOURLY_1300"' in ten and 'data-checkpoint="HOURLY_1400"' in eleven
     assert "as of 10:00 AM PT" in ten and "as of 11:00 AM PT" in eleven  # table captions carry the data clock
-    for checkpoint in ("HOURLY_1000", "HOURLY_1100"):
+    for checkpoint in ("HOURLY_1300", "HOURLY_1400"):
         assert day.metadata(checkpoint)["synthesis"] == dict(kind="refresh", calls=0)
         assert not (day.folder(checkpoint) / "analyst_context.json").exists()
         assert not (day.folder(checkpoint) / "narrative.json").exists()
     bundle = day.bundle()
     assert bundle["interpretation"]["content_hash"] == structure_interpretation
-    assert bundle["latest"]["origin"]["checkpoint"] == "HOURLY_1100"
+    assert bundle["latest"]["origin"]["checkpoint"] == "HOURLY_1400"
     assert bundle["latest"]["assessment"]["interpretation_run_id"] == bundle["interpretation"]["origin"]["run_id"]
 
     # 1:03 PM PT: the close is a deterministic snapshot that hands the session off; no synthesis.
@@ -259,7 +261,7 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert bundle["interpretation"]["origin"]["run_id"] in origins
     assert origins <= {bundle["interpretation"]["origin"]["run_id"], bundle["premarket"]["origin"]["run_id"]}
     assert all(slot in bundle for slot in SLOTS)
-    assert day.published == ["PREMARKET", "OPEN_1M", "OPEN_30M", "HOURLY_1000", "HOURLY_1100", "CLOSE_1M"]
+    assert day.published == ["PREMARKET", "OPEN_1M", "OPEN_30M", "HOURLY_1300", "HOURLY_1400", "CLOSE_1M"]
 
     # Wednesday 6:00 AM PT: the next premarket admits the deterministic close and synthesizes again.
     assert day.run("2026-09-09T13:00:00+00:00", "PREMARKET", intraday=False, last_history_date=TUE) == 0
@@ -282,19 +284,19 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
 
 def test_refresh_fails_closed_without_a_same_session_interpretation(day):
     # Nothing accepted today: a refresh has no interpretation to carry and publishes nothing.
-    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1000") == 2
+    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 2
     assert day.calls == [] and day.published == []
-    assert not (day.folder("HOURLY_1000") / "brief.html").exists()
-    assert "no accepted interpretation for this session" in day.metadata("HOURLY_1000")["error"]
+    assert not (day.folder("HOURLY_1300") / "brief.html").exists()
+    assert "no accepted interpretation for this session" in day.metadata("HOURLY_1300")["error"]
     assert not bundle_path(day.root).exists()
 
 
 def test_refresh_without_current_prints_keeps_the_last_accepted_page(day):
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
     before = bundle_path(day.root).read_text()
-    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1000", intraday=False) == 2
+    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300", intraday=False) == 2
     assert day.published == ["PREMARKET"] and day.calls == ["PREMARKET"]
-    assert "no timestamped current prints" in day.metadata("HOURLY_1000")["error"]
+    assert "no timestamped current prints" in day.metadata("HOURLY_1300")["error"]
     assert bundle_path(day.root).read_text() == before  # nothing advanced, nothing rewritten
 
 
@@ -337,7 +339,7 @@ def test_a_replayed_refresh_never_reaches_the_analyst_and_dates_its_sample_inter
     monkeypatch.setattr(cli, "RUN_ROOT", tmp_path)
     monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
     monkeypatch.setattr(cli, "synthesize", lambda *a, **k: (_ for _ in ()).throw(AssertionError("analyst called")))
-    assert cli.main(["premarket", "--replay", "--checkpoint", "HOURLY_1000", "--input", str(fixture)]) == 0
+    assert cli.main(["premarket", "--replay", "--checkpoint", "HOURLY_1300", "--input", str(fixture)]) == 0
     folder = next(p for p in (tmp_path / "runs").glob("*/*") if (p / "evidence.json").exists())
     page = (folder / "brief.html").read_text()
     assert "SAMPLE · Hourly refresh" in page and "FICTIONAL SAMPLE" in page
@@ -373,9 +375,9 @@ def test_the_alternate_season_wake_never_retries_or_reruns_the_opening_structure
     assert day.calls == ["PREMARKET", "OPEN_30M"] and len(day.attempts("OPEN_30M")) == 1
     assert day.published == ["PREMARKET", "OPEN_1M"] + ([] if first_attempt_fails else ["OPEN_30M"])
     # The hourly refreshes that follow are unaffected and still make no analyst call.
-    assert day.run(f"{TUE}T15:01:00+00:00", "HOURLY_0800", command="schedule") == 0
+    assert day.run(f"{TUE}T15:01:00+00:00", "HOURLY_1100", command="schedule") == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]
-    interpreted = day.metadata("HOURLY_0800")["interpretation"]["checkpoint"]
+    interpreted = day.metadata("HOURLY_1100")["interpretation"]["checkpoint"]
     assert interpreted == ("PREMARKET" if first_attempt_fails else "OPEN_30M")
 
 
@@ -394,13 +396,13 @@ def test_a_queue_delayed_earlier_wake_cannot_repeat_a_completed_checkpoint_on_a_
     assert "SKIP / OPEN_30M / already completed" in capsys.readouterr().out
     assert day.calls == ["PREMARKET", "OPEN_30M"] and len(day.attempts("OPEN_30M")) == 1
     # The same holds for a deterministic refresh: one attempt folder, one publish.
-    assert day.run(f"{TUE}T17:01:00+00:00", "HOURLY_1000", command="schedule") == 0
-    checkpoint_marker(day.root, TUE, "HOURLY_1000").unlink()
+    assert day.run(f"{TUE}T17:01:00+00:00", "HOURLY_1300", command="schedule") == 0
+    checkpoint_marker(day.root, TUE, "HOURLY_1300").unlink()
     capsys.readouterr()
-    assert day.run(f"{TUE}T17:06:00+00:00", "HOURLY_1000", command="schedule") == 0
-    assert "SKIP / HOURLY_1000 / already completed" in capsys.readouterr().out
-    assert len(day.attempts("HOURLY_1000")) == 1
-    assert day.published == ["PREMARKET", "OPEN_30M", "HOURLY_1000"]
+    assert day.run(f"{TUE}T17:06:00+00:00", "HOURLY_1300", command="schedule") == 0
+    assert "SKIP / HOURLY_1300 / already completed" in capsys.readouterr().out
+    assert len(day.attempts("HOURLY_1300")) == 1
+    assert day.published == ["PREMARKET", "OPEN_30M", "HOURLY_1300"]
 
 
 def test_a_failed_opening_structure_synthesis_leaves_refreshes_on_the_premarket_interpretation(day):
@@ -409,11 +411,11 @@ def test_a_failed_opening_structure_synthesis_leaves_refreshes_on_the_premarket_
     assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", fail_synthesis=True) == 2
     assert day.calls == ["PREMARKET", "OPEN_30M"] and day.published == ["PREMARKET"]
     assert day.bundle()["interpretation"]["content_hash"] == premarket  # a rejected synthesis freezes nothing
-    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1000") == 0
-    page = day.page("HOURLY_1000")
+    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
+    page = day.page("HOURLY_1300")
     assert "Interpretation as of 6:00 AM PT · Data as of 10:00 AM PT" in page
     assert "Interpretation: PREMARKET" in page.split("Technical details", 1)[1]
-    assert day.metadata("HOURLY_1000")["interpretation"]["checkpoint"] == "PREMARKET"
+    assert day.metadata("HOURLY_1300")["interpretation"]["checkpoint"] == "PREMARKET"
     assert day.calls == ["PREMARKET", "OPEN_30M"]  # the refresh did not retry the analyst
 
 
@@ -442,33 +444,42 @@ def test_a_placeholder_inside_a_watch_survives_synthesis_refreshes_the_close_and
     carried_id = next(w["id"] for w in day.bundle()["latest"]["assessment"]["watches"] if "{{" in w["hypothesis"])
     # The 7:00 synthesis carries the watch without reassessing it; every later page still resolves it.
     assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
-    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1000") == 0
+    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
     assert day.run(f"{TUE}T20:03:00+00:00", "CLOSE_1M", print_at=f"{TUE}T19:59:58+00:00") == 0
-    for checkpoint in ("OPEN_30M", "HOURLY_1000", "CLOSE_1M"):
+    for checkpoint in ("OPEN_30M", "HOURLY_1300", "CLOSE_1M"):
         page = day.page(checkpoint)
         assert "holds its +0.06 % daily gain" in page and "{{" not in page, checkpoint
         assert day.metadata(checkpoint)["validation"] == "PASS"
-    # Wednesday's premarket reassesses the carried watch; its criterion still renders with its number.
+    # Wednesday: Tuesday's close moved SPY's daily return well away from the value the watch quoted. The
+    # carried criterion still renders the number its author saw; only a new watch quotes the new one.
     def reassess(live):
         live["watch_updates"] = [dict(carried_id=carried_id, assessment="unresolved",
                                       reason="The premarket has no session print to test it against.",
                                       evidence_ids=["SPY-daily", "previous_close:SPY-daily"])]
+        live["watches"][0].update(condition="If SPY keeps its {{SPY-daily}} daily gain, check participation.")
     assert day.run("2026-09-09T13:00:00+00:00", "PREMARKET", intraday=False, last_history_date=TUE,
-                   mutate=reassess) == 0
+                   mutate=reassess, scale_last_close={"SPY": 1.02}) == 0
     page = day.page("PREMARKET", "2026-09-09")
-    assert "holds its +0.06 % daily gain" in page and "{{" not in page
+    evidence = json.loads((day.folder("PREMARKET", "2026-09-09") / "evidence.json").read_text())
+    today = formatted(next(row for row in evidence["derived"] if row["id"] == "SPY-daily"))
+    assert today != "+0.06 %" and today.startswith("+2.")
+    assert "holds its +0.06 % daily gain" in page and "{{" not in page  # the carried criterion did not drift
+    assert f"keeps its {today} daily gain" in page  # the newly accepted watch quotes the new value
     assert '<span class="meta">Carried · unresolved' in page
+    context = json.loads((day.folder("PREMARKET", "2026-09-09") / "analyst_context.json").read_text())
+    carried = next(w for w in context["prior_state"]["watches"] if w["id"] == carried_id)
+    assert carried["values"]["SPY-daily"]["value"] == pytest.approx(0.06, abs=0.005)
     assert (day.folder("PREMARKET", "2026-09-09") / "narrative.json").exists()
 
 
 def test_refresh_page_keeps_every_anchor_and_cites_frozen_values_with_their_clock(day):
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
     assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
-    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1000") == 0
-    page = day.page("HOURLY_1000")
+    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
+    page = day.page("HOURLY_1300")
     parsed = Page()
     parsed.feed(page)
-    evidence = json.loads((day.folder("HOURLY_1000") / "evidence.json").read_text())
+    evidence = json.loads((day.folder("HOURLY_1300") / "evidence.json").read_text())
     catalog = evidence_catalog(evidence)
     assert {f"evidence-{i}" for i in catalog} <= parsed.ids
     assert set(parsed.refs) <= parsed.ids

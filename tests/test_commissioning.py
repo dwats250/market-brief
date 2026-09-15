@@ -21,9 +21,9 @@ def test_current_phase_partitions_the_trading_day():
     assert current_phase(utc("2026-09-08T13:59:00+00:00")) == "OPEN_1M"
     assert current_phase(utc("2026-09-08T14:00:00+00:00")) == "OPEN_30M"
     assert current_phase(utc("2026-09-08T14:59:00+00:00")) == "OPEN_30M"
-    assert current_phase(utc("2026-09-08T18:00:00+00:00")) == "HOURLY_1100"
-    assert current_phase(utc("2026-09-08T19:07:00+00:00")) == "HOURLY_1200"
-    assert current_phase(utc("2026-09-08T19:59:00+00:00")) == "HOURLY_1200"
+    assert current_phase(utc("2026-09-08T18:00:00+00:00")) == "HOURLY_1400"
+    assert current_phase(utc("2026-09-08T19:07:00+00:00")) == "HOURLY_1500"
+    assert current_phase(utc("2026-09-08T19:59:00+00:00")) == "HOURLY_1500"
     assert current_phase(utc("2026-09-08T20:00:00+00:00")) == "CLOSE_1M"
     assert current_phase(utc("2026-09-08T23:30:00+00:00")) == "CLOSE_1M"
 
@@ -93,7 +93,7 @@ def test_replay_commissioning_stays_sample_and_never_publishes(tmp_path, monkeyp
 def test_live_commissioning_header_names_the_phase():
     packet = fixture_packet()
     packet["run"]["mode"] = "LIVE"
-    packet["run"]["checkpoint"] = "HOURLY_1200"
+    packet["run"]["checkpoint"] = "HOURLY_1500"
     packet["run"]["commissioning"] = True
     value = narrative()
     value["mode"] = "LIVE"

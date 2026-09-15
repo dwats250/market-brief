@@ -26,13 +26,13 @@ from .schedule import CHECKPOINT_KINDS, checkpoint_kind, next_checkpoint
 PACIFIC = ZoneInfo("America/Vancouver")
 DISPLAY_STATUSES = {"LIVE", "LIVE COMMISSIONING", "LAST GOOD BRIEF", "SAMPLE"}
 EDITION_LABELS = {"PREMARKET": "Premarket edition", "OPEN_1M": "Opening refresh",
-                  "OPEN_30M": "Opening structure edition", "HOURLY_0800": "Hourly refresh",
-                  "HOURLY_0900": "Hourly refresh", "HOURLY_1000": "Hourly refresh", "HOURLY_1100": "Hourly refresh",
-                  "HOURLY_1200": "Hourly refresh", "CLOSE_1M": "Close snapshot"}
+                  "OPEN_30M": "Opening structure edition", "HOURLY_1100": "Hourly refresh",
+                  "HOURLY_1200": "Hourly refresh", "HOURLY_1300": "Hourly refresh", "HOURLY_1400": "Hourly refresh",
+                  "HOURLY_1500": "Hourly refresh", "CLOSE_1M": "Close snapshot"}
 PHASE_PHRASES = {"PREMARKET": "before the open", "OPEN_1M": "in the opening minutes",
-                 "OPEN_30M": "during the morning session", "HOURLY_0800": "during the morning session",
-                 "HOURLY_0900": "during the morning session", "HOURLY_1000": "during the morning session",
-                 "HOURLY_1100": "during the morning session", "HOURLY_1200": "during the afternoon session",
+                 "OPEN_30M": "during the morning session", "HOURLY_1100": "during the morning session",
+                 "HOURLY_1200": "during the morning session", "HOURLY_1300": "during the afternoon session",
+                 "HOURLY_1400": "during the afternoon session", "HOURLY_1500": "during the afternoon session",
                  "CLOSE_1M": "after the close"}
 SECTOR_LABELS = {
     "XLK": "Technology", "XLF": "Financials", "XLE": "Energy",
@@ -340,12 +340,12 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
                or interpreted["target_time"] != packet["run"]["target_time"])
     session_date = packet["run"]["session"]["date"]
 
-    def expand(text):
-        """Numeric placeholders resolve against the frozen rows; a reference the record does not hold
-        (a carried criterion older than the record) falls back to this run's row, then to a dash.
-        Rendering can never abort an accepted run."""
+    def expand(text, values=None):
+        """Numeric placeholders resolve against the rows frozen with the text: a carried watch's own
+        creation-time values first, then the interpretation record, then this run's row for a legacy
+        reference the record does not hold, then a dash. Rendering can never abort an accepted run."""
         def value(match):
-            row = frozen.get(match[1]) or catalog.get(match[1])
+            row = (values or {}).get(match[1]) or frozen.get(match[1]) or catalog.get(match[1])
             return formatted(row) if row else NOT_APPLICABLE
         return PLACEHOLDER.sub(value, text)
 
@@ -449,15 +449,18 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
         if update is None and watch["lifecycle"] != "active":
             continue  # a horizon that passed without reassessment is history, not a live item
         expires = watch["horizon"].get("expires_at")
+        # A carried criterion renders at the values its author saw; only a reassessment adds new text.
+        creation = watch.get("values") or {}
         carried_watches.append(dict(
-            id=watch["id"], hypothesis=expand(watch["hypothesis"]),
+            id=watch["id"], hypothesis=expand(watch["hypothesis"], creation),
             phrase=watch["horizon"].get("phrase", ""), lifecycle=watch["lifecycle"],
             expired=watch["lifecycle"] == "expired" or (bool(expires) and timestamp(expires) <= target),
             evaluability=watch["evaluability"],
             assessment=update["assessment"] if update else "not reassessed",
             reason=expand(update["reason"]) if update else "",
             evidence_ids=update["evidence_ids"] if update else watch["evidence_refs"],
-            refs=refs(update["evidence_ids"] if update else watch["evidence_refs"])))
+            refs=(refs(update["evidence_ids"]) if update
+                  else refs(watch["evidence_refs"], {**frozen, **creation}))))
     attention_why = {item["id"]: item["why"] for item in narrative.get("attention", [])}
     attention = [{**a, "why": attention_why.get(a["id"], ""), "trigger": trigger_tag(a["reason"]),
                   "display_symbol": (f"{SECTOR_LABELS[a['symbol']]} · {a['symbol']}"

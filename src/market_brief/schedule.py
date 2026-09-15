@@ -3,6 +3,12 @@
 The daily cadence keeps rich interpretation scarce: one premarket synthesis and one interpretive
 update after the open. Every later checkpoint is a deterministic refresh of the observed record under
 the last accepted interpretation, and the close is a deterministic snapshot that hands the session off.
+
+Checkpoints are anchored to the exchange session, never to a Pacific wall clock: the premarket is
+thirty minutes before the NYSE open, the opening checkpoints are one and thirty minutes after it, the
+hourly refreshes are exchange-clock hours inside the session, and the close is one minute after the
+session close. The exchange calendar is the only authority for sessions, holidays and early closes;
+Pacific time appears only when a time is displayed to the reader.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -12,33 +18,29 @@ import exchange_calendars as xcals
 
 VANCOUVER = ZoneInfo("America/Vancouver")
 ET = ZoneInfo("America/New_York")
-CHECKPOINTS = ("PREMARKET", "OPEN_1M", "OPEN_30M", "HOURLY_0800", "HOURLY_0900", "HOURLY_1000",
-               "HOURLY_1100", "HOURLY_1200", "CLOSE_1M")
+CHECKPOINTS = ("PREMARKET", "OPEN_1M", "OPEN_30M", "HOURLY_1100", "HOURLY_1200", "HOURLY_1300",
+               "HOURLY_1400", "HOURLY_1500", "CLOSE_1M")
 # synthesis: one model call under the edition's budget profile; refresh: no model call, fresh
 # observed rows under the carried interpretation; close: a refresh that also hands the session off.
 CHECKPOINT_KINDS = {"PREMARKET": "synthesis", "OPEN_1M": "refresh", "OPEN_30M": "synthesis",
-                    "HOURLY_0800": "refresh", "HOURLY_0900": "refresh", "HOURLY_1000": "refresh",
-                    "HOURLY_1100": "refresh", "HOURLY_1200": "refresh", "CLOSE_1M": "close"}
+                    "HOURLY_1100": "refresh", "HOURLY_1200": "refresh", "HOURLY_1300": "refresh",
+                    "HOURLY_1400": "refresh", "HOURLY_1500": "refresh", "CLOSE_1M": "close"}
 SYNTHESIS_CHECKPOINTS = tuple(c for c in CHECKPOINTS if CHECKPOINT_KINDS[c] == "synthesis")
 CHECKPOINT_TITLES = {"PREMARKET": "Premarket", "OPEN_1M": "Open +1M", "OPEN_30M": "Opening structure",
-                     "HOURLY_0800": "8:00 AM refresh", "HOURLY_0900": "9:00 AM refresh",
-                     "HOURLY_1000": "10:00 AM refresh", "HOURLY_1100": "11:00 AM refresh",
-                     "HOURLY_1200": "12:00 PM refresh", "CLOSE_1M": "Close +1M"}
-STATIC_LOCAL_TIMES = {
-    "PREMARKET": (6, 0),
-    "OPEN_1M": (6, 31),
-    "OPEN_30M": (7, 0),
-    "HOURLY_0800": (8, 0),
-    "HOURLY_0900": (9, 0),
-    "HOURLY_1000": (10, 0),
-    "HOURLY_1100": (11, 0),
-    "HOURLY_1200": (12, 0),
-}
+                     "HOURLY_1100": "11:00 ET refresh", "HOURLY_1200": "12:00 ET refresh",
+                     "HOURLY_1300": "1:00 PM ET refresh", "HOURLY_1400": "2:00 PM ET refresh",
+                     "HOURLY_1500": "3:00 PM ET refresh", "CLOSE_1M": "Close +1M"}
+# Offsets from the session open, and exchange-clock hours on the session date, for the timed checkpoints;
+# CLOSE_1M is the session close plus one minute.
+OPEN_OFFSETS = {"PREMARKET": timedelta(minutes=-30), "OPEN_1M": timedelta(minutes=1),
+                "OPEN_30M": timedelta(minutes=30)}
+SESSION_HOURS = {"HOURLY_1100": (11, 0), "HOURLY_1200": (12, 0), "HOURLY_1300": (13, 0),
+                 "HOURLY_1400": (14, 0), "HOURLY_1500": (15, 0)}
 # How late a wake may be and still count as a checkpoint's own attempt. A synthesis is attempted once, by
-# the wake that naturally follows its scheduled minute; the wake candidates that exist for the other
-# Pacific season land thirty-one minutes later (14:31 UTC is 7:31 PDT) and must never become a second
-# paid attempt, whatever the first attempt's outcome. Deterministic refreshes and the close keep the wider
-# window because a late deterministic run costs nothing and repeats nothing.
+# the wake that naturally follows its scheduled minute; the :31 UTC wake candidates that exist for the
+# other New York season land thirty-one minutes later (14:31 UTC is 10:31 ET in summer) and must never
+# become a second paid attempt, whatever the first attempt's outcome. Deterministic refreshes and the
+# close keep the wider window because a late deterministic run costs nothing and repeats nothing.
 TOLERANCE_MINUTES = {"synthesis": 20, "refresh": 45, "close": 45}
 
 
@@ -55,26 +57,30 @@ def tolerance_minutes(checkpoint, override=None):
 
 
 def checkpoint_session(now, checkpoint="PREMARKET"):
+    """The exchange session `now` belongs to and the checkpoint's scheduled time inside it."""
     if checkpoint not in CHECKPOINTS:
         raise ValueError("unsupported checkpoint")
     cal = xcals.get_calendar("XNYS")
     local = now.astimezone(ET)
     session = cal.date_to_session(local.date().isoformat(), direction="next")
     trading_day = cal.is_session(local.date().isoformat())
+    opening = cal.session_open(session).to_pydatetime()
     close = cal.session_close(session).to_pydatetime()
     if checkpoint == "CLOSE_1M":
         scheduled = close + timedelta(minutes=1)
+    elif checkpoint in OPEN_OFFSETS:
+        scheduled = opening + OPEN_OFFSETS[checkpoint]
     else:
-        hour, minute = STATIC_LOCAL_TIMES[checkpoint]
-        scheduled = datetime(local.year, local.month, local.day, hour, minute,
-                             tzinfo=VANCOUVER).astimezone(timezone.utc)
+        hour, minute = SESSION_HOURS[checkpoint]
+        day = session.date()
+        scheduled = datetime(day.year, day.month, day.day, hour, minute, tzinfo=ET).astimezone(timezone.utc)
     kind = CHECKPOINT_KINDS[checkpoint]
     # An hourly refresh at or after an early close has nothing to refresh; the close snapshot covers it.
     applicable = bool(trading_day) and (kind != "refresh" or scheduled < close)
     return dict(checkpoint=checkpoint, kind=kind, title=CHECKPOINT_TITLES[checkpoint],
                 session_date=session.date().isoformat(),
                 trading_day=bool(trading_day), applicable=applicable, scheduled_at=scheduled.isoformat(),
-                exchange_open=cal.session_open(session).isoformat(),
+                exchange_open=opening.isoformat(),
                 exchange_close=close.isoformat(),
                 scheduled_local=scheduled.astimezone(VANCOUVER).isoformat())
 
@@ -90,7 +96,7 @@ def due(now, checkpoint, tolerance=None):
 
 
 def scheduled_checkpoint(now, tolerance=None):
-    """Resolve a UTC scheduler candidate to the nearest due Pacific checkpoint, or None (a SKIP)."""
+    """Resolve a UTC scheduler candidate to the nearest due checkpoint, or None (a SKIP)."""
     candidates = []
     for checkpoint in CHECKPOINTS:
         ready, info = due(now, checkpoint, tolerance)

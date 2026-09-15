@@ -12,11 +12,11 @@ on:
           - PREMARKET
           - OPEN_1M
           - OPEN_30M
-          - HOURLY_0800
-          - HOURLY_0900
-          - HOURLY_1000
           - HOURLY_1100
           - HOURLY_1200
+          - HOURLY_1300
+          - HOURLY_1400
+          - HOURLY_1500
           - CLOSE_1M
       commissioning:
         description: Run a current-time live commissioning brief

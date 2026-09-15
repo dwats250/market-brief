@@ -406,12 +406,17 @@ def continuity_context(prior, comparisons, profile=None):
     observed = set()
     watches = []
     for watch in prior["watches"]:
-        watches.append(dict(id=watch["id"], lifecycle=watch["lifecycle"],
-                            evaluability=evaluability(watch, prior, comparisons),
-                            hypothesis=watch["hypothesis"], confirmation=watch["confirmation"],
-                            contradiction=watch["contradiction"], horizon=watch["horizon"],
-                            evidence_refs=watch["evidence_refs"], origin_run_id=watch["origin_run_id"],
-                            latest_assessment=watch["assessments"][-1]["status"]))
+        record = dict(id=watch["id"], lifecycle=watch["lifecycle"],
+                      evaluability=evaluability(watch, prior, comparisons),
+                      hypothesis=watch["hypothesis"], confirmation=watch["confirmation"],
+                      contradiction=watch["contradiction"], horizon=watch["horizon"],
+                      evidence_refs=watch["evidence_refs"], origin_run_id=watch["origin_run_id"],
+                      latest_assessment=watch["assessments"][-1]["status"])
+        if watch.get("values"):
+            # The numbers the criteria quote, as the author saw them; they are not current evidence.
+            record["values"] = {ident: dict(value=row["value"], unit=row["unit"], observed_at=row.get("observed_at"))
+                                for ident, row in watch["values"].items()}
+        watches.append(record)
     relationships = [dict(id=r["id"], instruments=r["instruments"], statement=r["statement"],
                           latest_assessment=r["assessments"][-1]["status"]) for r in prior["relationships"]]
     snapshots = []
@@ -538,6 +543,16 @@ def _snapshot(row, run_id):
     return dict({key: row[key] for key in SNAPSHOT_FIELDS if key in row}, run_id=run_id)
 
 
+def criterion_values(watch, catalog):
+    """The rows a watch's criteria quote as `{{evidence-id}}`, at the values its author saw. They travel
+    with the watch so a carried criterion never drifts when newer market data exists."""
+    ids = set()
+    for key in ("condition", "confirmation", "contradiction", "hypothesis"):
+        ids |= set(PLACEHOLDER.findall(watch.get(key) or ""))
+    return {ident: {key: catalog[ident][key] for key in INTERPRETATION_FIELDS if key in catalog[ident]}
+            for ident in sorted(ids) if ident in catalog}
+
+
 def _watch_record(watch, run_id, now, packet, catalog, ordinal):
     refs = [ref for ref in watch["evidence_ids"] if ":" not in ref]
     rows = [catalog[ref] for ref in refs if ref in catalog]
@@ -546,7 +561,7 @@ def _watch_record(watch, run_id, now, packet, catalog, ordinal):
                 instruments=sorted({row["topic"] for row in rows}),
                 metric_keys=sorted({row["identity"]["key"] for row in rows if row.get("identity")}),
                 hypothesis=watch["condition"], confirmation=watch["confirmation"],
-                contradiction=watch["contradiction"],
+                contradiction=watch["contradiction"], values=criterion_values(watch, catalog),
                 horizon=resolve_horizon(watch["horizon"], now, packet["events"], packet["run"]["checkpoint"]),
                 evidence_refs=refs, lifecycle="active", evaluability="assessable", criteria_version=1,
                 assessments=[dict(status="new", run_id=run_id, assessed_at=now.isoformat(),
@@ -690,8 +705,11 @@ def cited_ids(narrative, attention=(), carried=()):
     for item in attention:
         ids |= set(item.get("evidence_ids", []))
     for watch in carried:
-        for key in ("hypothesis", "confirmation", "contradiction"):
-            ids |= set(PLACEHOLDER.findall(watch.get(key) or ""))
+        # A watch that carries its own creation-time values needs nothing frozen for them here; a legacy
+        # watch without them is frozen at the values of this run, the best record available.
+        if not watch.get("values"):
+            for key in ("hypothesis", "confirmation", "contradiction"):
+                ids |= set(PLACEHOLDER.findall(watch.get(key) or ""))
         ids |= set(watch.get("evidence_refs", []))
     return ids
 
@@ -737,7 +755,7 @@ def interpretation_record(packet, narrative, context=None, app_version="", conte
         prior_state=dict(status=prior.get("status", "cold_start"), reason=prior.get("reason", ""),
                          anchors=prior.get("anchors", {}),
                          watches=[{key: watch[key] for key in ("id", "lifecycle", "evaluability", "hypothesis",
-                                                               "horizon", "evidence_refs") if key in watch}
+                                                               "horizon", "evidence_refs", "values") if key in watch}
                                   for watch in prior.get("watches", [])]),
         continuity=dict(comparisons=sum(counts.values()), changed=counts.get("changed", 0),
                         repeated=counts.get("no_new_observation", 0)),

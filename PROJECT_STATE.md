@@ -25,11 +25,13 @@ The hold of 2026-09-10 was lifted on 2026-09-11 (`docs/SYNTHESIS_COST_CONTAINMEN
 production Monday was 2026-09-14, when PREMARKET, OPEN_1M, OPEN_30M and AFTERNOON published and the rich
 CLOSE_1M failed closed at 68,093 bytes against its 64,000-byte budget.
 
-**Cadence (2026-09-14, branch `feat/cadence-two-clock`).** Rich interpretation is scarce: PREMARKET (6:00 PT,
-rich) and OPEN_30M (7:00 PT, light) are the day's only analyst calls. OPEN_1M (6:31 PT), HOURLY_0800 …
-HOURLY_1200 and CLOSE_1M are deterministic: they refresh the observed record under the last accepted
-synthesis, frozen as the bundle's hashed `interpretation` record, and never call the analyst or rewrite the
-record. The close is a snapshot that hands the session off from deterministic state (its own closing
+**Cadence (2026-09-14, branch `feat/cadence-two-clock`).** Rich interpretation is scarce: PREMARKET (NYSE
+open −30 minutes, rich) and OPEN_30M (open +30 minutes, light) are the day's only analyst calls. OPEN_1M
+(open +1 minute), HOURLY_1100 … HOURLY_1500 (exchange-clock hours) and CLOSE_1M (close +1 minute) are
+deterministic: they refresh the observed record under the last accepted synthesis, frozen as the bundle's
+hashed `interpretation` record, and never call the analyst or rewrite the record. Checkpoints are anchored to
+the exchange session and displayed in Pacific time (British Columbia keeps UTC−7 from 2026, so the opening
+structure update reads 7:00 AM PT in New York daylight time and 8:00 AM PT in standard time). The close is a snapshot that hands the session off from deterministic state (its own closing
 snapshots, the carried assessment labeled with the checkpoint that interpreted it). Every page states two
 clocks ("Interpretation as of", "Data as of") and the scheduler's next update. The standalone rich close
 edition and the AFTERNOON synthesis are gone; `schedule.CHECKPOINT_KINDS` is the one statement of the day
@@ -45,17 +47,20 @@ editorial note. PR #24 (quiet provenance) is incorporated in the same branch.
 
 Merge `feat/cadence-two-clock`; the push redeploys the Cloudflare Worker with the hourly wake candidates.
 Observe the first full day: two analyst calls in the run logs, refreshes publishing on the hour with
-"Interpretation as of 7:00 AM PT", and the close snapshot handing off (PROVISIONAL near-close prints; an
-extended-hours-only print means no session print, no page, and a cold-start close continuity the next
-morning, which is the honest outcome). Then decide on the watch-resolution question the deterministic
-close leaves open: the 7:00 watches are judged only by the next premarket.
+"Interpretation as of" the opening-structure clock, and the close snapshot handing off (PROVISIONAL
+near-close prints; an extended-hours-only print means no session print, no page, and a cold-start close
+continuity the next morning, which is the honest outcome). Then decide on the watch-resolution question the
+deterministic close leaves open: the opening-structure watches are judged only by the next premarket.
+Bounded follow-up, held: a failed first synthesis could still be attempted again if two fresh runners both
+start inside one twenty-minute synthesis window after an unusual queue delay; a durable attempt record
+across runners would close it.
 
 ## Direction after v0.1
 
 v0.1 freezes after merge except for defects found in live use. Future work favors reduction, clarity,
 and signal amplification over feature growth.
 
-- PREMARKET is the rich analytical edition and the 7:00 PT opening-structure update is the one
+- PREMARKET is the rich analytical edition and the opening-structure update (open +30 minutes) is the one
   interpretive update of the day. Everything later is a deterministic refresh under that interpretation.
 - Prompt refinement should strengthen dominant supported drivers, relationships, contradictions, and
   changes from prior state, not manufacture more signals.

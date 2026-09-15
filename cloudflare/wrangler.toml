@@ -6,12 +6,13 @@ workers_dev = true
 [vars]
 GITHUB_REPOSITORY = "dwats250/market-brief"
 
-# Cloudflare Cron is UTC. These are wake candidates for both Pacific seasons;
-# the Python scheduler resolves DST, holidays, early closes, checkpoint kind, and idempotency.
-# One minute past each hour 13:00–21:00 UTC covers the premarket (6:00 PT), the opening-structure
-# update (7:00 PT), the hourly refreshes 8:00–12:00 PT and the close +1M snapshot after regular
-# (13:01 PT) and early (10:01 PT) closes in PDT and PST; :31 is the open +1M refresh. No two wakes
-# fall inside one minute of each other, so no checkpoint is resolved twice before its publish lands.
+# Cloudflare Cron is UTC. These are wake candidates for both New York seasons; the Python scheduler
+# anchors every checkpoint to the exchange session and resolves holidays, early closes, checkpoint
+# kind and idempotency. One minute past each hour 13:00–21:00 UTC covers the premarket (open −30m,
+# 9:00 ET), the opening-structure update (open +30m, 10:00 ET), the hourly refreshes (11:00–15:00 ET)
+# and the close +1M snapshot after regular (16:01 ET) and early (13:01 ET) closes in EDT and EST;
+# :31 is the open +1M refresh (9:31 ET). No two wakes fall inside one minute of each other, so no
+# checkpoint is resolved twice before its publish lands.
 [triggers]
 crons = [
   "1 13-21 * * MON-FRI",

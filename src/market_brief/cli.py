@@ -237,8 +237,6 @@ def run(args):
     else:
         # A deterministic checkpoint renders the last accepted synthesis of this session, unchanged.
         interpretation, interpretation_note = admit_interpretation(bundle, packet)
-        if interpretation is None and args.replay:
-            interpretation, interpretation_note = sample_interpretation(packet, prior, comparisons), ""
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                               capture_output=True, text=True, check=False).stdout.strip()
     metadata = dict(app_version=__version__, code_revision=revision or "unknown", mode=mode,
@@ -284,6 +282,9 @@ def run(args):
                                   metadata["narrative_hash"], __version__)
             interpretation = interpretation_record(packet, narrative, context, __version__, metadata["context_hash"])
         else:
+            if interpretation is None and args.replay:
+                # A fictional replay carries the fixture narrative; a fixture mismatch is a diagnosed rejection.
+                interpretation, interpretation_note = sample_interpretation(packet, prior, comparisons), ""
             if kind == "refresh":
                 if interpretation is None:
                     raise ValueError(interpretation_note)

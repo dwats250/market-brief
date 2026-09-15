@@ -25,7 +25,7 @@ The hold of 2026-09-10 was lifted on 2026-09-11 (`docs/SYNTHESIS_COST_CONTAINMEN
 production Monday was 2026-09-14, when PREMARKET, OPEN_1M, OPEN_30M and AFTERNOON published and the rich
 CLOSE_1M failed closed at 68,093 bytes against its 64,000-byte budget.
 
-**Cadence (2026-09-14, branch `feat/cadence-two-clock`).** Rich interpretation is scarce: PREMARKET (NYSE
+**Cadence (2026-09-14, merged to `main` 2026-09-15 as PR #26).** Rich interpretation is scarce: PREMARKET (NYSE
 open −30 minutes, rich) and OPEN_30M (open +30 minutes, light) are the day's only analyst calls. OPEN_1M
 (open +1 minute), HOURLY_1100 … HOURLY_1500 (exchange-clock hours) and CLOSE_1M (close +1 minute) are
 deterministic: they refresh the observed record under the last accepted synthesis, frozen as the bundle's
@@ -41,11 +41,12 @@ collected`), unsigned neutral zero, `vs SPY` / `vs QQQ` headers with the window 
 line moved to Technical details, a readable `--faint`, sentence-case watch metadata, "What changed" with an
 anchor sub-caption, verdict-first relationship bullets, trigger tags on flagged names, figure clocks only
 when they differ from the data clock, and a soft eight-to-ten-word headline target recorded as an
-editorial note. PR #24 (quiet provenance) is incorporated in the same branch.
+editorial note. PR #24 (quiet provenance) was incorporated in the same branch, so #24 was closed as
+superseded.
 
 ## Next
 
-Merge `feat/cadence-two-clock`; the push redeploys the Cloudflare Worker with the hourly wake candidates.
+The merge (2026-09-15) redeployed the Cloudflare Worker with the hourly wake candidates.
 Observe the first full day: two analyst calls in the run logs, refreshes publishing on the hour with
 "Interpretation as of" the opening-structure clock, and the close snapshot handing off (PROVISIONAL
 near-close prints; an extended-hours-only print means no session print, no page, and a cold-start close

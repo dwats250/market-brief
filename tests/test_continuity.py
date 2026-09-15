@@ -371,8 +371,13 @@ def test_horizons_resolve_from_the_exchange_calendar_not_from_tomorrow():
     premarket = utc(PREMARKET_TUE)
     assert resolve_horizon("OPENING_HOUR", premarket)["expires_at"] == "2026-09-08T14:30:00+00:00"
     assert resolve_horizon("SESSION", premarket)["expires_at"] == "2026-09-08T20:00:00+00:00"
-    assert resolve_horizon("NEXT_BRIEF", premarket, current_checkpoint="PREMARKET")["next_checkpoint"] == "OPEN_1M"
+    # NEXT_BRIEF is the next synthesis, where an analyst can judge the watch; refreshes only carry it.
+    next_brief = resolve_horizon("NEXT_BRIEF", premarket, current_checkpoint="PREMARKET")
+    assert next_brief["next_checkpoint"] == "OPEN_30M" and next_brief["phrase"] == "By the 7:00 AM PT update"
     assert resolve_horizon("NEXT_BRIEF", premarket)["expires_session"] == "2026-09-08"
+    late_morning = resolve_horizon("NEXT_BRIEF", utc("2026-09-08T15:30:00+00:00"), current_checkpoint="HOURLY_0800")
+    assert late_morning["next_checkpoint"] == "PREMARKET" and late_morning["expires_session"] == "2026-09-09"
+    assert late_morning["phrase"] == "By the next session's premarket"
     after_close = utc(CLOSE_TUE)
     assert resolve_horizon("NEXT_BRIEF", after_close)["expires_session"] == "2026-09-09"
     assert resolve_horizon("SESSION", after_close)["phrase"] == "Into the next session"
@@ -385,7 +390,7 @@ def test_horizons_resolve_from_the_exchange_calendar_not_from_tomorrow():
     assert holiday["expires_session"] == "2026-09-08"
     early = utc("2026-11-27T15:00:00+00:00")
     assert resolve_horizon("SESSION", early)["expires_at"] == "2026-11-27T18:00:00+00:00"
-    assert resolve_horizon("NEXT_BRIEF", utc("2026-11-27T17:30:00+00:00"))["next_checkpoint"] == "CLOSE_1M"
+    assert resolve_horizon("NEXT_BRIEF", utc("2026-11-27T17:30:00+00:00"))["next_checkpoint"] == "PREMARKET"
     event = resolve_horizon("EVENT(wed-release)", after_close, [NEXT_EVENT])
     assert event["expires_session"] == "2026-09-09" and event["phrase"].startswith("Around ")
     with pytest.raises(ValueError):

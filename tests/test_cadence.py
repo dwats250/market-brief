@@ -9,13 +9,20 @@ from datetime import datetime, timezone
 
 import exchange_calendars as xcals
 import pytest
-from test_continuity import trimmed
+from test_contract import edition_response
 from test_pipeline import fixture_packet, freeze_clock, narrative
 from test_render import Page
 
 from market_brief import cli
 from market_brief.context import edition_profile, editions_config
-from market_brief.continuity import SLOTS, admit_interpretation, admit_prior_state, bundle_path, load_bundle
+from market_brief.continuity import (
+    SLOTS,
+    admit_interpretation,
+    admit_prior_state,
+    bundle_path,
+    load_bundle,
+    write_bundle,
+)
 from market_brief.evidence import ROOT, evidence_catalog, read_json
 from market_brief.render import (
     NO_PRINT,
@@ -29,6 +36,7 @@ from market_brief.render import (
     source_rows,
 )
 from market_brief.schedule import CHECKPOINT_KINDS, CHECKPOINTS, SYNTHESIS_CHECKPOINTS, next_checkpoint
+from market_brief.synthesize import validate_narrative
 
 TUE = "2026-09-08"
 
@@ -42,9 +50,10 @@ class Day:
 
     def __init__(self, monkeypatch, root):
         self.monkeypatch, self.root = monkeypatch, root
-        self.calls, self.published = [], []
+        self.calls, self.published, self.narratives = [], [], {}
 
-    def run(self, now, checkpoint, *, intraday=True, value=None, last_history_date="2026-09-04", print_at=None):
+    def run(self, now, checkpoint, *, intraday=True, value=None, mutate=None, last_history_date="2026-09-04",
+            print_at=None, fail_synthesis=False):
         freeze_clock(self.monkeypatch, now)
         raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
         raw["mode"] = "LIVE"
@@ -66,11 +75,19 @@ class Day:
                     observed_at=print_at or now, retrieved_at=now, source_id="sample-prices",
                     status="AVAILABLE", reason=""))
         self.monkeypatch.setattr(cli, "collect_live", lambda target, include_cuttingboard=False: raw)
-        live = value or narrative()
-        live["mode"] = "LIVE"
 
-        def synthesize(packet, **kwargs):
+        def synthesize(packet, full=False, context=None, **kwargs):
+            """The analyst stand-in: counts the call and returns a narrative that production would accept
+            (validated against the exact context), or the given one, or fails like a rejected response."""
             self.calls.append(packet["run"]["checkpoint"])
+            if fail_synthesis:
+                raise ValueError("synthesis rejected")
+            live = value or edition_response(edition_profile(packet["run"]["checkpoint"]), context)
+            if mutate:
+                mutate(live)
+            live["mode"] = "LIVE"
+            validate_narrative(live, packet, context)
+            self.narratives[checkpoint] = live
             return live, {"route": "test"}
         self.monkeypatch.setattr(cli, "synthesize", synthesize)
         self.monkeypatch.setattr(cli, "RUN_ROOT", self.root)
@@ -92,10 +109,6 @@ class Day:
         bundle, note = load_bundle(bundle_path(self.root))
         assert note == ""
         return bundle
-
-
-def light_narrative():
-    return trimmed(narrative(), edition_profile("OPEN_30M"))
 
 
 PASSED = " · horizon passed"
@@ -175,7 +188,7 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.metadata("OPEN_1M")["interpretation"]["checkpoint"] == "PREMARKET"
 
     # 7:00 AM PT: the one interpretive update after the open, against the premarket and opening anchors.
-    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", value=light_narrative()) == 0
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]
     structure = day.page("OPEN_30M")
     assert "LIVE · Opening structure edition · Tuesday, Sep 8" in structure
@@ -183,7 +196,8 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     # The fixture narrative interprets no change, so the block stays out rather than showing an empty heading;
     # the anchors it would have named are still recorded.
     assert "<h2>What changed</h2>" not in structure
-    view = presentation(json.loads((day.folder("OPEN_30M") / "evidence.json").read_text()), light_narrative(),
+    view = presentation(json.loads((day.folder("OPEN_30M") / "evidence.json").read_text()),
+                        day.narratives["OPEN_30M"],
                         json.loads((day.folder("OPEN_30M") / "analyst_context.json").read_text()))
     assert view["since"]["label"] == "vs premarket and the 6:31 AM PT refresh"
     context = json.loads((day.folder("OPEN_30M") / "analyst_context.json").read_text())
@@ -233,7 +247,7 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert bundle["close"]["observed"]["closing_data"]["status"] == "PROVISIONAL_NEAR_CLOSE"
     character = bundle["close"]["assessment"]["closing_character"]
     assert character["checkpoint"] == "OPEN_30M" and character["provisional"] is True
-    assert character["text"] == light_narrative()["character"]["text"]
+    assert character["text"] == day.narratives["OPEN_30M"]["character"]["text"]
     assert bundle["interpretation"]["content_hash"] == structure_interpretation
     # The close carries the 7:00 update's watches plus the premarket watch it kept, nothing newer.
     origins = {w["origin_run_id"] for w in bundle["close"]["assessment"]["watches"]}
@@ -332,9 +346,67 @@ def test_a_replayed_refresh_never_reaches_the_analyst_and_dates_its_sample_inter
 
 # --- the observed record on a refresh page is this run's; anchors stay intact -------------------------
 
+def test_a_failed_opening_structure_synthesis_leaves_refreshes_on_the_premarket_interpretation(day):
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
+    premarket = day.bundle()["interpretation"]["content_hash"]
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", fail_synthesis=True) == 2
+    assert day.calls == ["PREMARKET", "OPEN_30M"] and day.published == ["PREMARKET"]
+    assert day.bundle()["interpretation"]["content_hash"] == premarket  # a rejected synthesis freezes nothing
+    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1000") == 0
+    page = day.page("HOURLY_1000")
+    assert "Interpretation as of 6:00 AM PT · Data as of 10:00 AM PT" in page
+    assert "Interpretation: PREMARKET" in page.split("Technical details", 1)[1]
+    assert day.metadata("HOURLY_1000")["interpretation"]["checkpoint"] == "PREMARKET"
+    assert day.calls == ["PREMARKET", "OPEN_30M"]  # the refresh did not retry the analyst
+
+
+def test_a_bundle_from_before_the_interpretation_slot_loads_and_the_first_refresh_fails_closed(day):
+    """A live bundle written by the previous release has no `interpretation` key."""
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
+    bundle = json.loads(bundle_path(day.root).read_text())
+    del bundle["interpretation"]
+    write_bundle(bundle_path(day.root), bundle)
+    loaded, note = load_bundle(bundle_path(day.root))
+    assert note == "" and loaded["interpretation"] is None and loaded["premarket"] is not None
+    assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M") == 2
+    assert day.published == ["PREMARKET"]
+    assert "no accepted interpretation for this session: absent" in day.metadata("OPEN_1M")["error"]
+
+
+def test_a_placeholder_inside_a_watch_survives_synthesis_refreshes_the_close_and_the_next_premarket(day):
+    """A watch criterion may quote a number as {{evidence-id}}. Carried into later editions, it must
+    resolve at every render (a rendering failure after a paid call would discard the narrative)."""
+    value = narrative()
+    value["watches"][0].update(condition="If SPY holds its {{SPY-daily}} daily gain after the open, "
+                                         "check whether participation extends beyond the selected mega-cap.")
+    assert "SPY-daily" in value["watches"][0]["evidence_ids"]
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False, value=value) == 0
+    assert "holds its +0.06 % daily gain" in day.page("PREMARKET")
+    carried_id = next(w["id"] for w in day.bundle()["latest"]["assessment"]["watches"] if "{{" in w["hypothesis"])
+    # The 7:00 synthesis carries the watch without reassessing it; every later page still resolves it.
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
+    assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1000") == 0
+    assert day.run(f"{TUE}T20:03:00+00:00", "CLOSE_1M", print_at=f"{TUE}T19:59:58+00:00") == 0
+    for checkpoint in ("OPEN_30M", "HOURLY_1000", "CLOSE_1M"):
+        page = day.page(checkpoint)
+        assert "holds its +0.06 % daily gain" in page and "{{" not in page, checkpoint
+        assert day.metadata(checkpoint)["validation"] == "PASS"
+    # Wednesday's premarket reassesses the carried watch; its criterion still renders with its number.
+    def reassess(live):
+        live["watch_updates"] = [dict(carried_id=carried_id, assessment="unresolved",
+                                      reason="The premarket has no session print to test it against.",
+                                      evidence_ids=["SPY-daily", "previous_close:SPY-daily"])]
+    assert day.run("2026-09-09T13:00:00+00:00", "PREMARKET", intraday=False, last_history_date=TUE,
+                   mutate=reassess) == 0
+    page = day.page("PREMARKET", "2026-09-09")
+    assert "holds its +0.06 % daily gain" in page and "{{" not in page
+    assert '<span class="meta">Carried · unresolved' in page
+    assert (day.folder("PREMARKET", "2026-09-09") / "narrative.json").exists()
+
+
 def test_refresh_page_keeps_every_anchor_and_cites_frozen_values_with_their_clock(day):
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
-    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", value=light_narrative()) == 0
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1000") == 0
     page = day.page("HOURLY_1000")
     parsed = Page()

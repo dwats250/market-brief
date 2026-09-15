@@ -1,7 +1,7 @@
 # Growth has the lead. Confirmation is still missing.
 
-SAMPLE · Premarket edition · Monday, Sep 14
-As of 11:01 PM PT · Next update · 6:31 AM PT
+SAMPLE · Premarket edition · Tuesday, Sep 8
+As of 6:00 AM PT · Next update · 6:31 AM PT
 > FICTIONAL SAMPLE / REPLAY — not current market facts.
 
 **INTERPRETATION — MIXED** · A growth-led, mixed fictional map: the benchmark edge sits with QQQ while the curve and metals send conflicting signals. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change)
@@ -225,15 +225,16 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 
 ### Technical details
 
-Generated UTC: 2026-09-15T06:01:08.458137+00:00
-Evidence cutoff UTC: 2026-09-08T12:45:00+00:00
+Generated UTC: 2026-09-08T13:00:00+00:00
+Evidence cutoff UTC: 2026-09-08T13:00:00+00:00
 Checkpoint: PREMARKET (synthesis)
 Synthesis: this edition&#x27;s one analyst call
+Interpretation: PREMARKET · evidence cutoff 2026-09-08T13:00:00+00:00 · run sample-premarket-130000-be0b1af2
 Bootstrap: BASELINE
 Calendar: checked
 Basis: Premarket · prior close · Treasury prior-close/current as available · current prints unavailable · breadth available. Previous-close / dated context only; no timestamped current prints.
 Continuity: available
 
-Cuttingboard: generated 2026-09-08T12:20:00+00:00; captured 2026-09-08T12:45:00+00:00; schema v2
+Cuttingboard: generated 2026-09-08T12:20:00+00:00; captured 2026-09-08T13:00:00+00:00; schema v2
 
 Model-assisted interpretation; factual rows are deterministic.

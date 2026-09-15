@@ -1,7 +1,7 @@
 # Growth has the lead. Confirmation is still missing.
 
-SAMPLE · Close snapshot · Monday, Sep 14
-Interpretation as of 6:00 AM PT · Data as of 11:01 PM PT · Next update · 6:00 AM PT · interpretation
+SAMPLE · Close snapshot · Tuesday, Sep 8
+Interpretation as of 6:00 AM PT · Data as of 1:03 PM PT · Next update · Wed, Sep 9 · 6:00 AM PT premarket
 > FICTIONAL SAMPLE / REPLAY — not current market facts.
 
 **INTERPRETATION — MIXED** · A growth-led, mixed fictional map: the benchmark edge sits with QQQ while the curve and metals send conflicting signals. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change)
@@ -16,9 +16,9 @@ The useful tension is beneath the headline: front-end yields eased while the lon
 
 | Measure | Observation | As of |
 |---|---:|---|
-| SPY · intraday vs prior close | -0.53 % | Tuesday, Sep 8 · 5:45 AM PT · AVAILABLE [evidence](#evidence-SPY-intraday) |
-| QQQ · intraday vs prior close | -0.61 % | Tuesday, Sep 8 · 5:45 AM PT · AVAILABLE [evidence](#evidence-QQQ-intraday) |
-| XLI · intraday vs prior close | +0.40 % | Tuesday, Sep 8 · 5:45 AM PT · AVAILABLE [evidence](#evidence-XLI-intraday) |
+| SPY · intraday vs prior close | -0.53 % | Tuesday, Sep 8 · 12:59 PM PT · DELAYED [evidence](#evidence-SPY-intraday) |
+| QQQ · intraday vs prior close | -0.61 % | Tuesday, Sep 8 · 12:59 PM PT · DELAYED [evidence](#evidence-QQQ-intraday) |
+| XLI · intraday vs prior close | +0.40 % | Tuesday, Sep 8 · 12:59 PM PT · DELAYED [evidence](#evidence-XLI-intraday) |
 
 ## What changed
 
@@ -28,8 +28,8 @@ No accepted close to carry forward, so this is a baseline read.
 
 The fictional survey is a scheduled observation point. Its result and survey consensus are absent, so there is no basis to characterize a surprise or to assign it a price effect. [evidence](#evidence-sample-event)
 
-- **WATCH · Through the opening hour** — If growth retains its lead after regular trading begins, check whether participation extends beyond the selected mega-cap. Confirm: More independently observed sectors improve on synchronized comparisons. Changes it: The benchmark lead persists while participation narrows. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-NVDA-spread20)
-- **WATCH · Into the close** — Revisit the gold fund and miners on the same return horizon. Confirm: Miners join the metal fund&#x27;s strength. Changes it: Miner weakness persists despite firmness in the gold fund. [evidence](#evidence-GLD-daily) [evidence](#evidence-GDX-daily) [evidence](#evidence-GDX-spread20)
+- **WATCH · Through the next opening hour** — If growth retains its lead after regular trading begins, check whether participation extends beyond the selected mega-cap. Confirm: More independently observed sectors improve on synchronized comparisons. Changes it: The benchmark lead persists while participation narrows. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-NVDA-spread20)
+- **WATCH · Into the next session** — Revisit the gold fund and miners on the same return horizon. Confirm: Miners join the metal fund&#x27;s strength. Changes it: Miner weakness persists despite firmness in the gold fund. [evidence](#evidence-GLD-daily) [evidence](#evidence-GDX-daily) [evidence](#evidence-GDX-spread20)
 - **NVDA** — NVDA&#x27;s relative leadership matters because it tests whether growth participation extends beyond the broad benchmark. (20-session spread vs QQQ · Fri, Sep 4) [evidence](#evidence-NVDA-spread20)
 - **Industrials · XLI** — XLI&#x27;s moving-average transition matters because cyclical participation can confirm or weaken the growth-led map. (Crossed above its 50DMA · Fri, Sep 4) [evidence](#evidence-XLI-sma50) [evidence](#evidence-XLI-close)
 - **Event** — Fictional manufacturing survey · Tuesday, Sep 8 · 7:00 AM PT · during session [evidence](#evidence-sample-event)
@@ -38,11 +38,11 @@ The fictional survey is a scheduled observation point. Its result and survey con
 
 QQQ&#x27;s prior-session return was +0.15 %, compared with +0.06 % for SPY. The sample suggests a growth preference, while exchange breadth and index weights remain unavailable. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily)
 
-**MEGA-CAP SNAPSHOT** · 20-session return spread vs QQQ · Daily change · Fri, Sep 4
+**MEGA-CAP SNAPSHOT** · 20-session return spread vs QQQ · Change
 
 | Symbol | Change | 20D | vs QQQ | vs 50DMA |
 |---|---:|---:|---:|---:|
-| NVDA | +0.43 % | +9.44 % | +6.39 pp | +11.82 % |
+| NVDA | no print | +9.44 % | +6.39 pp | +11.82 % |
 
 Exact values and baselines for every cell are in the evidence ledger.
 
@@ -61,7 +61,7 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 ## Sector view
 
-20-session return spread vs SPY, strongest to weakest · Intraday vs prior close · as of 5:45 AM PT
+20-session return spread vs SPY, strongest to weakest · Intraday vs prior close · as of 12:59 PM PT
 
 | Sector | vs SPY | 20D | Change | vs 50DMA |
 |---|---:|---:|---:|---:|
@@ -71,7 +71,7 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 ## Cross-asset structure
 
-**METALS STRUCTURE** · 20-session return spread, GDX vs GLD · Intraday vs prior close · as of 5:45 AM PT
+**METALS STRUCTURE** · 20-session return spread, GDX vs GLD · Intraday vs prior close · as of 12:59 PM PT
 
 | Instrument | Change | 20D | Spread | vs 50DMA |
 |---|---:|---:|---:|---:|
@@ -80,15 +80,13 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 Exact values and baselines for every cell are in the evidence ledger.
 
-## Cuttingboard context
-
-**SOURCE QUOTATION** · Outcome: HALT; permission: HALT. Read-only context captured; see Technical details.
-
 ## Sources & coverage
 
 A fictional prior-close map, with no current premarket prices or broad-market breadth.
 
+- Daily history through 2026-09-04: the completed 2026-09-08 daily bar was not yet published, so 20D, relative, and 50D context lag one session
 - Not automated: BEA calendar, Fed calendar, live yields, DXY, USDJPY, crude futures, gold/silver futures, SLV history, VIX, comprehensive breadth, automated earnings, general news search
+- No admitted material for: Cuttingboard context
 - [Fictional equity closes](<https://example.invalid/sample-prices>) · price · AVAILABLE · retrieved 2026-09-08T12:45:00+00:00
 - [Fictional daily yields](<https://example.invalid/sample-rates>) · economic\_series · AVAILABLE · retrieved 2026-09-08T12:45:00+00:00
 - [Fictional bls schedule](<https://example.invalid/bls>) · calendar · AVAILABLE · retrieved 2026-09-08T12:45:00+00:00
@@ -116,7 +114,7 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 **SPY**
 
 <a id="evidence-SPY-intraday"></a>
-**SPY-intraday** · SPY · -0.53 % · latest trade versus previous regular close · observed/published 2026-09-08T12:45:00+00:00 · source sample-prices
+**SPY-intraday** · SPY · -0.53 % · latest trade versus previous regular close · observed/published 2026-09-08T19:59:58+00:00 · source sample-prices
 
 <a id="evidence-SPY-daily"></a>
 **SPY-daily** · SPY · +0.06 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
@@ -133,7 +131,7 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 **QQQ**
 
 <a id="evidence-QQQ-intraday"></a>
-**QQQ-intraday** · QQQ · -0.61 % · latest trade versus previous regular close · observed/published 2026-09-08T12:45:00+00:00 · source sample-prices
+**QQQ-intraday** · QQQ · -0.61 % · latest trade versus previous regular close · observed/published 2026-09-08T19:59:58+00:00 · source sample-prices
 
 <a id="evidence-QQQ-daily"></a>
 **QQQ-daily** · QQQ · +0.15 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
@@ -153,7 +151,7 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 **XLI**
 
 <a id="evidence-XLI-intraday"></a>
-**XLI-intraday** · XLI · +0.40 % · latest trade versus previous regular close · observed/published 2026-09-08T12:45:00+00:00 · source sample-prices
+**XLI-intraday** · XLI · +0.40 % · latest trade versus previous regular close · observed/published 2026-09-08T19:59:58+00:00 · source sample-prices
 
 <a id="evidence-XLI-daily"></a>
 **XLI-daily** · XLI · +2.02 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
@@ -176,7 +174,7 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 **GLD**
 
 <a id="evidence-GLD-intraday"></a>
-**GLD-intraday** · GLD · -0.20 % · latest trade versus previous regular close · observed/published 2026-09-08T12:45:00+00:00 · source sample-prices
+**GLD-intraday** · GLD · -0.20 % · latest trade versus previous regular close · observed/published 2026-09-08T19:59:58+00:00 · source sample-prices
 
 <a id="evidence-GLD-daily"></a>
 **GLD-daily** · GLD · +0.11 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
@@ -232,15 +230,16 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 
 ### Technical details
 
-Generated UTC: 2026-09-15T06:01:08.994230+00:00
-Evidence cutoff UTC: 2026-09-08T12:45:00+00:00
+Generated UTC: 2026-09-08T20:03:00+00:00
+Evidence cutoff UTC: 2026-09-08T20:03:00+00:00
 Checkpoint: CLOSE\_1M (close)
 Synthesis: none; deterministic close under interpretation run sample-premarket-fixture
+Interpretation: PREMARKET · evidence cutoff 2026-09-08T13:00:00+00:00 · run sample-premarket-fixture
 Bootstrap: BASELINE
 Calendar: checked
 Basis: Close +1M · prior close · Treasury prior-close/current as available · current prints available · breadth available. Timestamped intraday observations available; see individual clocks.
 Continuity: cold\_start — same-session continuity unavailable: premarket: absent; latest: absent
 
-Cuttingboard: generated 2026-09-08T12:20:00+00:00; captured 2026-09-08T12:45:00+00:00; schema v2
+Cuttingboard: generated None; captured 2026-09-08T20:03:00+00:00; schema None
 
 Model-assisted interpretation; factual rows are deterministic.

@@ -225,7 +225,7 @@ def test_watch_horizons_render_as_natural_phrases_from_the_calendar():
     assert phrases["OPENING_HOUR"] == "Through the next opening hour"
     value = narrative()
     value["watches"][0]["horizon"] = "NEXT_BRIEF"
-    assert presentation(packet, value)["next"]["watches"][0]["phrase"] == "At the next update"
+    assert presentation(packet, value)["next"]["watches"][0]["phrase"] == "By the 7:00 AM PT update"
     value["watches"][0]["horizon"] = "EVENT(sample-event)"
     assert presentation(packet, value)["next"]["watches"][0]["phrase"] == "Around Fictional manufacturing survey"
 

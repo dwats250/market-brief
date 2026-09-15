@@ -341,7 +341,13 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     session_date = packet["run"]["session"]["date"]
 
     def expand(text):
-        return PLACEHOLDER.sub(lambda m: formatted(frozen[m[1]]), text)
+        """Numeric placeholders resolve against the frozen rows; a reference the record does not hold
+        (a carried criterion older than the record) falls back to this run's row, then to a dash.
+        Rendering can never abort an accepted run."""
+        def value(match):
+            row = frozen.get(match[1]) or catalog.get(match[1])
+            return formatted(row) if row else NOT_APPLICABLE
+        return PLACEHOLDER.sub(value, text)
 
     def refs(ids, rows=None):
         """The rows behind one block, formatted for a quiet expandable marker; IDs are unchanged.
@@ -475,9 +481,12 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
                                     refs=refs(r["evidence_ids"])))
     since_note = ""
     if available and not continuity["changed"]:
-        since_note = (f"No comparable measurement has changed: {continuity['repeated']} repeated prior-close "
-                      "observations and no new session prints." if continuity["repeated"] else
-                      "No comparable measurement is available yet.")
+        # The note describes the interpretation's comparison, so on a refresh it is dated to that clock.
+        lead = (f"At the {pacific_time(interpreted['target_time'])} read no comparable measurement had changed"
+                if carried else "No comparable measurement has changed")
+        since_note = (f"{lead}: {continuity['repeated']} repeated prior-close observations and no new session "
+                      "prints." if continuity["repeated"] else
+                      f"{lead.replace('had changed', 'was available').replace('has changed', 'is available yet')}.")
     elif not available:
         # Reader copy; the admission reason stays in Technical details.
         since_note = ("No accepted close to carry forward, so this is a baseline read."
@@ -756,6 +765,10 @@ def markdown(view):
               f"Evidence cutoff UTC: {esc(technical['evidence_cutoff_utc'])}",
               f"Checkpoint: {esc(technical['checkpoint'])} ({esc(technical['kind'])})",
               f"Synthesis: {esc(technical['synthesis'])}",
+              f"Interpretation: {esc(technical['interpretation']['checkpoint'])} · evidence cutoff "
+              f"{esc(technical['interpretation']['evidence_cutoff'])}"
+              + (f" · run {esc(technical['interpretation']['run_id'])}"
+                 if technical["interpretation"]["run_id"] else ""),
               f"Bootstrap: {esc(technical['bootstrap'])}",
               f"Calendar: {esc(technical['calendar'])}",
               f"{esc(technical['basis'])}. {esc(technical['horizon'])}",

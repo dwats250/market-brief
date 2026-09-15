@@ -63,6 +63,16 @@ def test_early_close_candidates_resolve_to_close_plus_one():
     assert next_checkpoint(close - timedelta(hours=1), before)["checkpoint"] == "CLOSE_1M"
 
 
+def test_next_synthesis_is_where_an_analyst_can_next_judge():
+    from market_brief.schedule import next_synthesis
+    assert next_synthesis(utc("2026-09-08T13:00:00+00:00"), "PREMARKET")["checkpoint"] == "OPEN_30M"
+    assert next_synthesis(utc("2026-09-08T13:31:00+00:00"), "OPEN_1M")["checkpoint"] == "OPEN_30M"
+    later = next_synthesis(utc("2026-09-08T14:01:00+00:00"), "OPEN_30M")
+    assert later["checkpoint"] == "PREMARKET" and later["session_date"] == "2026-09-09"
+    friday = next_synthesis(utc("2026-09-04T20:03:00+00:00"), "CLOSE_1M")
+    assert friday["session_date"] == "2026-09-08"  # Labor Day skipped
+
+
 def test_scheduler_skips_weekends_holidays_and_wrong_time_candidates():
     assert scheduled_checkpoint(utc("2026-07-04T13:00:00+00:00")) is None
     assert scheduled_checkpoint(utc("2026-11-26T14:00:00+00:00")) is None

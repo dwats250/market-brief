@@ -1,7 +1,7 @@
 # Growth has the lead. Confirmation is still missing.
 
-SAMPLE · Opening structure edition · Monday, Sep 14
-As of 11:01 PM PT · Next update · 6:00 AM PT · interpretation
+SAMPLE · Opening structure edition · Tuesday, Sep 8
+As of 7:01 AM PT · Next update · 8:00 AM PT
 > FICTIONAL SAMPLE / REPLAY — not current market facts.
 
 **INTERPRETATION — MIXED** · A growth-led, mixed fictional map: the benchmark edge sits with QQQ while the curve and metals send conflicting signals. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change)
@@ -16,9 +16,9 @@ The useful tension is beneath the headline: front-end yields eased while the lon
 
 | Measure | Observation | As of |
 |---|---:|---|
-| SPY · intraday vs prior close | -0.53 % | Tuesday, Sep 8 · 5:45 AM PT · AVAILABLE [evidence](#evidence-SPY-intraday) |
-| QQQ · intraday vs prior close | -0.61 % | Tuesday, Sep 8 · 5:45 AM PT · AVAILABLE [evidence](#evidence-QQQ-intraday) |
-| XLI · intraday vs prior close | +0.40 % | Tuesday, Sep 8 · 5:45 AM PT · AVAILABLE [evidence](#evidence-XLI-intraday) |
+| SPY · intraday vs prior close | -0.53 % | Tuesday, Sep 8 · 7:01 AM PT · AVAILABLE [evidence](#evidence-SPY-intraday) |
+| QQQ · intraday vs prior close | -0.61 % | Tuesday, Sep 8 · 7:01 AM PT · AVAILABLE [evidence](#evidence-QQQ-intraday) |
+| XLI · intraday vs prior close | +0.40 % | Tuesday, Sep 8 · 7:01 AM PT · AVAILABLE [evidence](#evidence-XLI-intraday) |
 
 ## What changed
 
@@ -61,7 +61,7 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 ## Sector view
 
-20-session return spread vs SPY, strongest to weakest · Intraday vs prior close · as of 5:45 AM PT
+20-session return spread vs SPY, strongest to weakest · Intraday vs prior close · as of 7:01 AM PT
 
 | Sector | vs SPY | 20D | Change | vs 50DMA |
 |---|---:|---:|---:|---:|
@@ -71,7 +71,7 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 ## Cross-asset structure
 
-**METALS STRUCTURE** · 20-session return spread, GDX vs GLD · Intraday vs prior close · as of 5:45 AM PT
+**METALS STRUCTURE** · 20-session return spread, GDX vs GLD · Intraday vs prior close · as of 7:01 AM PT
 
 | Instrument | Change | 20D | Spread | vs 50DMA |
 |---|---:|---:|---:|---:|
@@ -80,15 +80,12 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 Exact values and baselines for every cell are in the evidence ledger.
 
-## Cuttingboard context
-
-**SOURCE QUOTATION** · Outcome: HALT; permission: HALT. Read-only context captured; see Technical details.
-
 ## Sources & coverage
 
 A fictional prior-close map, with no current premarket prices or broad-market breadth.
 
 - Not automated: BEA calendar, Fed calendar, live yields, DXY, USDJPY, crude futures, gold/silver futures, SLV history, VIX, comprehensive breadth, automated earnings, general news search
+- No admitted material for: Cuttingboard context
 - [Fictional equity closes](<https://example.invalid/sample-prices>) · price · AVAILABLE · retrieved 2026-09-08T12:45:00+00:00
 - [Fictional daily yields](<https://example.invalid/sample-rates>) · economic\_series · AVAILABLE · retrieved 2026-09-08T12:45:00+00:00
 - [Fictional bls schedule](<https://example.invalid/bls>) · calendar · AVAILABLE · retrieved 2026-09-08T12:45:00+00:00
@@ -116,7 +113,7 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 **SPY**
 
 <a id="evidence-SPY-intraday"></a>
-**SPY-intraday** · SPY · -0.53 % · latest trade versus previous regular close · observed/published 2026-09-08T12:45:00+00:00 · source sample-prices
+**SPY-intraday** · SPY · -0.53 % · latest trade versus previous regular close · observed/published 2026-09-08T14:01:00+00:00 · source sample-prices
 
 <a id="evidence-SPY-daily"></a>
 **SPY-daily** · SPY · +0.06 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
@@ -133,7 +130,7 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 **QQQ**
 
 <a id="evidence-QQQ-intraday"></a>
-**QQQ-intraday** · QQQ · -0.61 % · latest trade versus previous regular close · observed/published 2026-09-08T12:45:00+00:00 · source sample-prices
+**QQQ-intraday** · QQQ · -0.61 % · latest trade versus previous regular close · observed/published 2026-09-08T14:01:00+00:00 · source sample-prices
 
 <a id="evidence-QQQ-daily"></a>
 **QQQ-daily** · QQQ · +0.15 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
@@ -153,7 +150,7 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 **XLI**
 
 <a id="evidence-XLI-intraday"></a>
-**XLI-intraday** · XLI · +0.40 % · latest trade versus previous regular close · observed/published 2026-09-08T12:45:00+00:00 · source sample-prices
+**XLI-intraday** · XLI · +0.40 % · latest trade versus previous regular close · observed/published 2026-09-08T14:01:00+00:00 · source sample-prices
 
 <a id="evidence-XLI-daily"></a>
 **XLI-daily** · XLI · +2.02 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
@@ -176,7 +173,7 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 **GLD**
 
 <a id="evidence-GLD-intraday"></a>
-**GLD-intraday** · GLD · -0.20 % · latest trade versus previous regular close · observed/published 2026-09-08T12:45:00+00:00 · source sample-prices
+**GLD-intraday** · GLD · -0.20 % · latest trade versus previous regular close · observed/published 2026-09-08T14:01:00+00:00 · source sample-prices
 
 <a id="evidence-GLD-daily"></a>
 **GLD-daily** · GLD · +0.11 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
@@ -232,15 +229,16 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 
 ### Technical details
 
-Generated UTC: 2026-09-15T06:01:37.297286+00:00
-Evidence cutoff UTC: 2026-09-08T12:45:00+00:00
+Generated UTC: 2026-09-08T14:01:00+00:00
+Evidence cutoff UTC: 2026-09-08T14:01:00+00:00
 Checkpoint: OPEN\_30M (synthesis)
 Synthesis: this edition&#x27;s one analyst call
+Interpretation: OPEN\_30M · evidence cutoff 2026-09-08T14:01:00+00:00 · run sample-open\_30m-140100-62201663
 Bootstrap: BASELINE
 Calendar: checked
 Basis: Opening structure · prior close · Treasury prior-close/current as available · current prints available · breadth available. Timestamped intraday observations available; see individual clocks.
 Continuity: cold\_start — same-session continuity unavailable: premarket: absent; latest: absent
 
-Cuttingboard: generated 2026-09-08T12:20:00+00:00; captured 2026-09-08T12:45:00+00:00; schema v2
+Cuttingboard: generated None; captured 2026-09-08T14:01:00+00:00; schema None
 
 Model-assisted interpretation; factual rows are deterministic.

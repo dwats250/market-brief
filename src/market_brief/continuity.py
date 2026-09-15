@@ -15,7 +15,7 @@ from pathlib import Path
 import exchange_calendars as xcals
 
 from .evidence import ET, PLACEHOLDER, USABLE, digest, evidence_catalog, model_packet, read_json, timestamp
-from .schedule import CHECKPOINT_TITLES, next_checkpoint, next_session_date
+from .schedule import CHECKPOINT_TITLES, VANCOUVER, next_session_date, next_synthesis
 
 CONTINUITY_SCHEMA = "market-brief.continuity.v1"
 BUNDLE_SCHEMA = "market-brief.continuity-bundle.v1"
@@ -36,7 +36,7 @@ CARRY_LIMIT = 3
 SNAPSHOT_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at", "frequency",
                    "status", "magnitude", "identity")
 HORIZON_PHRASES = {"OPENING_HOUR": "Through the opening hour", "SESSION": "Into the close",
-                   "NEXT_CLOSE": "Into the next close", "NEXT_BRIEF": "At the next update"}
+                   "NEXT_CLOSE": "Into the next close", "NEXT_BRIEF": "By the next interpretation"}
 
 
 def _hashed(record):
@@ -54,7 +54,9 @@ def _hash_ok(record):
 def resolve_horizon(horizon, now, events=(), current_checkpoint=None):
     """Turn a declared horizon into a resolved expiry session/time and a natural phrase.
 
-    NEXT_BRIEF is the next scheduled checkpoint, which is only tomorrow after the close.
+    NEXT_BRIEF is the next synthesis checkpoint, the next time an analyst can judge the watch; a
+    deterministic refresh in between only carries it. After the last synthesis of the day that is the
+    next session's premarket.
     """
     cal = xcals.get_calendar("XNYS")
     day = now.astimezone(ET).date().isoformat()
@@ -90,10 +92,10 @@ def resolve_horizon(horizon, now, events=(), current_checkpoint=None):
         return dict(declared=horizon, expires_at=later.isoformat(), expires_session=following,
                     phrase="Into the next session")
     if horizon == "NEXT_BRIEF":
-        info = next_checkpoint(now, current_checkpoint)
-        phrase = HORIZON_PHRASES[horizon]
-        if info["session_date"] != day:
-            phrase = "At the next session's first update"
+        info = next_synthesis(now, current_checkpoint)
+        when = timestamp(info["scheduled_at"]).astimezone(VANCOUVER)
+        phrase = (f"By the {when.strftime('%-I:%M %p')} PT update" if info["session_date"] == day
+                  else "By the next session's premarket")
         return dict(declared=horizon, expires_at=info["scheduled_at"], expires_session=info["session_date"],
                     phrase=phrase, next_checkpoint=info["checkpoint"],
                     next_checkpoint_label=CHECKPOINT_TITLES.get(info["checkpoint"], info["checkpoint"]))
@@ -671,8 +673,10 @@ def session_handoff(state):
 
 # --- frozen interpretation and deterministic refreshes -----------------------------------------
 
-def cited_ids(narrative, attention=()):
-    """Every evidence reference the narrative depends on: cited IDs and numeric placeholders."""
+def cited_ids(narrative, attention=(), carried=()):
+    """Every evidence reference the page will resolve: the narrative's cited IDs and numeric placeholders,
+    the selected triggers' rows, and the placeholders inside carried watches' criteria (written by an
+    earlier analyst, rendered again beside this narrative)."""
     ids = set()
     records = [narrative["banner"], narrative["character"], *narrative["summary"], *narrative["watches"],
                *narrative.get("relationships", []), *narrative.get("watch_updates", []),
@@ -685,6 +689,10 @@ def cited_ids(narrative, attention=()):
                 ids |= set(PLACEHOLDER.findall(value))
     for item in attention:
         ids |= set(item.get("evidence_ids", []))
+    for watch in carried:
+        for key in ("hypothesis", "confirmation", "contradiction"):
+            ids |= set(PLACEHOLDER.findall(watch.get(key) or ""))
+        ids |= set(watch.get("evidence_refs", []))
     return ids
 
 
@@ -704,7 +712,7 @@ def interpretation_record(packet, narrative, context=None, app_version="", conte
     attention = [dict(id=a["id"], symbol=a["symbol"], reason=a["reason"], date=a.get("date"),
                       evidence_ids=list(a["evidence_ids"]))
                  for a in packet.get("attention", []) if a["id"] in narrative.get("attention_ids", [])]
-    ids = cited_ids(narrative, attention)
+    ids = cited_ids(narrative, attention, prior.get("watches", []))
     evidence = {ident: {key: row[key] for key in INTERPRETATION_FIELDS if key in row}
                 for ident, row in values.items() if ident in ids}
     counts = {}

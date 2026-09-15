@@ -277,6 +277,8 @@ def run(args):
                 print(f"Editorial overshoot kept: {note['path']} {note['keyword']} {note['actual']} > {note['limit']}",
                       flush=True)
             metadata.update(model_route=model["route"], model=model, narrative_hash=digest(narrative))
+            # The accepted response is on disk before anything else can fail; it is paid for.
+            write_json(folder / "narrative.json", narrative)
             # Package this edition's state from the same validated response; no second model call.
             state = edition_state(packet, narrative, prior, comparisons, metadata["context_hash"],
                                   metadata["narrative_hash"], __version__)
@@ -304,7 +306,11 @@ def run(args):
             write_json(folder / "session_handoff.json", handoff)
         published = False
         if interpretation is not None:
-            markdown, page = render(packet, narrative, context, interpretation=interpretation)
+            try:
+                markdown, page = render(packet, narrative, context, interpretation=interpretation)
+            except (KeyError, TypeError) as exc:
+                # A rendering defect is diagnosed like any rejection; the accepted narrative stays on disk.
+                raise ValueError(f"render failed after acceptance ({type(exc).__name__}: {exc})") from None
             (folder / "brief.md").write_text(markdown)
             (folder / "brief.html").write_text(page)
             update_latest(RUN_ROOT, page)
@@ -315,8 +321,6 @@ def run(args):
         else:
             # Only a close reaches here: the session hands off even when no synthesis was accepted today.
             print(f"Close snapshot recorded without a page ({interpretation_note}).", flush=True)
-        if narrative is not None:
-            write_json(folder / "narrative.json", narrative)
         metadata.update(validation="PASS", published=published)
         metadata["continuity"].update(data_status=state["observed"]["data_status"],
                                       handoff="written" if handoff else handoff_reason,

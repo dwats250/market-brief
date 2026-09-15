@@ -224,9 +224,11 @@ advances `latest` with a `carried` edition state (fresh snapshots, the carried a
 unchanged) and never writes the interpretation slot. Fail-closed rules: a refresh without a
 same-session interpretation or without timestamped current prints publishes nothing; a close
 without any observation from the session publishes nothing and does not hand off; a close without
-an interpretation still hands the observed session off, without a page. Cloudflare wakes on the
-hour 13:00–20:00 UTC plus the :31 and :01 candidates; the Python scheduler resolves the checkpoint,
-skips hourly refreshes at or after an early close, and stays idempotent per checkpoint.
+an interpretation still hands the observed session off, without a page. Cloudflare wakes one minute
+past each hour 13:00–21:00 UTC plus the :31 candidates, never two wakes within a minute; the Python
+scheduler resolves the checkpoint, skips hourly refreshes at or after an early close, and stays
+idempotent per checkpoint. A `NEXT_BRIEF` watch horizon resolves to the next synthesis checkpoint,
+the next time an analyst can judge it; refreshes in between only carry it.
 
 The bundle (`runs/continuity/bundle.json`, schema `market-brief.continuity-bundle.v1`, every
 record content-hashed) is written only by accepted LIVE, non-experiment, non-commissioning runs.

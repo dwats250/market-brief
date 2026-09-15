@@ -135,15 +135,27 @@ def next_session_date(now):
     return cal.next_session(session).date().isoformat()
 
 
-def next_checkpoint(now, current=None):
+def next_checkpoint(now, current=None, kinds=None):
     """The next scheduled checkpoint after `now`: later today, or the next session's premarket.
 
-    `current` is the checkpoint of the running edition, which is never its own next update.
+    `current` is the checkpoint of the running edition, which is never its own next update; `kinds`
+    restricts the candidates (for example to synthesis checkpoints, the ones an analyst can judge at).
     """
-    later = [checkpoint_session(now, checkpoint) for checkpoint in CHECKPOINTS if checkpoint != current]
+    later = [checkpoint_session(now, checkpoint) for checkpoint in CHECKPOINTS
+             if checkpoint != current and (kinds is None or CHECKPOINT_KINDS[checkpoint] in kinds)]
     later = [info for info in later if info["applicable"] and datetime.fromisoformat(info["scheduled_at"]) > now]
     if later:
         return min(later, key=lambda info: info["scheduled_at"])
-    # Nothing later today: the next session's premarket, probed at a time inside that day.
-    probe = datetime.fromisoformat(next_session_date(now) + "T12:00:00+00:00")
+    # Nothing later today: the next session's premarket, probed at a time inside that day. Before the
+    # close `next_session_date` still names today's session, so step past it explicitly.
+    cal = xcals.get_calendar("XNYS")
+    following = next_session_date(now)
+    if following == now.astimezone(ET).date().isoformat():
+        following = cal.next_session(following).date().isoformat()
+    probe = datetime.fromisoformat(following + "T12:00:00+00:00")
     return checkpoint_session(probe, "PREMARKET")
+
+
+def next_synthesis(now, current=None):
+    """The next checkpoint at which an analyst can judge a watch: the next synthesis, or the next premarket."""
+    return next_checkpoint(now, current, kinds={"synthesis"})

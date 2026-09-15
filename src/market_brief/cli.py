@@ -168,7 +168,9 @@ def sample_interpretation(packet, prior, comparisons):
     fixture = "narrative.continuity.json" if prior["status"] == "available" else "narrative.sample.json"
     narrative = validate_narrative(read_json(ROOT / "tests/fixtures" / fixture), packet, context)
     premarket = checkpoint_session(timestamp(packet["run"]["target_time"]), "PREMARKET")
-    origin = dict(run_id="sample-premarket-fixture", checkpoint="PREMARKET", target_time=premarket["scheduled_at"])
+    # Never dated after the replayed data: a fixture targeted before its premarket slot keeps its own clock.
+    interpreted_at = min(premarket["scheduled_at"], packet["run"]["target_time"], key=timestamp)
+    origin = dict(run_id="sample-premarket-fixture", checkpoint="PREMARKET", target_time=interpreted_at)
     return interpretation_record(packet, narrative, context, __version__, digest(context), origin)
 
 
@@ -308,8 +310,8 @@ def run(args):
         if interpretation is not None:
             try:
                 markdown, page = render(packet, narrative, context, interpretation=interpretation)
-            except (KeyError, TypeError) as exc:
-                # A rendering defect is diagnosed like any rejection; the accepted narrative stays on disk.
+            except Exception as exc:  # noqa: BLE001 - any rendering defect is diagnosed like a rejection
+                # The accepted narrative is already on disk; nothing has been published.
                 raise ValueError(f"render failed after acceptance ({type(exc).__name__}: {exc})") from None
             (folder / "brief.md").write_text(markdown)
             (folder / "brief.html").write_text(page)
@@ -404,6 +406,20 @@ def restore_continuity(args, runner=subprocess.run):
     return 0
 
 
+def completed_in_bundle(root, session_date, checkpoint):
+    """Whether the restored continuity bundle already holds an accepted production record of this
+    checkpoint for this session. The bundle survives runner boundaries, so a wake whose checkout predates
+    the earlier run's publish still sees that the checkpoint (and any paid synthesis) already happened."""
+    bundle, _ = load_bundle(bundle_path(root))
+    for slot in SLOTS:
+        origin = (bundle.get(slot) or {}).get("origin") or {}
+        if (origin.get("session_date") == session_date and origin.get("checkpoint") == checkpoint
+                and origin.get("mode") == "LIVE" and not origin.get("commissioning")
+                and not origin.get("experiment")):
+            return True
+    return False
+
+
 def scheduled(args):
     now = datetime.now(timezone.utc)
     ready, info = due(now, args.checkpoint)
@@ -418,7 +434,7 @@ def scheduled(args):
     already_published = (published.is_file()
                          and f'data-session-date="{info["session_date"]}"' in published.read_text()
                          and f'data-checkpoint="{args.checkpoint}"' in published.read_text())
-    if marker.is_file() or already_published:
+    if marker.is_file() or already_published or completed_in_bundle(RUN_ROOT, info["session_date"], args.checkpoint):
         print(f"SKIP / {args.checkpoint} / already completed for {info['session_date']}")
         return 0
     args.replay = False

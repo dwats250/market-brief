@@ -341,7 +341,8 @@ def test_a_replayed_refresh_never_reaches_the_analyst_and_dates_its_sample_inter
     folder = next(p for p in (tmp_path / "runs").glob("*/*") if (p / "evidence.json").exists())
     page = (folder / "brief.html").read_text()
     assert "SAMPLE · Hourly refresh" in page and "FICTIONAL SAMPLE" in page
-    assert "Interpretation as of 6:00 AM PT · Data as of 5:45 AM PT" in page
+    # The fixture is targeted before its premarket slot, so the sample interpretation keeps the data's clock.
+    assert "Interpretation as of 5:45 AM PT · Data as of 5:45 AM PT" in page
     metadata = json.loads((folder / "metadata.json").read_text())
     assert metadata["synthesis"] == dict(kind="refresh", calls=0)
     assert metadata["interpretation"]["run_id"] == "sample-premarket-fixture"
@@ -376,6 +377,30 @@ def test_the_alternate_season_wake_never_retries_or_reruns_the_opening_structure
     assert day.calls == ["PREMARKET", "OPEN_30M"]
     interpreted = day.metadata("HOURLY_0800")["interpretation"]["checkpoint"]
     assert interpreted == ("PREMARKET" if first_attempt_fails else "OPEN_30M")
+
+
+def test_a_queue_delayed_earlier_wake_cannot_repeat_a_completed_checkpoint_on_a_fresh_runner(day, capsys):
+    """A dispatch queued behind another run starts on a fresh runner whose checkout predates the earlier
+    run's publish and which has no marker file. The restored continuity bundle already names the completed
+    checkpoint, so the scheduler skips: no second synthesis, no duplicate refresh."""
+    from market_brief.cli import checkpoint_marker
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", command="schedule") == 0
+    assert day.calls == ["PREMARKET", "OPEN_30M"]
+    # Ten minutes later, inside the synthesis window, on a runner without the marker or the new page.
+    checkpoint_marker(day.root, TUE, "OPEN_30M").unlink()
+    capsys.readouterr()
+    assert day.run(f"{TUE}T14:11:00+00:00", "OPEN_30M", command="schedule") == 0
+    assert "SKIP / OPEN_30M / already completed" in capsys.readouterr().out
+    assert day.calls == ["PREMARKET", "OPEN_30M"] and len(day.attempts("OPEN_30M")) == 1
+    # The same holds for a deterministic refresh: one attempt folder, one publish.
+    assert day.run(f"{TUE}T17:01:00+00:00", "HOURLY_1000", command="schedule") == 0
+    checkpoint_marker(day.root, TUE, "HOURLY_1000").unlink()
+    capsys.readouterr()
+    assert day.run(f"{TUE}T17:06:00+00:00", "HOURLY_1000", command="schedule") == 0
+    assert "SKIP / HOURLY_1000 / already completed" in capsys.readouterr().out
+    assert len(day.attempts("HOURLY_1000")) == 1
+    assert day.published == ["PREMARKET", "OPEN_30M", "HOURLY_1000"]
 
 
 def test_a_failed_opening_structure_synthesis_leaves_refreshes_on_the_premarket_interpretation(day):

@@ -6,11 +6,10 @@ from test_pipeline import fixture_packet, narrative
 from market_brief.synthesize import (
     OPENROUTER_FALLBACK_MODEL,
     OPENROUTER_MODEL,
-    _TransientOpenRouterError,
     _openrouter_narrative,
+    _TransientOpenRouterError,
     synthesize_openrouter,
 )
-
 
 PROVIDER_ROUTE = {"order": ["azure", "anthropic"], "allow_fallbacks": True, "require_parameters": True}
 

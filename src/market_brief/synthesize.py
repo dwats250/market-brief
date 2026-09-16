@@ -53,6 +53,7 @@ ALLOWED_LABELS = re.compile(
 TRADE_LANGUAGE = re.compile(r"\b(entry|target|sizing|buy|sell|execute|execution|order)\b", re.I)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "anthropic/claude-fable-5.1"
+OPENROUTER_FALLBACK_MODEL = "anthropic/claude-fable-5"
 TRANSIENT_OPENROUTER_STATUS = {408, 429, 500, 502, 503, 504}
 
 
@@ -512,18 +513,23 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     analyst = analyst_model()
     schema = transport_schema(NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile))
     requested_at = datetime.now(timezone.utc).isoformat()
-    # No sampling parameters: Fable 5.1 endpoints advertise none, and require_parameters would
-    # otherwise leave no eligible provider. Bounds are enforced locally, not by the wire schema.
+    # No sampling parameters: Fable endpoints advertise none, and require_parameters would otherwise
+    # leave no eligible provider. Bounds are enforced locally, not by the wire schema. Keep this as
+    # one HTTP request: OpenRouter first fails over eligible providers, then Fable 5 if Fable 5.1 is unavailable.
+    fallback_models = [] if analyst["source"] == "environment" else [OPENROUTER_FALLBACK_MODEL]
     payload = dict(model=analyst["model"], max_tokens=profile["max_output_tokens"],
                    messages=[{"role": "system", "content": system},
                              {"role": "user", "content": user}],
                    plugins=[{"id": "response-healing"}],
-                   provider={"order": ["azure"], "allow_fallbacks": False, "require_parameters": True},
+                   provider={"order": ["azure", "anthropic"], "allow_fallbacks": True,
+                             "require_parameters": True},
                    response_format={"type": "json_schema", "json_schema": {
                        "name": "market_brief_narrative", "strict": True, "schema": schema}},
                    reasoning={"effort": profile["reasoning_effort"], "exclude": True})
+    if fallback_models:
+        payload["models"] = fallback_models
     # A timeout or malformed transport envelope may follow a billable generation.
-    # One request only, including on transport failure. `sleeper` is retained for callers.
+    # One application request only, including on transport failure. `sleeper` is retained for callers.
     try:
         response = requester(payload, api_key)
     except _TransientOpenRouterError as exc:
@@ -545,7 +551,8 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     else:
         print(f"Synthesis usage: unavailable finish={finish_reason} provider={provider_route}", flush=True)
     return narrative, dict(route="openrouter", provider="OpenRouter", model=analyst["model"],
-                           model_source=analyst["source"], profile=profile["profile"],
+                           model_source=analyst["source"], fallback_models=fallback_models,
+                           profile=profile["profile"],
                            max_output_tokens=profile["max_output_tokens"],
                            reasoning_effort=profile["reasoning_effort"], attempts=1,
                            input_bytes=len(user.encode()), output_bytes=len(canonical(narrative).encode()),

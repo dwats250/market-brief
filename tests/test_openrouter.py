@@ -6,8 +6,8 @@ from test_pipeline import fixture_packet, narrative
 from market_brief.synthesize import (
     OPENROUTER_FALLBACK_MODEL,
     OPENROUTER_MODEL,
-    _openrouter_narrative,
     _TransientOpenRouterError,
+    _openrouter_narrative,
     synthesize_openrouter,
 )
 

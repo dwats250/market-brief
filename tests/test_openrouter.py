@@ -4,11 +4,14 @@ import pytest
 from test_pipeline import fixture_packet, narrative
 
 from market_brief.synthesize import (
+    OPENROUTER_FALLBACK_MODEL,
     OPENROUTER_MODEL,
     _openrouter_narrative,
     _TransientOpenRouterError,
     synthesize_openrouter,
 )
+
+PROVIDER_ROUTE = {"order": ["azure", "anthropic"], "allow_fallbacks": True, "require_parameters": True}
 
 
 def test_openrouter_structured_transport_preserves_validator_contract():
@@ -25,18 +28,20 @@ def test_openrouter_structured_transport_preserves_validator_contract():
     payload, key = calls[0]
     assert key == "secret"
     assert payload["model"] == OPENROUTER_MODEL
+    assert payload["models"] == [OPENROUTER_FALLBACK_MODEL]
     assert payload["reasoning"] == {"exclude": True, "effort": "low"}
     assert payload["plugins"] == [{"id": "response-healing"}]
     assert payload["response_format"]["type"] == "json_schema"
     assert payload["response_format"]["json_schema"]["strict"] is True
-    # Fable 5.1 endpoints advertise no sampling parameters; with require_parameters a stray
+    # Fable endpoints advertise no sampling parameters; with require_parameters a stray
     # temperature could leave no eligible provider. The wire schema carries only documented keywords.
     assert "temperature" not in payload and "top_p" not in payload
     wire = json.dumps(payload["response_format"]["json_schema"]["schema"])
     assert "maxLength" not in wire and "maxItems" not in wire and "uniqueItems" not in wire
-    assert payload["provider"] == {"order": ["azure"], "allow_fallbacks": False, "require_parameters": True}
+    assert payload["provider"] == PROVIDER_ROUTE
     assert output["mode"] == "SAMPLE"
     assert metadata["provider"] == "OpenRouter"
+    assert metadata["fallback_models"] == [OPENROUTER_FALLBACK_MODEL]
     assert metadata["usage"]["total_tokens"] == 30
     from market_brief.evidence import digest
     assert metadata["schema_hash"] == digest(payload["response_format"]["json_schema"]["schema"])
@@ -53,7 +58,8 @@ def test_openrouter_never_retries_transient_transport_failures():
         synthesize_openrouter(fixture_packet(), api_key="secret", requester=requester,
                              sleeper=lambda _: pytest.fail("paid retry"))
     assert len(calls) == 1
-    assert calls[0]["provider"] == {"order": ["azure"], "allow_fallbacks": False, "require_parameters": True}
+    assert calls[0]["provider"] == PROVIDER_ROUTE
+    assert calls[0]["models"] == [OPENROUTER_FALLBACK_MODEL]
 
 
 def test_openrouter_accepts_fenced_json_transport_wrapper():
@@ -114,10 +120,27 @@ def test_analyst_identity_and_edition_budget_are_configured_and_recorded(monkeyp
                 "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}}
     _, meta = synthesize_openrouter(fixture_packet(), api_key="k", requester=requester)
     assert calls[0]["model"] == "vendor/other-analyst" and calls[0]["max_tokens"] == 7000
+    assert "models" not in calls[0]
     assert meta["model"] == "vendor/other-analyst" and meta["model_source"] == "environment"
+    assert meta["fallback_models"] == []
     assert meta["resolved_model"] == "vendor/other-analyst:resolved" and meta["profile"] == "rich"
     assert meta["max_output_tokens"] == 7000 and meta["attempts"] == 1
     assert meta["input_bytes"] > 1000 and meta["output_bytes"] > 100
+
+
+def test_openrouter_records_when_fable_5_serves_the_fallback():
+    def requester(payload, api_key):
+        assert payload["model"] == OPENROUTER_MODEL
+        assert payload["models"] == [OPENROUTER_FALLBACK_MODEL]
+        return {"id": "r", "model": OPENROUTER_FALLBACK_MODEL, "provider": "Anthropic",
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(narrative())}}]}
+
+    _, metadata = synthesize_openrouter(fixture_packet(), api_key="k", requester=requester)
+    assert metadata["model"] == OPENROUTER_MODEL
+    assert metadata["fallback_models"] == [OPENROUTER_FALLBACK_MODEL]
+    assert metadata["resolved_model"] == OPENROUTER_FALLBACK_MODEL
+    assert metadata["provider_route"] == "Anthropic"
+    assert metadata["attempts"] == 1
 
 
 @pytest.mark.parametrize("checkpoint,total", [("PREMARKET", 7000), ("OPEN_30M", 4500)])
@@ -242,7 +265,8 @@ def test_transport_failure_makes_one_http_request_and_enables_metadata(monkeypat
         calls.append(request)
         assert request.get_header("X-openrouter-metadata") == "enabled"
         payload = json.loads(request.data)
-        assert payload["provider"] == {"order": ["azure"], "allow_fallbacks": False, "require_parameters": True}
+        assert payload["provider"] == PROVIDER_ROUTE
+        assert payload["models"] == [OPENROUTER_FALLBACK_MODEL]
         assert payload["reasoning"] == {"effort": "low", "exclude": True}
         assert payload["response_format"]["json_schema"]["schema"] == json.loads(
             payload["messages"][1]["content"])["output_schema"]

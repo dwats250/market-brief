@@ -12,7 +12,13 @@ from market_brief.synthesize import (
     synthesize_openrouter,
 )
 
-PROVIDER_ROUTE = {"order": ["azure", "anthropic"], "allow_fallbacks": True, "require_parameters": True}
+# Strict json_schema structured output is served, per live OpenRouter endpoint data, only by the
+# Anthropic-direct endpoint for Fable 5.1 (and Fable 5); Azure/Bedrock/Google advertise `response_format`
+# but not `structured_outputs`, and `require_parameters` treats `response_format` as a soft preference,
+# so it cannot hold the request there. The route is a hard allowlist of exactly one approved provider:
+# `order:["anthropic"]` with `allow_fallbacks:False` cannot escape to another provider (the 2026-09-17
+# "Claude Platform on AWS" 400 came from such an escape, on Fable 5, under PR #27's `models` array).
+PROVIDER_ROUTE = {"order": ["anthropic"], "allow_fallbacks": False, "require_parameters": True}
 
 
 def test_openrouter_structured_transport_preserves_validator_contract():
@@ -42,6 +48,11 @@ def test_openrouter_structured_transport_preserves_validator_contract():
     wire = json.dumps(payload["response_format"]["json_schema"]["schema"])
     assert "maxLength" not in wire and "maxItems" not in wire and "uniqueItems" not in wire
     assert payload["provider"] == PROVIDER_ROUTE
+    # The request can never silently escape the one approved provider: a single clear mechanism
+    # (ordered allowlist with fallbacks disabled), not redundant routing knobs.
+    assert payload["provider"]["order"] == ["anthropic"]
+    assert payload["provider"]["allow_fallbacks"] is False
+    assert "only" not in payload["provider"] and "ignore" not in payload["provider"]
     assert output["mode"] == "SAMPLE"
     assert metadata["provider"] == "OpenRouter"
     assert metadata["fallback_model"] == OPENROUTER_FALLBACK_MODEL
@@ -143,15 +154,18 @@ def test_openrouter_falls_back_to_fable_5_once_when_primary_has_no_endpoint():
     calls = []
 
     def requester(payload, api_key):
-        calls.append(payload["model"])
+        calls.append(payload)
         assert "models" not in payload  # failover is ours, never delegated to OpenRouter
+        # The bounded Fable 5 fallback carries the SAME constrained provider policy as the primary, so
+        # it cannot escape to "Claude Platform on AWS" (a Fable 5 endpoint) the way PR #27's array did.
+        assert payload["provider"] == PROVIDER_ROUTE
         if payload["model"] == OPENROUTER_MODEL:
             raise _ModelUnavailableError(404, {"code": 404, "message": "No endpoints found"})
         return {"id": "r", "model": OPENROUTER_FALLBACK_MODEL, "provider": "Anthropic",
                 "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(narrative())}}]}
 
     _, metadata = synthesize_openrouter(fixture_packet(), api_key="k", requester=requester)
-    assert calls == [OPENROUTER_MODEL, OPENROUTER_FALLBACK_MODEL]
+    assert [c["model"] for c in calls] == [OPENROUTER_MODEL, OPENROUTER_FALLBACK_MODEL]
     assert metadata["model"] == OPENROUTER_MODEL and metadata["model_source"] == "config/editions.json"
     assert metadata["fallback_model"] == OPENROUTER_FALLBACK_MODEL
     assert metadata["fallback_used"] is True
@@ -253,6 +267,7 @@ def test_wire_404_maps_to_one_bounded_fallback_http_request(monkeypatch):
     def fake_urlopen(request, timeout):
         payload = json.loads(request.data)
         calls.append(payload["model"])
+        assert payload["provider"] == PROVIDER_ROUTE  # both attempts pin the approved provider
         if payload["model"] == OPENROUTER_MODEL:
             raise HTTPError(request.full_url, 404, "Not Found", {}, io.BytesIO(body))
         assert "models" not in payload
@@ -291,6 +306,40 @@ def test_generic_404_fails_closed_without_any_fallback(monkeypatch, body):
     with pytest.raises(ValueError, match="OpenRouter HTTP 404"):
         synthesize_openrouter(fixture_packet(), api_key="fake")
     assert calls == [OPENROUTER_MODEL]  # a bare/unrelated 404 is not model-unavailable; no Fable 5 fallback
+
+
+def test_provider_400_does_not_trigger_fallback_and_cannot_escape_the_approved_provider(monkeypatch):
+    # The 2026-09-17 incident shape: HTTP 400 "Provider returned error" carrying provider_name
+    # "Claude Platform on AWS" (a Fable 5 endpoint, never a Fable 5.1 one). An arbitrary 400 is not a
+    # model-unavailable condition: exactly one request, fail closed, no Fable 5 fallback. And the one
+    # request pins provider to Anthropic with fallbacks disabled, so it could not have reached that
+    # AWS endpoint in the first place — the only path there was PR #27's removed `models` array.
+    import importlib
+    import io
+    from urllib.error import HTTPError
+
+    module = importlib.import_module("market_brief.synthesize")
+    payloads = []
+    body = json.dumps({"error": {"code": 400, "message": "Provider returned error",
+                                 "metadata": {"provider_name": "Claude Platform on AWS",
+                                              "raw": "PRIVATE_RAW_SENTINEL"}}}).encode()
+
+    def fake_urlopen(request, timeout):
+        payload = json.loads(request.data)
+        payloads.append(payload)
+        raise HTTPError(request.full_url, 400, "error", {}, io.BytesIO(body))
+
+    monkeypatch.setattr(module, "urlopen", fake_urlopen)
+    with pytest.raises(ValueError, match="OpenRouter HTTP 400") as exc:
+        synthesize_openrouter(fixture_packet(), api_key="fake")
+    assert len(payloads) == 1  # a 400 never becomes a second (billable) model attempt
+    assert payloads[0]["model"] == OPENROUTER_MODEL and "models" not in payloads[0]
+    assert payloads[0]["provider"] == PROVIDER_ROUTE
+    assert payloads[0]["provider"]["order"] == ["anthropic"]
+    assert payloads[0]["provider"]["allow_fallbacks"] is False
+    # The provider label is kept for provenance; no raw provider body escapes.
+    assert "Claude Platform on AWS" in str(exc.value)
+    assert "PRIVATE_RAW_SENTINEL" not in str(exc.value)
 
 
 @pytest.mark.parametrize("checkpoint,total", [("PREMARKET", 7000), ("OPEN_30M", 4500)])

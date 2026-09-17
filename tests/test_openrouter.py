@@ -6,6 +6,7 @@ from test_pipeline import fixture_packet, narrative
 from market_brief.synthesize import (
     OPENROUTER_FALLBACK_MODEL,
     OPENROUTER_MODEL,
+    _ModelUnavailableError,
     _openrouter_narrative,
     _TransientOpenRouterError,
     synthesize_openrouter,
@@ -28,7 +29,9 @@ def test_openrouter_structured_transport_preserves_validator_contract():
     payload, key = calls[0]
     assert key == "secret"
     assert payload["model"] == OPENROUTER_MODEL
-    assert payload["models"] == [OPENROUTER_FALLBACK_MODEL]
+    # No OpenRouter-side `models` delegation: a "no endpoints" 404 halts that fallback chain rather
+    # than advancing it, so model failover is an explicit application-level second call, not a wire array.
+    assert "models" not in payload
     assert payload["reasoning"] == {"exclude": True, "effort": "low"}
     assert payload["plugins"] == [{"id": "response-healing"}]
     assert payload["response_format"]["type"] == "json_schema"
@@ -41,7 +44,10 @@ def test_openrouter_structured_transport_preserves_validator_contract():
     assert payload["provider"] == PROVIDER_ROUTE
     assert output["mode"] == "SAMPLE"
     assert metadata["provider"] == "OpenRouter"
-    assert metadata["fallback_models"] == [OPENROUTER_FALLBACK_MODEL]
+    assert metadata["fallback_model"] == OPENROUTER_FALLBACK_MODEL
+    assert metadata["fallback_used"] is False
+    assert metadata["primary_failure"] is None
+    assert metadata["requested_model"] == OPENROUTER_MODEL and metadata["attempts"] == 1
     assert metadata["usage"]["total_tokens"] == 30
     from market_brief.evidence import digest
     assert metadata["schema_hash"] == digest(payload["response_format"]["json_schema"]["schema"])
@@ -59,7 +65,7 @@ def test_openrouter_never_retries_transient_transport_failures():
                              sleeper=lambda _: pytest.fail("paid retry"))
     assert len(calls) == 1
     assert calls[0]["provider"] == PROVIDER_ROUTE
-    assert calls[0]["models"] == [OPENROUTER_FALLBACK_MODEL]
+    assert "models" not in calls[0]  # a transient transport failure is never a model failover
 
 
 def test_openrouter_accepts_fenced_json_transport_wrapper():
@@ -108,8 +114,10 @@ def test_analyst_identity_and_edition_budget_are_configured_and_recorded(monkeyp
     from market_brief.synthesize import analyst_model
     assert analyst_model(environ={})["model"] == OPENROUTER_MODEL
     assert analyst_model(environ={})["source"] == "config/editions.json"
+    assert analyst_model(environ={})["fallback_model"] == OPENROUTER_FALLBACK_MODEL
+    # An environment override is honored exactly and carries no fallback of its own.
     assert analyst_model(environ={"MARKET_BRIEF_MODEL": "vendor/other-analyst"}) == dict(
-        model="vendor/other-analyst", source="environment", cli_model="sonnet")
+        model="vendor/other-analyst", source="environment", fallback_model=None, cli_model="sonnet")
     monkeypatch.setenv("MARKET_BRIEF_MODEL", "vendor/other-analyst")
     calls = []
 
@@ -122,25 +130,167 @@ def test_analyst_identity_and_edition_budget_are_configured_and_recorded(monkeyp
     assert calls[0]["model"] == "vendor/other-analyst" and calls[0]["max_tokens"] == 7000
     assert "models" not in calls[0]
     assert meta["model"] == "vendor/other-analyst" and meta["model_source"] == "environment"
-    assert meta["fallback_models"] == []
+    assert meta["fallback_model"] is None and meta["fallback_used"] is False
     assert meta["resolved_model"] == "vendor/other-analyst:resolved" and meta["profile"] == "rich"
     assert meta["max_output_tokens"] == 7000 and meta["attempts"] == 1
     assert meta["input_bytes"] > 1000 and meta["output_bytes"] > 100
 
 
-def test_openrouter_records_when_fable_5_serves_the_fallback():
+def test_openrouter_falls_back_to_fable_5_once_when_primary_has_no_endpoint():
+    # Reproduces the 2026-09-16 incident: OpenRouter reports the primary model has no available
+    # endpoint (HTTP 404), a routing failure that precedes any billable generation. Exactly one
+    # bounded fallback call to Fable 5 follows, and every provenance field records what happened.
+    calls = []
+
     def requester(payload, api_key):
-        assert payload["model"] == OPENROUTER_MODEL
-        assert payload["models"] == [OPENROUTER_FALLBACK_MODEL]
+        calls.append(payload["model"])
+        assert "models" not in payload  # failover is ours, never delegated to OpenRouter
+        if payload["model"] == OPENROUTER_MODEL:
+            raise _ModelUnavailableError(404, {"code": 404, "message": "No endpoints found"})
         return {"id": "r", "model": OPENROUTER_FALLBACK_MODEL, "provider": "Anthropic",
                 "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(narrative())}}]}
 
     _, metadata = synthesize_openrouter(fixture_packet(), api_key="k", requester=requester)
-    assert metadata["model"] == OPENROUTER_MODEL
-    assert metadata["fallback_models"] == [OPENROUTER_FALLBACK_MODEL]
+    assert calls == [OPENROUTER_MODEL, OPENROUTER_FALLBACK_MODEL]
+    assert metadata["model"] == OPENROUTER_MODEL and metadata["model_source"] == "config/editions.json"
+    assert metadata["fallback_model"] == OPENROUTER_FALLBACK_MODEL
+    assert metadata["fallback_used"] is True
+    assert metadata["requested_model"] == OPENROUTER_FALLBACK_MODEL
     assert metadata["resolved_model"] == OPENROUTER_FALLBACK_MODEL
-    assert metadata["provider_route"] == "Anthropic"
-    assert metadata["attempts"] == 1
+    assert metadata["provider_route"] == "Anthropic" and metadata["attempts"] == 2
+    assert metadata["primary_failure"] == {
+        "model": OPENROUTER_MODEL, "status": 404, "error": {"code": 404, "message": "No endpoints found"}}
+
+
+def test_openrouter_does_not_fall_back_when_environment_pins_the_model(monkeypatch):
+    monkeypatch.setenv("MARKET_BRIEF_MODEL", "vendor/other-analyst")
+    calls = []
+
+    def requester(payload, api_key):
+        calls.append(payload["model"])
+        raise _ModelUnavailableError(404, {"code": 404, "message": "No endpoints found"})
+
+    with pytest.raises(ValueError, match="OpenRouter HTTP 404"):
+        synthesize_openrouter(fixture_packet(), api_key="k", requester=requester)
+    assert calls == ["vendor/other-analyst"]  # the override is honored exactly; no surprise fallback
+
+
+def test_openrouter_second_model_unavailable_fails_closed_without_a_third_call():
+    calls = []
+
+    def requester(payload, api_key):
+        calls.append(payload["model"])
+        raise _ModelUnavailableError(404, {"code": 404, "message": "No endpoints found"})
+
+    with pytest.raises(ValueError, match="OpenRouter HTTP 404"):
+        synthesize_openrouter(fixture_packet(), api_key="k", requester=requester)
+    assert calls == [OPENROUTER_MODEL, OPENROUTER_FALLBACK_MODEL]  # one fallback, then fail closed
+
+
+def test_openrouter_fallback_narrative_still_faces_validation_and_is_not_re_attempted():
+    # The fallback response goes through the same grounding/admission path; a fallback narrative that
+    # fails validation is a diagnosed rejection, never a third attempt — one checkpoint admits at most one.
+    calls = []
+    invalid = narrative()
+    del invalid["banner"]["limitation"]
+
+    def requester(payload, api_key):
+        calls.append(payload["model"])
+        if payload["model"] == OPENROUTER_MODEL:
+            raise _ModelUnavailableError(404, {"code": 404, "message": "No endpoints found"})
+        return {"id": "r", "model": OPENROUTER_FALLBACK_MODEL,
+                "choices": [{"message": {"content": json.dumps(invalid)}}]}
+
+    with pytest.raises(ValueError):
+        synthesize_openrouter(fixture_packet(), api_key="k", requester=requester)
+    assert calls == [OPENROUTER_MODEL, OPENROUTER_FALLBACK_MODEL]
+
+
+def test_openrouter_does_not_fall_back_on_a_locally_rejected_primary_narrative():
+    # Local grounding/continuity failure is our own rejection, not a model-unavailable condition:
+    # the primary already generated (and is billable), so there is no second call.
+    calls = []
+    invalid = narrative()
+    del invalid["banner"]["limitation"]
+
+    def requester(payload, api_key):
+        calls.append(payload["model"])
+        return {"id": "r", "choices": [{"message": {"content": json.dumps(invalid)}}]}
+
+    with pytest.raises(ValueError):
+        synthesize_openrouter(fixture_packet(), api_key="k", requester=requester)
+    assert calls == [OPENROUTER_MODEL]
+
+
+def test_wire_404_maps_to_one_bounded_fallback_http_request(monkeypatch):
+    # End to end: a real OpenRouter "no endpoints" 404 on the primary becomes exactly one fallback
+    # HTTP request to Fable 5, and the primary's private response body never reaches provenance.
+    import importlib
+    import io
+    from urllib.error import HTTPError
+
+    module = importlib.import_module("market_brief.synthesize")
+    served = {"id": "r", "model": OPENROUTER_FALLBACK_MODEL, "provider": "Anthropic",
+              "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(narrative())}}]}
+    body = json.dumps({"error": {"code": 404, "message": "No endpoints found for anthropic/claude-fable-5.1",
+                                 "metadata": {"provider_name": "Anthropic", "raw": "PRIVATE_RAW_SENTINEL",
+                                              "headers": {"authorization": "PRIVATE_AUTH_SENTINEL"}}},
+                       "user_id": "PRIVATE_USER_SENTINEL"}).encode()
+    calls = []
+
+    class Served:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, limit):
+            return json.dumps(served).encode()
+
+    def fake_urlopen(request, timeout):
+        payload = json.loads(request.data)
+        calls.append(payload["model"])
+        if payload["model"] == OPENROUTER_MODEL:
+            raise HTTPError(request.full_url, 404, "Not Found", {}, io.BytesIO(body))
+        assert "models" not in payload
+        return Served()
+
+    monkeypatch.setattr(module, "urlopen", fake_urlopen)
+    _, metadata = synthesize_openrouter(fixture_packet(), api_key="fake")
+    assert calls == [OPENROUTER_MODEL, OPENROUTER_FALLBACK_MODEL]
+    assert metadata["fallback_used"] is True and metadata["attempts"] == 2
+    failure = metadata["primary_failure"]
+    assert failure["model"] == OPENROUTER_MODEL and failure["status"] == 404
+    assert failure["error"]["message"].startswith("No endpoints found")
+    assert failure["error"]["metadata"] == {"provider_name": "Anthropic"}  # only safe provider labels kept
+    # The classifier reads the provider body internally, but no raw/private field is persisted anywhere.
+    for private in ("PRIVATE_RAW_SENTINEL", "PRIVATE_AUTH_SENTINEL", "PRIVATE_USER_SENTINEL"):
+        assert private not in json.dumps(failure) and private not in json.dumps(metadata)
+
+
+@pytest.mark.parametrize("body", [
+    b"<html>404 Not Found</html>",  # unreadable/non-JSON body: classified unknown, never model-unavailable
+    json.dumps({"error": {"code": 404, "message": "Not Found"}}).encode(),  # structured but unrelated 404
+])
+def test_generic_404_fails_closed_without_any_fallback(monkeypatch, body):
+    import importlib
+    import io
+    from urllib.error import HTTPError
+
+    module = importlib.import_module("market_brief.synthesize")
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(json.loads(request.data)["model"])
+        raise HTTPError(request.full_url, 404, "Not Found", {}, io.BytesIO(body))
+
+    monkeypatch.setattr(module, "urlopen", fake_urlopen)
+    with pytest.raises(ValueError, match="OpenRouter HTTP 404"):
+        synthesize_openrouter(fixture_packet(), api_key="fake")
+    assert calls == [OPENROUTER_MODEL]  # a bare/unrelated 404 is not model-unavailable; no Fable 5 fallback
 
 
 @pytest.mark.parametrize("checkpoint,total", [("PREMARKET", 7000), ("OPEN_30M", 4500)])
@@ -266,7 +416,7 @@ def test_transport_failure_makes_one_http_request_and_enables_metadata(monkeypat
         assert request.get_header("X-openrouter-metadata") == "enabled"
         payload = json.loads(request.data)
         assert payload["provider"] == PROVIDER_ROUTE
-        assert payload["models"] == [OPENROUTER_FALLBACK_MODEL]
+        assert "models" not in payload
         assert payload["reasoning"] == {"effort": "low", "exclude": True}
         assert payload["response_format"]["json_schema"]["schema"] == json.loads(
             payload["messages"][1]["content"])["output_schema"]

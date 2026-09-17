@@ -55,6 +55,10 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "anthropic/claude-fable-5.1"
 OPENROUTER_FALLBACK_MODEL = "anthropic/claude-fable-5"
 TRANSIENT_OPENROUTER_STATUS = {408, 429, 500, 502, 503, 504}
+# The one 404 routing condition eligible for a bounded model failover: OpenRouter reports the
+# requested model has no eligible endpoint (the observed production failure, run 35099346593). A
+# bare or otherwise-classified 404 is not this condition and fails closed with no fallback.
+NO_ENDPOINT_404 = re.compile(r"no endpoints found", re.I)
 
 
 def obj(properties):
@@ -229,12 +233,16 @@ def transport_schema(schema):
 
 
 def analyst_model(config=None, environ=None):
-    """Configured analyst identity: one model for every edition, overridable by environment."""
+    """Configured analyst identity: one model for every edition, overridable by environment.
+
+    An environment override (`MARKET_BRIEF_MODEL`) is honored exactly and carries no fallback of its
+    own; the configured `fallback_model` applies only to the configured primary."""
     environ = os.environ if environ is None else environ
     config = config or read_json(ROOT / "config/editions.json")
     configured = config["analyst"]["model"]
     override = environ.get("MARKET_BRIEF_MODEL")
     return dict(model=override or configured, source="environment" if override else "config/editions.json",
+                fallback_model=None if override else config["analyst"].get("fallback_model"),
                 cli_model=config["analyst"].get("cli_model", "sonnet"))
 
 
@@ -355,6 +363,20 @@ class _TransientOpenRouterError(ValueError):
     pass
 
 
+class _ModelUnavailableError(ValueError):
+    """OpenRouter reports the requested model has no eligible endpoint: the explicit "no endpoints
+    found" 404 (never a bare or unrelated 404), a routing failure that precedes any billable
+    generation, and the one condition eligible for a bounded model failover. OpenRouter's own `models`
+    array does not recover from it — a "no endpoints" 404 halts that chain — so failover is made
+    explicitly. Carries the sanitized status and error for truthful provenance."""
+
+    def __init__(self, status, error):
+        self.status = status
+        self.error = error
+        super().__init__(f"OpenRouter HTTP {status}; "
+                         f"diagnostic={canonical({'http_status': status, 'error': error})}")
+
+
 def _openrouter_post(payload, api_key, timeout=180):
     request = Request(OPENROUTER_URL, data=compact_json(payload).encode("utf-8"), headers={
         "Authorization": f"Bearer {api_key}",
@@ -376,10 +398,15 @@ def _openrouter_post(payload, api_key, timeout=180):
     except HTTPError as exc:
         if exc.code in {401, 403}:
             raise ValueError("OpenRouter authentication failed") from None
-        diagnostic = canonical({"http_status": exc.code, "error": _safe_error(exc)})
+        error = _safe_error(exc)  # reads the body once; reused for every diagnostic below
+        diagnostic = canonical({"http_status": exc.code, "error": error})
         if exc.code in TRANSIENT_OPENROUTER_STATUS:
             raise _TransientOpenRouterError(f"OpenRouter transient HTTP {exc.code}; "
                                             f"diagnostic={diagnostic}") from None
+        if exc.code == 404 and _is_model_unavailable(error):
+            # "No endpoints found for <model>": model unavailable before any generation is billed. A
+            # bare or unrelated 404 is not this condition and falls through to fail closed with no fallback.
+            raise _ModelUnavailableError(exc.code, error) from None
         raise ValueError(f"OpenRouter HTTP {exc.code}; diagnostic={diagnostic}") from None
     except (URLError, TimeoutError, OSError, UnicodeError, json.JSONDecodeError):
         raise _TransientOpenRouterError("OpenRouter network or response failure") from None
@@ -403,6 +430,14 @@ def _safe_error(exc, limit=20_000):
         result["metadata"] = {key: metadata[key][:80] for key in ("provider_name", "error_type", "provider_code")
                               if isinstance(metadata.get(key), str)}
     return result or "unknown"
+
+
+def _is_model_unavailable(error):
+    """Classify a 404 as model-unavailable only from the explicit 'no endpoints found' message on the
+    sanitized error; a bare, unreadable, or unrelated 404 is not this condition. Reads the already
+    length-bounded, provider-body-free `_safe_error` output — never the raw response body."""
+    message = error.get("message") if isinstance(error, dict) else None
+    return isinstance(message, str) and bool(NO_ENDPOINT_404.search(message))
 
 
 def _safe_usage(response):
@@ -514,26 +549,44 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     schema = transport_schema(NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile))
     requested_at = datetime.now(timezone.utc).isoformat()
     # No sampling parameters: Fable endpoints advertise none, and require_parameters would otherwise
-    # leave no eligible provider. Bounds are enforced locally, not by the wire schema. Keep this as
-    # one HTTP request: OpenRouter first fails over eligible providers, then Fable 5 if Fable 5.1 is unavailable.
-    fallback_models = [] if analyst["source"] == "environment" else [OPENROUTER_FALLBACK_MODEL]
-    payload = dict(model=analyst["model"], max_tokens=profile["max_output_tokens"],
-                   messages=[{"role": "system", "content": system},
-                             {"role": "user", "content": user}],
-                   plugins=[{"id": "response-healing"}],
-                   provider={"order": ["azure", "anthropic"], "allow_fallbacks": True,
-                             "require_parameters": True},
-                   response_format={"type": "json_schema", "json_schema": {
-                       "name": "market_brief_narrative", "strict": True, "schema": schema}},
-                   reasoning={"effort": profile["reasoning_effort"], "exclude": True})
-    if fallback_models:
-        payload["models"] = fallback_models
-    # A timeout or malformed transport envelope may follow a billable generation.
-    # One application request only, including on transport failure. `sleeper` is retained for callers.
+    # leave no eligible provider. Bounds are enforced locally, not by the wire schema. The provider
+    # order reaches the structured-output endpoint (Anthropic) that a strict json_schema requires.
+    # Every attempt shares this payload; only `model` changes between the primary and any one fallback.
+    base_payload = dict(max_tokens=profile["max_output_tokens"],
+                        messages=[{"role": "system", "content": system},
+                                  {"role": "user", "content": user}],
+                        plugins=[{"id": "response-healing"}],
+                        provider={"order": ["azure", "anthropic"], "allow_fallbacks": True,
+                                  "require_parameters": True},
+                        response_format={"type": "json_schema", "json_schema": {
+                            "name": "market_brief_narrative", "strict": True, "schema": schema}},
+                        reasoning={"effort": profile["reasoning_effort"], "exclude": True})
+    fallback_model = analyst["fallback_model"]
+    # One paid generation per checkpoint. Attempt the configured primary; if and only if OpenRouter
+    # reports it has no eligible endpoint (the explicit "no endpoints found" 404 — a routing failure
+    # before any billing), make one bounded fallback attempt with the configured Fable 5 endpoint. A
+    # bare or unrelated 404, transient 5xx/429, malformed 400, auth, and our own grounding/continuity
+    # rejection downstream all fail closed with no second call —
+    # a billable generation is never retried automatically, so `sleeper` stays unused. Model failover
+    # is kept semantically separate from that transient handling and admits at most one narrative.
+    primary_failure = None
+    requested_model = analyst["model"]
     try:
-        response = requester(payload, api_key)
+        response = requester(dict(base_payload, model=requested_model), api_key)
     except _TransientOpenRouterError as exc:
         raise ValueError(f"OpenRouter transport failure; no automatic paid retry; cause={exc}") from None
+    except _ModelUnavailableError as exc:
+        if not fallback_model:
+            raise ValueError(str(exc)) from None
+        primary_failure = dict(model=requested_model, status=exc.status, error=exc.error)
+        requested_model = fallback_model
+        try:
+            response = requester(dict(base_payload, model=requested_model), api_key)
+        except _TransientOpenRouterError as exc2:
+            raise ValueError(f"OpenRouter transport failure; no automatic paid retry; cause={exc2}") from None
+        except _ModelUnavailableError as exc2:
+            raise ValueError(str(exc2)) from None
+    fallback_used = primary_failure is not None
     narrative = _openrouter_narrative(response)
     try:
         narrative = validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)
@@ -544,17 +597,21 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     choice = (response.get("choices") or [{}])[0]
     finish_reason = choice.get("finish_reason", "unknown") if isinstance(choice, dict) else "unknown"
     provider_route = response.get("provider", "unknown")
-    resolved_model = response.get("model", analyst["model"])
+    resolved_model = response.get("model", requested_model)
+    fallback_suffix = f" fallback<-{primary_failure['model']}" if fallback_used else ""
     if safe_usage:
         print("Synthesis usage: " + " ".join(f"{key}={value}" for key, value in safe_usage.items())
-              + f" finish={finish_reason} provider={provider_route} model={resolved_model}", flush=True)
+              + f" finish={finish_reason} provider={provider_route} model={resolved_model}{fallback_suffix}",
+              flush=True)
     else:
-        print(f"Synthesis usage: unavailable finish={finish_reason} provider={provider_route}", flush=True)
+        print(f"Synthesis usage: unavailable finish={finish_reason} provider={provider_route}{fallback_suffix}",
+              flush=True)
     return narrative, dict(route="openrouter", provider="OpenRouter", model=analyst["model"],
-                           model_source=analyst["source"], fallback_models=fallback_models,
-                           profile=profile["profile"],
+                           model_source=analyst["source"], fallback_model=fallback_model,
+                           fallback_used=fallback_used, primary_failure=primary_failure,
+                           requested_model=requested_model, profile=profile["profile"],
                            max_output_tokens=profile["max_output_tokens"],
-                           reasoning_effort=profile["reasoning_effort"], attempts=1,
+                           reasoning_effort=profile["reasoning_effort"], attempts=2 if fallback_used else 1,
                            input_bytes=len(user.encode()), output_bytes=len(canonical(narrative).encode()),
                            resolved_model=resolved_model, provider_route=provider_route,
                            finish_reason=finish_reason,

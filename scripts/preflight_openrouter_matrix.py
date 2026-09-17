@@ -1,8 +1,8 @@
 import json
 import os
-import string
 import urllib.error
 import urllib.request
+from collections import Counter
 
 from market_brief.context import edition_profile
 from market_brief.synthesize import narrative_schema, transport_schema
@@ -12,93 +12,98 @@ KEY = os.environ["OPENROUTER_API_KEY"]
 MODEL = "anthropic/claude-fable-5.1"
 PROVIDER = {"order": ["anthropic"], "allow_fallbacks": False, "require_parameters": True}
 ACTUAL = transport_schema(narrative_schema(edition_profile("PREMARKET")))
+SCHEMA_LIST_KEYS = ("anyOf", "allOf", "oneOf")
 
 
 def compact(v):
     return json.dumps(v, sort_keys=True, separators=(",", ":"))
 
 
-def strip_descriptions(node):
-    if isinstance(node, dict):
-        return {k: strip_descriptions(v) for k, v in node.items() if k != "description"}
-    if isinstance(node, list):
-        return [strip_descriptions(v) for v in node]
-    return node
-
-
-def property_names(node, found=None):
-    found = set() if found is None else found
-    if isinstance(node, dict):
-        props = node.get("properties")
-        if isinstance(props, dict):
-            found.update(props)
-        for v in node.values():
-            property_names(v, found)
-    elif isinstance(node, list):
-        for v in node:
-            property_names(v, found)
-    return found
-
-
-alphabet = string.ascii_lowercase + string.ascii_uppercase
-names = sorted(property_names(ACTUAL))
-if len(names) > len(alphabet):
-    raise RuntimeError("probe mapper needs more symbols")
-KEYMAP = {name: alphabet[index] for index, name in enumerate(names)}
-
-
-def minify_properties(node):
-    if isinstance(node, list):
-        return [minify_properties(v) for v in node]
+def child_schemas(node):
     if not isinstance(node, dict):
-        return node
-    out = {}
-    for k, v in node.items():
-        if k == "description":
-            continue
-        if k == "properties":
-            out[k] = {KEYMAP[name]: minify_properties(schema) for name, schema in v.items()}
-        elif k == "required":
-            out[k] = [KEYMAP.get(name, name) for name in v]
-        else:
-            out[k] = minify_properties(v)
+        return
+    props = node.get("properties")
+    if isinstance(props, dict):
+        for schema in props.values():
+            if isinstance(schema, dict):
+                yield schema
+    items = node.get("items")
+    if isinstance(items, dict):
+        yield items
+    for key in SCHEMA_LIST_KEYS:
+        values = node.get(key)
+        if isinstance(values, list):
+            for schema in values:
+                if isinstance(schema, dict):
+                    yield schema
+
+
+def count_nodes(node, counts):
+    encoded = compact(node)
+    if len(encoded) >= 100:
+        counts[encoded] += 1
+    for child in child_schemas(node):
+        count_nodes(child, counts)
+
+
+counts = Counter()
+count_nodes(ACTUAL, counts)
+selected = [encoded for encoded, count in counts.items() if count >= 2]
+selected.sort(key=lambda encoded: (-len(encoded), encoded))
+names = {encoded: f"d{index}" for index, encoded in enumerate(selected, 1)}
+
+
+def rewrite_schema(node, *, current=None, root=False):
+    encoded = compact(node)
+    if not root and encoded in names and encoded != current:
+        return {"$ref": f"#/$defs/{names[encoded]}"}
+    out = dict(node)
+    props = node.get("properties")
+    if isinstance(props, dict):
+        out["properties"] = {key: rewrite_schema(schema, current=current) for key, schema in props.items()}
+    items = node.get("items")
+    if isinstance(items, dict):
+        out["items"] = rewrite_schema(items, current=current)
+    for key in SCHEMA_LIST_KEYS:
+        values = node.get(key)
+        if isinstance(values, list):
+            out[key] = [rewrite_schema(schema, current=current) for schema in values]
     return out
 
 
-NO_DESC = strip_descriptions(ACTUAL)
-MINIFIED = minify_properties(ACTUAL)
+FACTORED = rewrite_schema(ACTUAL, root=True)
+if names:
+    FACTORED["$defs"] = {
+        names[encoded]: rewrite_schema(json.loads(encoded), current=encoded)
+        for encoded in selected
+    }
+
 print(json.dumps({
     "actual_bytes": len(compact(ACTUAL)),
-    "no_desc_bytes": len(compact(NO_DESC)),
-    "minified_bytes": len(compact(MINIFIED)),
-    "properties": len(KEYMAP),
+    "factored_bytes": len(compact(FACTORED)),
+    "defs": len(names),
+    "repeated_nodes": {names[e]: counts[e] for e in selected},
 }, sort_keys=True), flush=True)
 
-
-def probe(name, schema):
-    payload = {
-        "model": MODEL,
-        "messages": [{"role": "user", "content": "Return the smallest valid JSON object matching the schema."}],
-        "max_tokens": 2048,
-        "provider": PROVIDER,
-        "response_format": {"type": "json_schema", "json_schema": {
-            "name": "probe", "strict": True, "schema": schema}},
-        "reasoning": {"effort": "low", "exclude": True},
-        "plugins": [{"id": "response-healing"}],
-    }
-    req = urllib.request.Request(URL, data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=120) as response:
-            body = json.loads(response.read().decode("utf-8", errors="replace"))
-            choice = (body.get("choices") or [{}])[0]
-            print(json.dumps({"probe": name, "status": response.status,
-                              "provider": body.get("provider"), "model": body.get("model"),
-                              "finish_reason": choice.get("finish_reason")}, sort_keys=True), flush=True)
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")[:3000]
-        print(json.dumps({"probe": name, "status": exc.code, "body": body}, sort_keys=True), flush=True)
-
-
-probe("no_descriptions", NO_DESC)
-probe("minified_isomorphic", MINIFIED)
+payload = {
+    "model": MODEL,
+    "messages": [{"role": "user", "content": "Return the smallest valid JSON object matching the schema."}],
+    "max_tokens": 2048,
+    "provider": PROVIDER,
+    "response_format": {"type": "json_schema", "json_schema": {
+        "name": "probe", "strict": True, "schema": FACTORED}},
+    "reasoning": {"effort": "low", "exclude": True},
+    "plugins": [{"id": "response-healing"}],
+}
+req = urllib.request.Request(URL, data=json.dumps(payload).encode(),
+    headers={"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"}, method="POST")
+try:
+    with urllib.request.urlopen(req, timeout=120) as response:
+        body = json.loads(response.read().decode("utf-8", errors="replace"))
+        choice = (body.get("choices") or [{}])[0]
+        print(json.dumps({"probe": "valid_factored", "status": response.status,
+                          "provider": body.get("provider"), "model": body.get("model"),
+                          "finish_reason": choice.get("finish_reason")}, sort_keys=True), flush=True)
+except urllib.error.HTTPError as exc:
+    body = exc.read().decode("utf-8", errors="replace")[:3000]
+    print(json.dumps({"probe": "valid_factored", "status": exc.code, "body": body}, sort_keys=True), flush=True)

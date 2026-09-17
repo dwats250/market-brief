@@ -10,7 +10,7 @@ from market_brief.synthesize import narrative_schema, transport_schema
 URL = "https://openrouter.ai/api/v1/chat/completions"
 KEY = os.environ["OPENROUTER_API_KEY"]
 MODEL = "anthropic/claude-fable-5.1"
-PROVIDER = {"order": ["anthropic"], "allow_fallbacks": False, "require_parameters": True}
+PROVIDER = {"order": ["anthropic"], "allow_fallbacks": False}
 ACTUAL_SCHEMA = transport_schema(narrative_schema(edition_profile("PREMARKET")))
 
 
@@ -86,5 +86,5 @@ def probe(name, schema):
         print(json.dumps({"probe": name, "status": exc.code, "body": body}, sort_keys=True), flush=True)
 
 
-probe("strict_tool_inline", ACTUAL_SCHEMA)
-probe("strict_tool_factored", FACTORED_SCHEMA)
+probe("strict_tool_inline_no_require", ACTUAL_SCHEMA)
+probe("strict_tool_factored_no_require", FACTORED_SCHEMA)

@@ -184,8 +184,10 @@ UNSUPPORTED_WIRE_KEYWORDS = ("minLength", "maxLength", "maxItems", "uniqueItems"
 def transport_schema(schema):
     """The provider-compatible shape of the same contract, fully inlined: types, required, enums.
 
-    No `$ref`/`definitions` factoring: the owner ruled out a schema-reference compatibility
-    variable before the first paid verification; the inlined form costs input bytes only."""
+    The prompt advertises this inlined form and the isolated CLI enforces it directly. The OpenRouter
+    `response_format` sends `factored_transport_schema` instead — an isomorphic `$defs`/`$ref` factoring
+    of this same output — because Anthropic's strict-grammar compiler rejects the fully inlined form as
+    too large; the two are proven identical by expanding every local ref back to this schema."""
 
     def describe(node):
         notes = []
@@ -230,6 +232,73 @@ def transport_schema(schema):
         return result
 
     return visit(schema)
+
+
+def factored_transport_schema(schema):
+    """`transport_schema` refactored so Anthropic's strict-grammar compiler accepts it.
+
+    An isomorphic transport representation of `transport_schema`: no field, type, requirement, enum,
+    or validation rule changes. Only genuine schema-valued positions (property values, `items`, and
+    `anyOf`/`allOf`/`oneOf` members) may become local `$ref`s; a `properties` map is never itself
+    replaced. Repeated schema nodes are hoisted into local `$defs` and referenced by
+    `#/$defs/...`, which shrinks the fully inlined form the compiler reported as "too large" while
+    preserving exact validation semantics (expanding every local ref reconstructs `transport_schema`).
+    Only the provider-enforced `response_format` uses this; the prompt keeps the inlined schema.
+    """
+    wire = transport_schema(schema)
+    schema_list_keys = ("anyOf", "allOf", "oneOf")
+    counts = {}
+
+    def children(node):
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            yield from (value for value in properties.values() if isinstance(value, dict))
+        items = node.get("items")
+        if isinstance(items, dict):
+            yield items
+        for key in schema_list_keys:
+            values = node.get(key)
+            if isinstance(values, list):
+                yield from (value for value in values if isinstance(value, dict))
+
+    def count(node):
+        encoded = compact_json(node)
+        if len(encoded) >= 100:  # tiny nodes cost more as a ref than inlined; leave them in place
+            counts[encoded] = counts.get(encoded, 0) + 1
+        for child in children(node):
+            count(child)
+
+    count(wire)
+    # Larger repeated nodes first, so a definition can reference a smaller definition nested inside
+    # it; a node can never contain an identical copy of itself, so the reference graph is acyclic.
+    repeated = sorted((encoded for encoded, occurrences in counts.items() if occurrences >= 2),
+                      key=lambda encoded: (-len(encoded), encoded))
+    names = {encoded: f"d{index}" for index, encoded in enumerate(repeated, 1)}
+
+    def rewrite(node, current=None, root=False):
+        encoded = compact_json(node)
+        # `current` guards a definition's own body from being replaced by a ref to itself.
+        if not root and encoded in names and encoded != current:
+            return {"$ref": f"#/$defs/{names[encoded]}"}
+        result = dict(node)
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            result["properties"] = {key: rewrite(value, current=current)
+                                    for key, value in properties.items()}
+        items = node.get("items")
+        if isinstance(items, dict):
+            result["items"] = rewrite(items, current=current)
+        for key in schema_list_keys:
+            values = node.get(key)
+            if isinstance(values, list):
+                result[key] = [rewrite(value, current=current) for value in values]
+        return result
+
+    factored = rewrite(wire, root=True)
+    if names:
+        factored["$defs"] = {names[encoded]: rewrite(json.loads(encoded), current=encoded)
+                             for encoded in repeated}
+    return factored
 
 
 def analyst_model(config=None, environ=None):
@@ -546,7 +615,11 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     system, user = construct_prompt(packet, full=full, context=context)
     profile = edition_profile(packet["run"]["checkpoint"])
     analyst = analyst_model()
-    schema = transport_schema(NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile))
+    # The provider-enforced schema is the factored equivalent of the inlined schema the prompt
+    # advertises: same contract, small enough for Anthropic's strict-grammar compiler. `schema_hash`
+    # below records exactly this wire form.
+    schema = factored_transport_schema(
+        NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile))
     requested_at = datetime.now(timezone.utc).isoformat()
     # No sampling parameters: Fable endpoints advertise none, and require_parameters would otherwise
     # leave no eligible provider. Bounds are enforced locally, not by the wire schema. The provider is a

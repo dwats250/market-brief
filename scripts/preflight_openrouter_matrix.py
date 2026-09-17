@@ -44,7 +44,7 @@ alphabet = string.ascii_lowercase + string.ascii_uppercase
 names = sorted(property_names(ACTUAL))
 if len(names) > len(alphabet):
     raise RuntimeError("probe mapper needs more symbols")
-KEYMAP = dict(zip(names, alphabet, strict=True))
+KEYMAP = {name: alphabet[index] for index, name in enumerate(names)}
 
 
 def minify_properties(node):

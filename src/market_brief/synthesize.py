@@ -549,14 +549,20 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     schema = transport_schema(NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile))
     requested_at = datetime.now(timezone.utc).isoformat()
     # No sampling parameters: Fable endpoints advertise none, and require_parameters would otherwise
-    # leave no eligible provider. Bounds are enforced locally, not by the wire schema. The provider
-    # order reaches the structured-output endpoint (Anthropic) that a strict json_schema requires.
-    # Every attempt shares this payload; only `model` changes between the primary and any one fallback.
+    # leave no eligible provider. Bounds are enforced locally, not by the wire schema. The provider is a
+    # hard allowlist of exactly one approved endpoint: live OpenRouter endpoint data shows Anthropic
+    # direct is the only Fable 5.1 provider that advertises `structured_outputs` (Azure/Bedrock/Google
+    # carry `response_format` but not strict json_schema), and `require_parameters` treats
+    # `response_format` as a soft preference, so it cannot hold a strict request there on its own.
+    # `order:["anthropic"]` with allow_fallbacks disabled cannot silently escape to an unverified
+    # provider — the 2026-09-17 "Claude Platform on AWS" 400 was such an escape, on Fable 5, under PR
+    # #27's since-removed `models` array. Every attempt shares this payload; only `model` changes
+    # between the primary and any one fallback, so the bounded Fable 5 fallback is pinned identically.
     base_payload = dict(max_tokens=profile["max_output_tokens"],
                         messages=[{"role": "system", "content": system},
                                   {"role": "user", "content": user}],
                         plugins=[{"id": "response-healing"}],
-                        provider={"order": ["azure", "anthropic"], "allow_fallbacks": True,
+                        provider={"order": ["anthropic"], "allow_fallbacks": False,
                                   "require_parameters": True},
                         response_format={"type": "json_schema", "json_schema": {
                             "name": "market_brief_narrative", "strict": True, "schema": schema}},

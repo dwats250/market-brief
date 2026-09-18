@@ -50,7 +50,8 @@ Schema name: `market-brief.narrative.v1`. Fields:
   has text, class OBSERVED or INTERPRETATION, evidence IDs, uncertainty, and an
   alternative if it proposes a causal relationship. Factual tables come from
   the evidence renderer, not freeform model-authored numbers.
-- `attention_ids`: up to three admitted attention records; no invented symbols.
+- `attention`: up to three items, each an admitted attention trigger `id` with a short `why`;
+  the selected IDs are derived from these items, and no invented triggers.
 - `watches`: condition, observable confirmation, contradiction, horizon,
   evidence IDs. Class is always WATCH.
 - `character`: one short paragraph on the session's character with current evidence IDs;

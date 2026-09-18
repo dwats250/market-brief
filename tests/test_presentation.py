@@ -22,7 +22,6 @@ def intraday(symbol, value, observed_at):
 
 def empty_attention_narrative():
     value = narrative()
-    value["attention_ids"] = []
     value["attention"] = []
     return value
 
@@ -280,7 +279,7 @@ def test_carried_watches_and_changes_render_from_the_saved_context():
     profile = edition_profile("OPEN_30M")
     value["summary"] = value["summary"][:1]
     value["watches"] = value["watches"][:1]
-    value["attention_ids"], value["attention"] = value["attention_ids"][:2], value["attention"][:2]
+    value["attention"] = value["attention"][:2]
     value["watch_updates"] = [dict(carried_id="watch-sample-premarket-124500-tue-1", assessment="weakened",
                                    reason="The print turned positive against the premarket read.",
                                    evidence_ids=["SPY-intraday", "premarket:SPY-intraday"])]

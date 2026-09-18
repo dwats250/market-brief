@@ -80,8 +80,8 @@ NARRATIVE_SCHEMA = obj({
     "sections": obj({k: {"type": "array", "items": SECTION_PARAGRAPH,
                          "maxItems": 0 if k == "cuttingboard" else 1}
                      for k in ("macro", "equities", "attention", "cuttingboard", "events")}),
-    "attention_ids": {"type": "array", "items": IDENTIFIER,
-                      "maxItems": 3, "uniqueItems": True},
+    # The one model-owned attention selection: admitted trigger IDs with a reason each. Deterministic
+    # code derives the selected IDs from these items; a second ID list cannot contradict them.
     "attention": {"type": "array", "maxItems": 3, "items": obj({
         "id": IDENTIFIER, "why": text_field(120)})},
     "watches": {"type": "array", "minItems": 1, "maxItems": 3, "items": obj({
@@ -111,7 +111,6 @@ def narrative_schema(profile=None):
         return NARRATIVE_SCHEMA
     schema = json.loads(json.dumps(NARRATIVE_SCHEMA))
     schema["properties"]["summary"]["maxItems"] = profile["summary_paragraphs"]
-    schema["properties"]["attention_ids"]["maxItems"] = profile["attention_items"]
     schema["properties"]["attention"]["maxItems"] = profile["attention_items"]
     schema["properties"]["watches"]["maxItems"] = profile["watches"]
     if profile["profile"] == "light":
@@ -366,11 +365,12 @@ def validate_narrative(narrative, packet, context=None, schema=None):
     if narrative["sections"]["cuttingboard"]:
         raise ValueError("Cuttingboard is quoted only by the deterministic renderer")
     admitted = {a["id"] for a in model_packet(packet)["attention"]}
-    if not set(narrative["attention_ids"]) <= admitted:
+    attention = narrative["attention"]
+    selected = [item["id"] for item in attention]
+    if not set(selected) <= admitted:
         raise ValueError("unknown attention trigger")
-    attention = narrative.get("attention", [])
-    if {item["id"] for item in attention} != set(narrative["attention_ids"]):
-        raise ValueError("attention reasons must match selected triggers")
+    if len(set(selected)) != len(selected):
+        raise ValueError("repeated attention trigger")
     for item in attention:
         if re.search(r"\d", ALLOWED_LABELS.sub("", item["why"])):
             raise ValueError("literal numeric claim in attention reason")

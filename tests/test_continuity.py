@@ -67,8 +67,7 @@ def trimmed(value, profile):
     """A light edition answers with fewer paragraphs, watches, and attention items."""
     value["summary"] = value["summary"][:profile["summary_paragraphs"]]
     value["watches"] = value["watches"][:profile["watches"]]
-    value["attention_ids"] = value["attention_ids"][:profile["attention_items"]]
-    value["attention"] = [a for a in value["attention"] if a["id"] in value["attention_ids"]]
+    value["attention"] = value["attention"][:profile["attention_items"]]
     return value
 
 

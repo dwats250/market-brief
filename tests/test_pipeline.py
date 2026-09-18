@@ -79,7 +79,7 @@ def test_bad_model_output_is_rejected(mutation):
     elif mutation == "placeholder":
         value["summary"][0]["text"] = "Yield is {{treasury-2y}}."
     elif mutation == "attention":
-        value["attention_ids"] = ["invented"]
+        value["attention"] = [dict(id="invented", why="Matters.")]
     else:
         value["sections"]["cuttingboard"] = [value["summary"][0]]
     with pytest.raises(ValueError):

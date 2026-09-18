@@ -28,7 +28,7 @@ def maximum_shape(schema):
             return {k: fill(v, k) for k, v in node["properties"].items()}
         if node.get("type") == "array":
             return [fill(node["items"], key, i) for i in range(node["maxItems"])]
-        if key in {"evidence_ids", "attention_ids", "id", "comparison_id", "carried_id"}:
+        if key in {"evidence_ids", "id", "comparison_id", "carried_id"}:
             return f"previous_close:QQQ-{index}"
         if key == "instruments":
             return ["SPY", "QQQ", "US 2Y", "US 10Y"][index]

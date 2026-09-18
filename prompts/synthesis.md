@@ -65,8 +65,9 @@ Causal hypotheses use tentative language and an alternative explanation. Do not
 claim complete news or event coverage from the narrow official sources.
 
 Write natural prose, less if coverage is thin. No filler to hit a word count.
-Attention: select at most three existing attention IDs and provide a short
-non-recommendational `why`; never create triggers. Watches: one to three, each
+Attention: select at most three existing attention triggers by listing each
+as an `attention` item with its exact admitted `id` and a short
+non-recommendational `why`; an empty list selects none; never create triggers. Watches: one to three, each
 with a condition, observable confirmation, contradiction, and one of the exact
 horizons OPENING_HOUR, SESSION, NEXT_CLOSE, NEXT_BRIEF, or EVENT(<id>) for an
 admitted event. A watch answers: what observable development would materially

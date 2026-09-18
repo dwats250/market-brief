@@ -733,9 +733,10 @@ def interpretation_record(packet, narrative, context=None, app_version="", conte
     context = context or {}
     prior = context.get("prior_state") or {"status": "cold_start", "reason": ""}
     values = dict(evidence_catalog(packet), **prior_values(context))
+    selected = {item["id"] for item in narrative.get("attention", [])}
     attention = [dict(id=a["id"], symbol=a["symbol"], reason=a["reason"], date=a.get("date"),
                       evidence_ids=list(a["evidence_ids"]))
-                 for a in packet.get("attention", []) if a["id"] in narrative.get("attention_ids", [])]
+                 for a in packet.get("attention", []) if a["id"] in selected]
     ids = cited_ids(narrative, attention, prior.get("watches", []))
     evidence = {ident: {key: row[key] for key in INTERPRETATION_FIELDS if key in row}
                 for ident, row in values.items() if ident in ids}

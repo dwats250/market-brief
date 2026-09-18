@@ -78,10 +78,6 @@
       }
     ]
   },
-  "attention_ids": [
-    "attention-NVDA-spread",
-    "attention-XLI-cross"
-  ],
   "attention": [
     {
       "id": "attention-NVDA-spread",

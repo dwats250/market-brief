@@ -33,8 +33,8 @@ The fictional survey is a scheduled observation point. Its result and survey con
 
 - **WATCH · Through the opening hour** — If growth retains its lead after regular trading begins, check whether participation extends beyond the selected mega-cap. Confirm: More independently observed sectors improve on synchronized comparisons. Changes it: The benchmark lead persists while participation narrows. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-NVDA-spread20)
 - **WATCH · Into the close** — Revisit the gold fund and miners on the same return horizon. Confirm: Miners join the metal fund&#x27;s strength. Changes it: Miner weakness persists despite firmness in the gold fund. [evidence](#evidence-GLD-daily) [evidence](#evidence-GDX-daily) [evidence](#evidence-GDX-spread20)
-- **CARRIED WATCH · unresolved · Through the next opening hour** — If growth retains its lead after regular trading begins, check whether participation extends beyond the selected mega-cap. No new session prints since the prior close; the growth-participation question is untested.
-- **CARRIED WATCH · unresolved · Into the next session** — Revisit the gold fund and miners on the same return horizon. The metal fund and miners repeat the prior close&#x27;s observation, so the divergence is untested.
+- **FROM AN EARLIER READ · unresolved · Through the next opening hour** — If growth retains its lead after regular trading begins, check whether participation extends beyond the selected mega-cap. No new session prints since the prior close; the growth-participation question is untested.
+- **FROM AN EARLIER READ · unresolved · Into the next session** — Revisit the gold fund and miners on the same return horizon. The metal fund and miners repeat the prior close&#x27;s observation, so the divergence is untested.
 - **NVDA** — NVDA&#x27;s relative leadership matters because it tests whether growth participation extends beyond the broad benchmark. (20-session spread vs QQQ · Fri, Sep 4) [evidence](#evidence-NVDA-spread20)
 - **Industrials · XLI** — XLI&#x27;s moving-average transition matters because cyclical participation can confirm or weaken the growth-led map. (Crossed above its 50DMA · Fri, Sep 4) [evidence](#evidence-XLI-sma50) [evidence](#evidence-XLI-close)
 - **Event** — Fictional manufacturing survey · Tuesday, Sep 8 · 7:00 AM PT · during session [evidence](#evidence-sample-event)
@@ -53,7 +53,11 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 ## Macro & rates
 
-The front-end move was -4.00 bp, against +1.00 bp at the longer end. Calling that simply lower rates would hide the curve&#x27;s divergence. The gold fund and miners also moved in opposite directions. [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change) [evidence](#evidence-GLD-daily) [evidence](#evidence-GDX-daily) These are dated daily observations, not evidence of a premarket reaction. Different duration exposure and company-specific effects may explain some of the contrast.
+The front-end move was -4.00 bp, against +1.00 bp at the longer end. Calling that simply lower rates would hide the curve&#x27;s divergence. The gold fund and miners also moved in opposite directions. [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change) [evidence](#evidence-GLD-daily) [evidence](#evidence-GDX-daily)
+
+Caveat: These are dated daily observations, not evidence of a premarket reaction.
+
+Could also be: Different duration exposure and company-specific effects may explain some of the contrast.
 
 **TREASURY PAR YIELDS** · Fri, Sep 4
 
@@ -93,7 +97,7 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 A fictional prior-close map, with no current premarket prices or broad-market breadth.
 
-- Not automated: BEA calendar, Fed calendar, live yields, DXY, USDJPY, crude futures, gold/silver futures, SLV history, VIX, comprehensive breadth, automated earnings, general news search
+- Not collected: BEA calendar, Fed calendar, live yields, DXY, USDJPY, crude futures, gold/silver futures, SLV history, VIX, comprehensive breadth, automated earnings, general news search
 - [Fictional equity closes](<https://example.invalid/sample-prices>) · price · AVAILABLE · retrieved 2026-09-08T12:45:00+00:00
 - [Fictional daily yields](<https://example.invalid/sample-rates>) · economic\_series · AVAILABLE · retrieved 2026-09-08T12:45:00+00:00
 - [Fictional bls schedule](<https://example.invalid/bls>) · calendar · AVAILABLE · retrieved 2026-09-08T12:45:00+00:00
@@ -235,6 +239,6 @@ Calendar: checked
 Basis: Premarket · prior close · Treasury prior-close/current as available · current prints unavailable · breadth available. Previous-close / dated context only; no timestamped current prints.
 Continuity: available
 
-Cuttingboard: generated 2026-09-08T12:20:00+00:00; captured 2026-09-08T13:00:00+00:00; schema v2
+Cuttingboard: generated 2026-09-08T12:20:00+00:00 · captured 2026-09-08T13:00:00+00:00 · schema v2
 
 Model-assisted interpretation; factual rows are deterministic.

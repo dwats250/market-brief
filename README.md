@@ -16,7 +16,7 @@ It produces one rich premarket brief, one interpretive update after the open, th
 
 Checkpoint timing is anchored to the NYSE session, including holidays and early closes. Pacific time is presentation only.
 
-After a synthesis is accepted, its interpretation is frozen in continuity. Later deterministic updates can refresh observed values, tables, clocks, flags, and horizon state, but they do not call the analyst or rewrite the accepted prose. Pages therefore carry separate **Interpretation as of** and **Data as of** clocks, plus the scheduler's next update.
+After a synthesis is accepted, its interpretation is frozen in continuity. Later deterministic updates can refresh observed values, tables, clocks, flags, and horizon state, but they do not call the analyst or rewrite the accepted prose. A carried page therefore names both clocks in its one clock line, **Analysis anchored** (the interpretation) and **Observed record refreshed** (this run), plus the scheduler's next update; a synthesis page reads **As of**. Each row keeps its own observation clock.
 
 ## Product principles
 

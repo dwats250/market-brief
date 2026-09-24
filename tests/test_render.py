@@ -120,7 +120,8 @@ def test_compact_equity_rows_use_current_observation_and_human_labels():
     assert row["label"] == "Energy"
     assert row["today"]["display"] == "+0.55 %"
     assert row["today"]["observed"] == "Tuesday, Sep 8 · 10:30 AM PT"
-    assert measure_label(rows[0]) == "XLE · Intraday vs prior close"
+    session = dict(open="2026-09-08T13:30:00+00:00", close="2026-09-08T20:00:00+00:00")
+    assert measure_label(rows[0], session) == "XLE · Intraday vs prior close"
 
 
 def test_render_deemphasizes_provenance_and_epistemic_boilerplate():

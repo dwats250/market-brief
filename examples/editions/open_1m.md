@@ -1,12 +1,10 @@
 # Growth has the lead. Confirmation is still missing.
 
 SAMPLE · Opening refresh · Tuesday, Sep 8
-Interpretation as of 6:00 AM PT · Data as of 6:31 AM PT · Next update · 7:00 AM PT · interpretation
+Analysis anchored 6:00 AM PT · Observed record refreshed 6:31 AM PT · Next update · 7:00 AM PT · interpretation
 > FICTIONAL SAMPLE / REPLAY — not current market facts.
 
 **INTERPRETATION — MIXED** · A growth-led, mixed fictional map: the benchmark edge sits with QQQ while the curve and metals send conflicting signals. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change)
-
-A fictional prior-close map, with no current premarket prices or broad-market breadth.
 
 In this fictional sample, growth has an edge over the broad equity benchmark. QQQ finished ahead of SPY, while the selected mega-cap&#x27;s longer-window advance was stronger still. That is a useful place to start an opening watch, while breadth remains unmeasured. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-NVDA-spread20)
 
@@ -16,9 +14,9 @@ The useful tension is beneath the headline: front-end yields eased while the lon
 
 | Measure | Observation | As of |
 |---|---:|---|
-| SPY · intraday vs prior close | -0.53 % | Tuesday, Sep 8 · 6:31 AM PT · AVAILABLE [evidence](#evidence-SPY-intraday) |
-| QQQ · intraday vs prior close | -0.61 % | Tuesday, Sep 8 · 6:31 AM PT · AVAILABLE [evidence](#evidence-QQQ-intraday) |
-| XLI · intraday vs prior close | +0.40 % | Tuesday, Sep 8 · 6:31 AM PT · AVAILABLE [evidence](#evidence-XLI-intraday) |
+| SPY · Intraday vs prior close | -0.53 % | Tuesday, Sep 8 · 6:31 AM PT · AVAILABLE [evidence](#evidence-SPY-intraday) |
+| QQQ · Intraday vs prior close | -0.61 % | Tuesday, Sep 8 · 6:31 AM PT · AVAILABLE [evidence](#evidence-QQQ-intraday) |
+| XLI · Intraday vs prior close | +0.40 % | Tuesday, Sep 8 · 6:31 AM PT · AVAILABLE [evidence](#evidence-XLI-intraday) |
 
 ## What changed
 
@@ -48,7 +46,11 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 ## Macro & rates
 
-The front-end move was -4.00 bp, against +1.00 bp at the longer end. Calling that simply lower rates would hide the curve&#x27;s divergence. The gold fund and miners also moved in opposite directions. [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change) [evidence](#evidence-GLD-daily) [evidence](#evidence-GDX-daily) These are dated daily observations, not evidence of a premarket reaction. Different duration exposure and company-specific effects may explain some of the contrast.
+The front-end move was -4.00 bp, against +1.00 bp at the longer end. Calling that simply lower rates would hide the curve&#x27;s divergence. The gold fund and miners also moved in opposite directions. [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change) [evidence](#evidence-GLD-daily) [evidence](#evidence-GDX-daily)
+
+Caveat: These are dated daily observations, not evidence of a premarket reaction.
+
+Could also be: Different duration exposure and company-specific effects may explain some of the contrast.
 
 **TREASURY PAR YIELDS** · Fri, Sep 4
 
@@ -86,9 +88,7 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 ## Sources & coverage
 
-A fictional prior-close map, with no current premarket prices or broad-market breadth.
-
-- Not automated: BEA calendar, Fed calendar, live yields, DXY, USDJPY, crude futures, gold/silver futures, SLV history, VIX, comprehensive breadth, automated earnings, general news search
+- Not collected: BEA calendar, Fed calendar, live yields, DXY, USDJPY, crude futures, gold/silver futures, SLV history, VIX, comprehensive breadth, automated earnings, general news search
 - [Fictional equity closes](<https://example.invalid/sample-prices>) · price · AVAILABLE · retrieved 2026-09-08T12:45:00+00:00
 - [Fictional daily yields](<https://example.invalid/sample-rates>) · economic\_series · AVAILABLE · retrieved 2026-09-08T12:45:00+00:00
 - [Fictional bls schedule](<https://example.invalid/bls>) · calendar · AVAILABLE · retrieved 2026-09-08T12:45:00+00:00
@@ -242,6 +242,6 @@ Calendar: checked
 Basis: Open +1M · prior close · Treasury prior-close/current as available · current prints available · breadth available. Timestamped intraday observations available; see individual clocks.
 Continuity: cold\_start — same-session continuity unavailable: premarket: absent; latest: absent
 
-Cuttingboard: generated 2026-09-08T12:20:00+00:00; captured 2026-09-08T13:31:00+00:00; schema v2
+Cuttingboard: generated 2026-09-08T12:20:00+00:00 · captured 2026-09-08T13:31:00+00:00 · schema v2
 
 Model-assisted interpretation; factual rows are deterministic.

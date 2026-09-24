@@ -7,6 +7,9 @@ from test_pipeline import fixture_packet, narrative
 
 from market_brief.render import change_column, compact_equity_rows, measure_label, presentation, render
 
+# Tuesday 2026-09-08's regular session, as `packet["run"]["session"]` carries it.
+SESSION = dict(open="2026-09-08T13:30:00+00:00", close="2026-09-08T20:00:00+00:00")
+
 
 def utc(value):
     return datetime.fromisoformat(value).astimezone(timezone.utc)
@@ -29,8 +32,8 @@ def empty_attention_narrative():
 # 3. Rows carry their instrument: name first, ticker muted.
 def test_rows_name_their_instrument_with_the_ticker_muted():
     row = intraday("GLD", -1.74, "2026-09-08T19:59:00+00:00")
-    assert measure_label(row) == "GLD · Intraday vs prior close"
     packet = packet_at(utc("2026-09-08T20:03:00+00:00"))
+    assert measure_label(row, packet["run"]["session"]) == "GLD · Intraday vs prior close"
     packet["observations"].append(row)
     _, page = render(packet, narrative())
     assert '<b>Gold fund</b><span class="ticker">GLD</span>' in page
@@ -47,8 +50,9 @@ def test_empty_sections_are_omitted_and_consolidated():
     assert "No admitted observations in this section" not in page
     assert "No admitted observations in this section" not in md
     assert "<h3>" not in page.split("What matters next", 1)[1].split("</section>", 1)[0]
+    # Optional Cuttingboard context is not market coverage: its absence is not listed as an omission.
     limitations = page.split("Coverage limitations", 1)[1].split("</details>", 1)[0]
-    assert "Cuttingboard" in limitations
+    assert "Cuttingboard" not in limitations and "No admitted material" not in limitations
 
 
 def test_populated_sections_still_render_in_reading_order():
@@ -75,7 +79,9 @@ def test_mega_cap_rows_do_not_repeat_the_symbol_as_a_sublabel():
 def test_shared_observation_times_collapse_to_one_as_of():
     rows = compact_equity_rows([intraday("XLI", -0.47, "2026-09-08T19:59:00+00:00"),
                                 intraday("XLE", 1.09, "2026-09-08T20:02:00+00:00")], ["XLI", "XLE"])
-    assert change_column(rows) == ("Intraday vs prior close", "as of 1:02 PM PT")
+    # XLE's 1:02 PM PT print is after the 1:00 PM PT close, so the two prints span phases: the caption names
+    # the latest trade, never "Intraday" for an after-hours print. The shared clock still collapses.
+    assert change_column(rows, session=SESSION) == ("Latest trade vs prior close", "as of 1:02 PM PT")
     assert all(row["today"]["observed"] == "" for row in rows)
     assert change_column([]) == ("Change", None)
 
@@ -110,7 +116,7 @@ def test_divergent_observation_times_stay_on_exception_rows_only():
     history = [row for row in packet["derived"] if row["topic"] == "XLI"]
     quiet_history = [dict(row, id=row["id"].replace("XLI", "XLK"), topic="XLK") for row in history]
     rows = compact_equity_rows([*packet["observations"], *history, *quiet_history], ["XLI", "XLE", "XLK"])
-    label, asof = change_column(rows)
+    label, asof = change_column(rows, session=packet["run"]["session"])
     quiet = next(row for row in rows if row["symbol"] == "XLK")
     assert label == "Intraday vs prior close" and asof == "as of 12:59 PM PT"
     assert quiet["today"]["display"] == "no print" and quiet["today"]["absent"]
@@ -169,7 +175,7 @@ def test_chips_use_horizon_neutral_label_for_current_prints():
     packet = packet_at(utc("2026-09-08T20:03:00+00:00"))
     chips = presentation(packet, narrative())["chips"]
     spy = next(chip for chip in chips if chip["id"] == "SPY-intraday")
-    assert spy["metric_label"] == "intraday vs prior close"
+    assert spy["metric_label"] == "Intraday vs prior close"  # the print is from 12:59 PM PT, inside the session
     treasury = next(chip for chip in chips if chip["id"] == "treasury-2y-change")
     assert treasury["metric_label"] == "daily yield change"
     _, page = render(packet, narrative())
@@ -291,9 +297,10 @@ def test_carried_watches_and_changes_render_from_the_saved_context():
     assert "<h2>What changed</h2><p class=\"sub\">vs premarket</p>" in page
     assert "SPY moved from -0.53 % to +0.21 % since the premarket." in page
     # An active carried watch still exposes its horizon, in sentence case, beside its assessment.
-    assert '<span class="meta">Carried · weakened · into the close</span>' in page
-    assert "CARRIED WATCH" not in page.split("<script>", 1)[0]
-    assert "## What changed · vs premarket" in md and "CARRIED WATCH · weakened · Into the close" in md
+    assert '<span class="meta">From an earlier read · weakened · into the close</span>' in page
+    assert "CARRIED WATCH" not in page.split("<script>", 1)[0] and "Carried ·" not in page
+    assert "## What changed · vs premarket" in md and "FROM AN EARLIER READ · weakened · Into the close" in md
+    assert "CARRIED WATCH" not in md
 
 
 def test_markdown_tables_keep_shared_clocks_out_of_header_rows():
@@ -322,7 +329,7 @@ def test_provisional_session_ending_prints_are_labeled_in_the_brief():
         packet["observations"].append(row)
     finalize_coverage(packet)
     view = presentation(packet, narrative())
-    assert view["sectors"]["change_label"] == "Session-ending print vs prior close · provisional"
+    assert view["sectors"]["change_label"] == "Near-close vs prior close · provisional"
     assert view["chips"][0]["status"] == "PROVISIONAL"
     md, page = render(packet, narrative())
     figures = page.split('<div class="figures">', 1)[1].split("</div></div>", 1)[0]

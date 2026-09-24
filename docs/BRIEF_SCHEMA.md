@@ -33,9 +33,10 @@ for the two synthesis checkpoints (rich premarket, light opening structure). Det
 checkpoints (open +1M, hourly refreshes, close snapshot) render the last accepted synthesis from
 its frozen interpretation record (`market-brief.continuity.v1`, kind `interpretation`: the
 narrative, every cited row at the values the analyst saw, the prior state it assessed, resolved
-horizons, selected triggers) under this run's observed record. The header therefore carries two
-clocks, "Interpretation as of" and "Data as of", and the scheduler's next update; the "What
-changed" heading carries a sub-caption naming the anchors.
+horizons, selected triggers) under this run's observed record. The header's one clock line therefore
+names two clocks, "Analysis anchored" (the interpretation) and "Observed record refreshed" (this run),
+and the scheduler's next update; a synthesis edition reads "As of". Each row keeps its own observation
+clock. The "What changed" heading carries a sub-caption naming the anchors.
 
 ## Narrative record
 

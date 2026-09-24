@@ -61,7 +61,14 @@ def test_reader_metric_labels_come_from_metric_metadata():
     assert reader_metric_label(dict(metric="fifty-session average")) == "50-session average"
     assert reader_metric_label(dict(metric="distance from 50DMA")) == "vs 50DMA"
     assert reader_metric_label(dict(metric="relative to SPY")) == "vs SPY · 20 sessions"
-    assert reader_metric_label(dict(metric="premarket return", frequency="intraday")) == "Premarket vs prior close"
+    # A current print's label comes from its own clock against the session: without either it is only the
+    # latest trade; the metric string (`premarket return`) is identity and never the label.
+    assert reader_metric_label(dict(metric="premarket return", frequency="intraday")) == "Latest trade vs prior close"
+    session = dict(open="2026-09-08T13:30:00+00:00", close="2026-09-08T20:00:00+00:00")
+    before_open = dict(metric="premarket return", frequency="intraday", observed_at="2026-09-08T12:58:00+00:00")
+    assert reader_metric_label(before_open, session) == "Premarket vs prior close"
+    assert reader_metric_label(dict(before_open, observed_at="2026-09-08T14:00:00+00:00"), session) \
+        == "Intraday vs prior close"
     assert reader_metric_label(dict(metric="daily par yield")) == "Daily par yield"
     assert reader_metric_label(dict(metric="daily yield change")) == "Daily change"
 

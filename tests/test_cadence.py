@@ -183,8 +183,8 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.calls == ["PREMARKET"]
     opening = day.page("OPEN_1M")
     assert "LIVE · Opening refresh · Tuesday, Sep 8" in opening
-    assert "Interpretation as of 6:00 AM PT · Data as of 6:31 AM PT · Next update · 7:00 AM PT · interpretation" \
-        in opening
+    assert ("Analysis anchored 6:00 AM PT · Observed record refreshed 6:31 AM PT · Next update · 7:00 AM PT · "
+            "interpretation") in opening
     assert interpretation_fragments(opening)[0] == interpretation_fragments(premarket)[0]
     bundle = day.bundle()
     assert bundle["interpretation"]["content_hash"] == premarket_interpretation  # never rewritten by a refresh
@@ -219,8 +219,8 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.run(f"{TUE}T18:00:00+00:00", "HOURLY_1400") == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]
     ten, eleven = day.page("HOURLY_1300"), day.page("HOURLY_1400")
-    assert "Interpretation as of 7:01 AM PT · Data as of 10:00 AM PT · Next update · 11:00 AM PT" in ten
-    assert "Interpretation as of 7:01 AM PT · Data as of 11:00 AM PT · Next update · 12:00 PM PT" in eleven
+    assert "Analysis anchored 7:01 AM PT · Observed record refreshed 10:00 AM PT · Next update · 11:00 AM PT" in ten
+    assert "Analysis anchored 7:01 AM PT · Observed record refreshed 11:00 AM PT · Next update · 12:00 PM PT" in eleven
     assert interpretation_fragments(ten) == interpretation_fragments(structure)
     assert interpretation_fragments(eleven) == interpretation_fragments(ten)
     assert ten != eleven  # the observed record moved: clocks, tables, ledger
@@ -242,8 +242,8 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.calls == ["PREMARKET", "OPEN_30M"]
     close = day.page("CLOSE_1M")
     assert "LIVE · Close snapshot · Tuesday, Sep 8" in close
-    assert "Interpretation as of 7:01 AM PT · Data as of 1:03 PM PT · Next update · Wed, Sep 9 · 6:00 AM PT premarket" \
-        in close
+    assert ("Analysis anchored 7:01 AM PT · Observed record refreshed 1:03 PM PT · Next update · Wed, Sep 9 · "
+            "6:00 AM PT premarket") in close
     assert interpretation_fragments(close)[:2] == interpretation_fragments(structure)[:2]
     assert "horizon passed" in close  # the 7:00 watches ran into the close, which has now happened
     assert (day.folder("CLOSE_1M") / "session_handoff.json").exists()
@@ -344,7 +344,7 @@ def test_a_replayed_refresh_never_reaches_the_analyst_and_dates_its_sample_inter
     page = (folder / "brief.html").read_text()
     assert "SAMPLE · Hourly refresh" in page and "FICTIONAL SAMPLE" in page
     # The fixture is targeted before its premarket slot, so the sample interpretation keeps the data's clock.
-    assert "Interpretation as of 5:45 AM PT · Data as of 5:45 AM PT" in page
+    assert "Analysis anchored 5:45 AM PT · Observed record refreshed 5:45 AM PT" in page
     metadata = json.loads((folder / "metadata.json").read_text())
     assert metadata["synthesis"] == dict(kind="refresh", calls=0)
     assert metadata["interpretation"]["run_id"] == "sample-premarket-fixture"
@@ -413,7 +413,7 @@ def test_a_failed_opening_structure_synthesis_leaves_refreshes_on_the_premarket_
     assert day.bundle()["interpretation"]["content_hash"] == premarket  # a rejected synthesis freezes nothing
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
     page = day.page("HOURLY_1300")
-    assert "Interpretation as of 6:00 AM PT · Data as of 10:00 AM PT" in page
+    assert "Analysis anchored 6:00 AM PT · Observed record refreshed 10:00 AM PT" in page
     assert "Interpretation: PREMARKET" in page.split("Technical details", 1)[1]
     assert day.metadata("HOURLY_1300")["interpretation"]["checkpoint"] == "PREMARKET"
     assert day.calls == ["PREMARKET", "OPEN_30M"]  # the refresh did not retry the analyst
@@ -469,7 +469,7 @@ def test_a_placeholder_inside_a_watch_survives_synthesis_refreshes_the_close_and
     assert today != "+0.06 %" and today.startswith("+2.")
     assert "holds its +0.06 % daily gain" in page and "{{" not in page  # the carried criterion did not drift
     assert f"keeps its {today} daily gain" in page  # the newly accepted watch quotes the new value
-    assert '<span class="meta">Carried · unresolved' in page
+    assert '<span class="meta">From an earlier read · unresolved' in page
     context = json.loads((day.folder("PREMARKET", "2026-09-09") / "analyst_context.json").read_text())
     carried = next(w for w in context["prior_state"]["watches"] if w["id"] == carried_id)
     assert carried["values"]["SPY-daily"]["value"] == pytest.approx(0.06, abs=0.005)

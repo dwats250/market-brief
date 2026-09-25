@@ -14,6 +14,7 @@ import pytest
 from test_cadence import TUE, Day
 from test_history_admission import packet_at, utc
 from test_pipeline import fixture_packet, narrative
+from test_render import clock_lines
 
 from market_brief import cli
 from market_brief.continuity import interpretation_record
@@ -572,26 +573,32 @@ def day(monkeypatch, tmp_path):
     return Day(monkeypatch, tmp_path)
 
 
-def clock_lines(page):
-    return re.findall(r'<div class="clocks">(.*?)</div>', page)
-
-
 def brief_md(day, checkpoint):
     return (day.folder(checkpoint) / "brief.md").read_text()
 
 
-def test_j_a_carried_page_names_the_analysis_clock_and_the_refresh_clock_in_one_line(day):
+def md_clocks(text):
+    return [line[2:] for line in text.splitlines()[4:8] if line.startswith("- ")]
+
+
+def test_j_a_each_header_clock_says_what_it_measures(day):
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
     assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
     structure, refresh = day.page("OPEN_30M"), day.page("HOURLY_1300")
-    assert clock_lines(structure) == ["As of 7:01 AM PT · Next update · 8:00 AM PT"]
-    carried = ("Analysis anchored 7:01 AM PT · Observed record refreshed 10:00 AM PT · Next update · 11:00 AM PT")
-    assert clock_lines(refresh) == [carried]  # exactly one clock element
-    assert brief_md(day, "HOURLY_1300").splitlines()[3] == carried
-    assert brief_md(day, "OPEN_30M").splitlines()[3] == "As of 7:01 AM PT · Next update · 8:00 AM PT"
+    both = ["Prices & analysis · 7:01 AM PT · opening structure", "Next · 8:00 AM PT · price refresh"]
+    carried = ["Prices · 10:00 AM PT", "Analysis · 7:01 AM PT · opening structure",
+               "Next · 11:00 AM PT · price refresh"]
+    assert clock_lines(structure) == both and clock_lines(refresh) == carried
+    assert structure.count('<dl class="clocks">') == refresh.count('<dl class="clocks">') == 1
+    # The Markdown rendition carries the same clock lines under the date.
+    assert brief_md(day, "HOURLY_1300").splitlines()[2] == "Tuesday, Sep 8"
+    assert md_clocks(brief_md(day, "HOURLY_1300")) == carried and md_clocks(brief_md(day, "OPEN_30M")) == both
     for page in (structure, refresh, brief_md(day, "HOURLY_1300"), brief_md(day, "OPEN_30M")):
         assert "Interpretation as of" not in page and "Data as of" not in page
+        assert "Analysis anchored" not in page and "Observed record refreshed" not in page
+    # Only the Prices line is the anchor.
+    assert refresh.count('class="clock anchor"') == 1 and '<div class="clock anchor"><dt>Prices</dt>' in refresh
     # The scheduler's idempotency markers are unchanged.
     assert f'data-session-date="{TUE}" data-checkpoint="HOURLY_1300"' in refresh
     assert f'data-session-date="{TUE}" data-checkpoint="OPEN_30M"' in structure

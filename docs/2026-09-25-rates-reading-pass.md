@@ -670,7 +670,7 @@ Baseline at 14670b0: 474 passed, ruff clean. Tests-first for S1–S2 (new behavi
 - [x] **S4 · R9 module, R7 reader phrasing, SVG.** `render.py` rates view model (caption per freshness, four-tenor table,
   spread lines, curve move, notes, inline SVG with ghost), template + Markdown; proof extended to 30Y and spreads.
   Tests: `tests/test_rates_module.py` (order, phrasing incl. inverted/flip, stale suppression, SVG geometry).
-- [ ] **S5 · R1 header, R2 overdue.** Masthead date, Prices/Analysis/Next block (combined synthesis line), non-LIVE
+- [x] **S5 · R1 header, R2 overdue.** Masthead date, Prices/Analysis/Next block (combined synthesis line), non-LIVE
   status line only, "What changed … through the … analysis", Markdown clock lines; `data-next-at` + grace constant +
   IIFE check. Update pinned header strings (`test_cadence`, `test_render`, `test_reader_truth`).
 - [ ] **S6 · R3 typography, R4 palette, R5 § evidence.** CSS sizes/spacing/`--rule-strong`, "What changed" section,

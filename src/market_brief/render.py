@@ -104,6 +104,12 @@ NOT_APPLICABLE = "—"
 NOT_COLLECTED = "not collected"
 # Rows whose print is this far behind the table's shared clock carry their own clock.
 SHARED_CLOCK_TOLERANCE = timedelta(minutes=5)
+# The header's three clocks. The interpretation is named by the synthesis edition that wrote it.
+EDITION_WORDS = {"PREMARKET": "premarket", "OPEN_30M": "opening structure"}
+NEXT_WORDS = {"synthesis": "analysis update", "close": "close snapshot", "refresh": "price refresh"}
+# A page whose next scheduled update is this late says so in the reader's browser (no server change): publishes land a
+# few minutes after their checkpoint, so only a real miss (a failed run or a legitimate no-publish) crosses it.
+OVERDUE_GRACE = timedelta(minutes=15)
 # Deterministic attention triggers, compressed to a short tag; the analyst's sentence is the body.
 TRIGGER_TAGS = (("Material twenty-session return spread versus ", "20-session spread vs "),
                 ("Daily close crossed up through its moving average", "Crossed above its 50DMA"),
@@ -494,16 +500,20 @@ def rates_module(packet, facts, catalog):
                            notes=notes))
 
 
-def next_update_label(info, session_date):
-    """`Next update · 10:00 AM PT`, naming an interpretation or the close snapshot, or the next session."""
+def next_update(info, session_date):
+    """The scheduler's next checkpoint in reader words, its PT display time, and its absolute scheduled time."""
     clock = pacific_time(info["scheduled_at"])
     if info["session_date"] != session_date:
-        return f"Next update · {short_date(info['session_date'])} · {clock} premarket"
-    if info["kind"] == "synthesis":
-        return f"Next update · {clock} · interpretation"
-    if info["kind"] == "close":
-        return f"Next update · {clock} · close snapshot"
-    return f"Next update · {clock}"
+        when, kind = f"{short_date(info['session_date'])} · {clock}", "premarket analysis"
+    else:
+        when, kind = clock, NEXT_WORDS.get(info["kind"], "price refresh")
+    return dict(text=f"{when} · {kind}", when=when, at=info["scheduled_at"])
+
+
+def next_update_label(info, session_date):
+    """`11:00 AM PT · price refresh`, `7:00 AM PT · analysis update`, `1:01 PM PT · close snapshot`, or
+    `Mon, Sep 28 · 6:00 AM PT · premarket analysis`."""
+    return next_update(info, session_date)["text"]
 
 
 def since_caption(anchors):
@@ -783,9 +793,31 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     take = narrative.get("take") or {}
     take = (dict(text=expand(take["text"].strip()), evidence_ids=take["evidence_ids"],
                  refs=refs(take["evidence_ids"])) if take.get("text", "").strip() else None)
-    next_label = next_update_label(next_checkpoint(target, checkpoint), session_date)
-    clocks = (f"Analysis anchored {interpretation_clock} · Observed record refreshed {data_clock}" if carried
-              else f"As of {data_clock}") + f" · {next_label}"
+    # Three clocks, each saying what it measures. Prices: the latest current equity print across the page's tables
+    # (the latest of their own "as of" clocks), else the prior close they are dated to. Analysis: when the carried
+    # interpretation was made, and by which synthesis edition. Next: the scheduler's next checkpoint. The run's
+    # collection time stays in Technical details.
+    table_rows = [*mega_rows, *sector_rows, *metal_rows]
+    prints = [timestamp(row["intraday"]["observed_at"]) for row in table_rows if row["intraday"]["id"]]
+    closes = [row["daily"]["observed_at"] for row in table_rows if row["daily"]["id"]] if daily_today else []
+    prices = (pacific_time(max(prints).isoformat()) if prints
+              else f"prior close {short_date(max(closes))}" if closes else NO_PRINT)
+    edition_word = EDITION_WORDS.get(interpreted.get("checkpoint")) or EDITION_LABELS.get(
+        interpreted.get("checkpoint"), "analysis").removesuffix(" edition").lower()
+    analysis = f"{interpretation_clock} · {edition_word}"
+    upcoming = next_update(next_checkpoint(target, checkpoint), session_date)
+    next_label = upcoming["text"]
+    if not carried and prices == interpretation_clock:
+        # A synthesis edition whose prices and analysis share one clock.
+        clocks = [dict(label="Prices & analysis", text=analysis, anchor=True)]
+    else:
+        clocks = [dict(label="Prices", text=prices, anchor=True), dict(label="Analysis", text=analysis)]
+    clocks.append(dict(label="Next", text=next_label, next_at=upcoming["at"], next_when=upcoming["when"],
+                       grace_minutes=int(OVERDUE_GRACE.total_seconds() // 60)))
+    since_label = since_caption(anchors)
+    if since_label and carried:
+        # A carried page's comparisons end where its analysis was written, not at this refresh.
+        since_label += f" · through the {interpretation_clock} analysis"
     return dict(
         mode=packet["run"]["mode"], status=status, commissioning=commissioning,
         live_commissioning=live_commissioning, checkpoint=checkpoint, kind=kind, carried=carried,
@@ -794,9 +826,11 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
         edition_label=EDITION_LABELS.get(checkpoint, "Market edition"),
         session=packet["run"]["session"], target=packet["run"]["target_time"],
         actual_started_at=actual_started_at,
-        status_line=f"{status} · {EDITION_LABELS.get(checkpoint, 'Market edition')} · "
-                    f"{pacific_time(actual_started_at, True).split(' · ')[0]}",
-        clocks=clocks, data_clock=data_clock, interpretation_clock=interpretation_clock, next_update=next_label,
+        masthead_date=pacific_time(actual_started_at, True).split(" · ")[0],
+        # LIVE is the normal state and says nothing; any other status stays loud, with the edition named once.
+        status_line="" if status == "LIVE" else f"{status} · {EDITION_LABELS.get(checkpoint, 'Market edition')}",
+        clocks=clocks, prices_clock=prices, data_clock=data_clock, interpretation_clock=interpretation_clock,
+        next_update=next_label,
         truth=truth,
         technical=technical, coverage=packet["coverage"], limitations=limitations,
         # The banner's limitation is the analyst's coverage caveat at its own clock. Only the edition that
@@ -810,7 +844,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
         character_refs=refs(narrative["character"]["evidence_ids"]),
         chips=chips, figures=figures,
         summary=[paragraph(p) for p in narrative["summary"]], take=take,
-        since=dict(heading="What changed", label=since_caption(anchors), entries=since_entries, note=since_note,
+        since=dict(heading="What changed", label=since_label, entries=since_entries, note=since_note,
                    status=prior.get("status", "cold_start")),
         next=dict(watches=watches, carried=carried_watches, attention=attention, events=events,
                   paragraphs=[paragraph(p) for key in ("attention", "events") for p in narrative["sections"][key]]),
@@ -851,7 +885,9 @@ def markdown(view):
             blocks.append(f"Could also be: {esc(p['alternative'])}")
         return "\n\n".join(blocks)
 
-    lines = [f"# {esc(view['banner']['title'])}", "", esc(view["status_line"]), esc(view["clocks"])]
+    header = " · ".join(filter(None, (view["status_line"], view["masthead_date"])))
+    lines = [f"# {esc(view['banner']['title'])}", "", esc(header), ""]
+    lines += [f"- {clock['label']} · {esc(clock['text'])}" for clock in view["clocks"]]  # labels are constants
     if view["truth"]:
         lines.append(f"> {esc(view['truth'])}")
     lines += ["", f"**INTERPRETATION — {view['banner']['label']}** · {esc(view['character'])} "

@@ -54,7 +54,7 @@ TAKE = ("The tension is in the curve and metals, not in growth's 20-session lead
 TAKE_IDS = ["treasury-2y-change", "treasury-10y-change", "GDX-spread20", "QQQ-spread20"]
 MISMATCH = "take text and evidence must be both present or both empty"
 # The template's <style> block with the rates module (Rates & Reading Pass); The Take adds no CSS of its own.
-STYLE_SHA256 = "5fe3ca6312e7be581893149e0b3fe742b0b68e1613b903d52c251f4003b57650"
+STYLE_SHA256 = "c83590fec97b66ae4e5a655164d1a1653988e90a4e360cb3265ed2e7141f26b7"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):
@@ -496,7 +496,7 @@ def test_a_legacy_v1_interpretation_frozen_before_the_upgrade_still_refreshes(mo
     assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M") == 0
     assert day.calls == ["PREMARKET"]
     page = day.page("OPEN_1M")
-    assert "The take" not in page and "Analysis anchored 6:00 AM PT" in page
+    assert "The take" not in page and "<dt>Analysis</dt><dd>6:00 AM PT · premarket</dd>" in page
     assert day.metadata("OPEN_1M")["validation"] == "PASS"
     # Continuity is not migrated: the frozen record stays exactly as it was written.
     assert day.bundle()["interpretation"] == bundle["interpretation"]

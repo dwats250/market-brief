@@ -12,7 +12,7 @@ p,.para,.dek,.read,.watch,.flags,.events,.since ul{max-width:700px}
 .masthead{display:flex;justify-content:space-between;align-items:baseline;border-top:4px solid var(--teal);padding-top:12px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 .masthead-title{font-weight:750;color:var(--teal)}
 .status-line{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-top:12px;overflow-wrap:anywhere}
-.clocks{font-size:13px;color:var(--muted);margin-top:5px;overflow-wrap:anywhere}
+.clocks{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 14px;align-items:baseline;margin:14px 0 0;font-size:13px;line-height:1.45;color:var(--muted);font-variant-numeric:tabular-nums}.clocks .clock{display:contents}.clocks dt{font-weight:600}.clocks dd{margin:0;overflow-wrap:anywhere}.clocks .anchor dt,.clocks .anchor dd{color:var(--ink);font-size:15px}.clocks .overdue dd{color:var(--amber)}
 h1{font:500 52px/1.05 Georgia,"Iowan Old Style",Charter,"Times New Roman",serif;letter-spacing:-.02em;max-width:780px;margin:20px 0 18px;overflow-wrap:anywhere;text-wrap:balance}
 h2{font:600 24px/1.2 Georgia,"Iowan Old Style",Charter,"Times New Roman",serif;letter-spacing:-.01em;margin:0 0 12px;text-wrap:balance}
 p,.para{margin:12px 0}
@@ -62,9 +62,9 @@ footer{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-
 {%- endmacro %}
 {% macro table_proof(refs) -%}<details class="cite proof"><summary>View exact values &amp; baselines</summary>{{ proof_lines(refs) }}</details>{%- endmacro %}
 {% macro caption(title, spread_label, change_label, asof) -%}<div class="caption">{{ title }}<span>{% if spread_label %}{{ spread_label }} · {% endif %}{{ change_label }}{% if asof %} · {{ asof }}{% endif %}</span></div>{%- endmacro %}
-<div class="masthead"><b class="masthead-title">Market Brief</b><span>{{ edition_label }}</span></div>
-<div class="status-line">{{ status_line }}</div>
-<div class="clocks">{{ clocks }}</div>
+<div class="masthead"><b class="masthead-title">Market Brief</b><span>{{ masthead_date }}</span></div>
+{% if status_line %}<div class="status-line">{{ status_line }}</div>{% endif %}
+<dl class="clocks">{% for c in clocks %}<div class="clock{% if c.anchor %} anchor{% endif %}"{% if c.next_at %} data-next-at="{{ c.next_at }}" data-next-when="{{ c.next_when }}" data-grace-minutes="{{ c.grace_minutes }}"{% endif %}><dt>{{ c.label }}</dt><dd>{{ c.text }}</dd></div>{% endfor %}</dl>
 {% if truth %}<div class="notice">{{ truth }}</div>{% endif %}
 <h1>{{ banner.title }}</h1>
 <div class="dek"><span class="pill">{{ banner.label }}</span>{{ character }} {{ marker(character_refs) }}</div>
@@ -133,6 +133,20 @@ footer{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-
   };
   window.addEventListener('hashchange', reveal);
   reveal();
+  // A page never claims freshness it no longer has: once the next scheduled update is past its grace period, the
+  // Next line says it has not published, in the page's own PT words. Phones keep tabs open, so check again.
+  const next = document.querySelector('[data-next-at]');
+  if (next) {
+    const due = Date.parse(next.dataset.nextAt) + Number(next.dataset.graceMinutes) * 60000;
+    const overdue = () => {
+      if (next.classList.contains('overdue') || !(Date.now() > due)) return;
+      next.classList.add('overdue');
+      next.querySelector('dd').textContent = `Update due ${next.dataset.nextWhen} has not published`;
+    };
+    overdue();
+    document.addEventListener('visibilitychange', overdue);
+    setInterval(overdue, 60000);
+  }
 })();
 </script>
 </main></body></html>

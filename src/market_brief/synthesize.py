@@ -544,7 +544,8 @@ def _openrouter_post(payload, api_key, timeout=180):
 
 
 def _printable(text, limit):
-    """Provider text made safe to log and save: whitespace becomes one space, other non-printables go, then bounded."""
+    """The provider's message made safe to log and save: whitespace becomes one space, other non-printables go, then
+    bounded."""
     text = "".join(ch if ch.isprintable() else " " if ch.isspace() else "" for ch in text)
     return " ".join(text.split())[:limit]
 
@@ -575,11 +576,13 @@ def _safe_error(exc, limit=20_000):
     result = {}
     if type(code) in (int, float):
         result["code"] = code
+    # OpenRouter's own message and labels keep their original truncation (the no-endpoint classifier reads them);
+    # only lone surrogates, which cannot be saved, are dropped.
     if isinstance(message, str):
-        result["message"] = _printable(message, 300)
+        result["message"] = message[:300].encode("utf-8", "ignore").decode("utf-8")
     if isinstance(metadata, dict):
-        result["metadata"] = {key: _printable(metadata[key], 80) for key in ("provider_name", "error_type",
-                                                                            "provider_code")
+        result["metadata"] = {key: metadata[key][:80].encode("utf-8", "ignore").decode("utf-8")
+                              for key in ("provider_name", "error_type", "provider_code")
                               if isinstance(metadata.get(key), str)}
         detail = _provider_message(metadata.get("raw"))
         if detail:

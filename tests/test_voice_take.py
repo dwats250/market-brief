@@ -300,14 +300,17 @@ def test_a_provider_400_keeps_the_providers_own_bounded_message_and_nothing_else
     assert synthesize._provider_message('{"error": {"message": 5}}') is None
     assert synthesize._provider_message({"error": {"message": ["a"]}}) is None
     assert synthesize._provider_message({"error": {"message": "grammar\ttoo\nlarge"}}) == "grammar too large"
+    assert synthesize._provider_message({"error": {"message": "  a \n\t b  "}}) == "a b"  # runs collapse
     assert synthesize._provider_message("[" * 20000) is None  # nesting past the JSON parser's recursion limit
 
 
 def test_every_provider_error_shape_is_recorded_without_escaping_the_fail_closed_path(monkeypatch):
     import io
     from urllib.error import HTTPError
+    # Under the 20,000-byte read limit, so the deep nesting reaches the provider-message parser itself.
     nested = json.dumps({"error": {"code": 400, "message": "Provider returned error",
-                                   "metadata": {"provider_name": "Anthropic", "raw": "[" * 20000}}})
+                                   "metadata": {"provider_name": "Anthropic", "raw": "[" * 12000}}})
+    assert len(nested) < 20_000
     surrogate = '{"error": {"code": 400, "message": "bad \\ud800 text", "metadata": {"provider_name": "An\\ud800"}}}'
     for body in (nested, "[" * 20000, surrogate):
         def fake_urlopen(request, timeout, body=body):
@@ -316,6 +319,19 @@ def test_every_provider_error_shape_is_recorded_without_escaping_the_fail_closed
         with pytest.raises(ValueError, match="OpenRouter HTTP 400") as exc:
             synthesize_openrouter(fixture_packet(), api_key="secret")
         str(exc.value).encode("utf-8")  # savable: no lone surrogate reaches metadata.json
+
+
+def test_openrouter_labels_keep_their_original_truncation_for_the_no_endpoint_classifier():
+    """Only the provider's own message is whitespace-normalized; OpenRouter's message is truncated as before, so
+    which 404s count as "no endpoints" (and may fall back once) is unchanged."""
+    import io
+    from urllib.error import HTTPError
+    for message, classified in (("No endpoints found for anthropic/claude-fable-5.1", True),
+                                ("No\nendpoints found for x", False), (" " * 400 + "No endpoints found", False)):
+        body = json.dumps({"error": {"code": 404, "message": message}}).encode()
+        error = synthesize._safe_error(HTTPError("u", 404, "x", {}, io.BytesIO(body)))
+        assert error["message"] == message[:300]
+        assert synthesize._is_model_unavailable(error) is classified
 
 
 def test_a_rejected_take_is_one_paid_call_and_no_retry():

@@ -138,14 +138,18 @@ def test_the_prompt_schema_copy_expands_exactly_to_the_inline_transport_schema(c
         sent.append(payload)
         return {"id": "r", "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(narrative())}}]}
 
-    try:
-        synthesize_openrouter(packet, api_key="secret", requester=requester, full=full, context=context)
-    except ValueError:
-        pass  # acceptance of the stand-in narrative is not what this test measures
-    assert len(sent) == 1
-    copy_sent = json.loads(sent[0]["messages"][1]["content"])["output_schema"]
-    enforced = sent[0]["response_format"]["json_schema"]["schema"]
-    assert compact(copy_sent) == compact(enforced) == compact(prompt_schema)
+    # Both call shapes: the CLI's --full-packet run passes its saved context alongside `full`.
+    shapes = [context] if not full else [None, analyst_context(packet, profile)]
+    for supplied in shapes:
+        try:
+            synthesize_openrouter(packet, api_key="secret", requester=requester, full=full, context=supplied)
+        except ValueError:
+            pass  # acceptance of the stand-in narrative is not what this test measures
+    assert len(sent) == len(shapes)
+    for payload in sent:
+        copy_sent = json.loads(payload["messages"][1]["content"])["output_schema"]
+        enforced = payload["response_format"]["json_schema"]["schema"]
+        assert compact(copy_sent) == compact(enforced) == compact(prompt_schema)
     assert prompt_schema.get("$defs")
     assert expand_local_refs(prompt_schema) == transport_schema(contract)
     assert compact(prompt_schema) == compact(factored_transport_schema(contract))

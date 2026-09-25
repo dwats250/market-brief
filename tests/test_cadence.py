@@ -53,7 +53,8 @@ class Day:
         self.calls, self.published, self.narratives = [], [], {}
 
     def run(self, now, checkpoint, *, intraday=True, value=None, mutate=None, last_history_date="2026-09-04",
-            print_at=None, fail_synthesis=False, command="premarket", scale_last_close=None):
+            print_at=None, fail_synthesis=False, command="premarket", scale_last_close=None,
+            prints=(("SPY", -0.53), ("QQQ", -0.61), ("XLI", 0.4))):
         freeze_clock(self.monkeypatch, now)
         raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
         raw["mode"] = "LIVE"
@@ -70,7 +71,7 @@ class Day:
             if "checked_at" in row:
                 row["checked_at"] = now
         if intraday:
-            for symbol, value_ in (("SPY", -0.53), ("QQQ", -0.61), ("XLI", 0.4)):
+            for symbol, value_ in prints:
                 raw["observations"].append(dict(
                     id=f"{symbol}-intraday", topic=symbol, metric="premarket return", value=value_, unit="%",
                     baseline="latest trade versus previous regular close", frequency="intraday",

@@ -64,7 +64,7 @@ footer{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-
 {% if truth %}<div class="notice">{{ truth }}</div>{% endif %}
 <h1>{{ banner.title }}</h1>
 <div class="dek"><span class="pill">{{ banner.label }}</span>{{ character }} {{ marker(character_refs) }}</div>
-<div class="read">{% for p in summary %}<div class="entry{% if not loop.first %} apart{% endif %}">{{ paragraph(p) }}</div>{% endfor %}</div>
+<div class="read">{% for p in summary %}<div class="entry{% if not loop.first %} apart{% endif %}">{{ paragraph(p) }}</div>{% endfor %}{% if take %}<div class="para"><b>The take:</b> {{ take.text }} {{ marker(take.refs) }}</div>{% endif %}</div>
 {% if figures %}<div class="figures">{% for f in figures %}<div class="figure"><span class="eyebrow">{{ f.topic }} · {{ f.metric_label }}</span><strong class="direction-{{ f.direction }}">{{ f.display }}</strong>{% if f.observed_short or f.status == 'PROVISIONAL' %}<small>{{ f.observed_short }}{% if f.status == 'PROVISIONAL' %}{% if f.observed_short %} · {% endif %}provisional{% endif %}</small>{% endif %}</div>{% endfor %}</div>{% endif %}
 {% if coverage.missing_domains %}<p class="notice compact">Missing: {{ coverage.missing_domains|join(' · ') }}.</p>{% endif %}
 {% if since.label and (since.entries or since.note) %}<div class="since"><h2>{{ since.heading }}</h2><p class="sub">{{ since.label }}</p>{% if since.entries %}<ul>{% for item in since.entries %}<li>{% if item.kind == 'change' %}{{ item.text }}{% else %}<b>{{ item.assessment|capitalize }}</b> — {{ item.text }} {{ item.reason }}{% endif %} {{ marker(item.refs) }}</li>{% endfor %}</ul>{% endif %}{% if since.note %}<p class="fine">{{ since.note }}</p>{% endif %}</div>{% endif %}

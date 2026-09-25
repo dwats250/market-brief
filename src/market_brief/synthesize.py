@@ -51,6 +51,9 @@ ALLOWED_LABELS = re.compile(
     r"|50[- ]?[SD]?MAs?|[SD]?MA[- ]?50s?"
     r"|S&P[ -]?500|Nasdaq[- ]100|Russell [12]000|Dow 30)\b", re.IGNORECASE)  # Title Case headlines
 TRADE_LANGUAGE = re.compile(r"\b(entry|target|sizing|buy|sell|execute|execution|order)\b", re.I)
+# The one exemption, for the take only: "sell-off" names a market move, not an instruction. Removed before the
+# trade-language check runs, so "sell" as an action still rejects there.
+SELL_OFF = re.compile(r"\bsell-?offs?\b", re.I)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "anthropic/claude-fable-5.1"
 OPENROUTER_FALLBACK_MODEL = "anthropic/claude-fable-5"
@@ -71,12 +74,16 @@ PARAGRAPH = obj({"text": TEXT, "class": {"enum": ["OBSERVED", "INTERPRETATION"]}
                  "alternative": text_field(100, optional=True)})
 SECTION_PARAGRAPH = obj(dict(PARAGRAPH["properties"], text=text_field(240)))
 NARRATIVE_SCHEMA = obj({
-    "schema_version": {"const": "market-brief.narrative.v1"},
+    "schema_version": {"const": "market-brief.narrative.v2"},
     "mode": {"enum": ["LIVE", "SAMPLE"]},
     "banner": obj({"title": HEADLINE, "label": {"enum": ["RISK-ON", "RISK-OFF", "MIXED", "INDETERMINATE"]},
                    "class": {"const": "INTERPRETATION"}, "evidence_ids": REFS,
                    "limitation": text_field(200)}),
     "summary": {"type": "array", "items": PARAGRAPH, "minItems": 1, "maxItems": 2},
+    # The take: the one interpretation this brief could turn out to be wrong about. Always present, and
+    # empty (no text, no evidence) when the evidence is too thin to commit; never both one and the other.
+    "take": obj({"text": text_field(160, optional=True), "class": {"const": "INTERPRETATION"},
+                 "evidence_ids": {"type": "array", "items": IDENTIFIER, "maxItems": 4, "uniqueItems": True}}),
     "sections": obj({k: {"type": "array", "items": SECTION_PARAGRAPH,
                          "maxItems": 0 if k == "cuttingboard" else 1}
                      for k in ("macro", "equities", "attention", "cuttingboard", "events")}),
@@ -156,6 +163,44 @@ def editorial_notes(narrative, schema):
     if isinstance(title, str) and len(title.split()) > HEADLINE_WORD_TARGET:
         notes.append(dict(path="banner.title", keyword="words", limit=HEADLINE_WORD_TARGET, actual=len(title.split())))
     return sorted(notes, key=lambda note: note["path"])
+
+
+# Voice telemetry: contract and filler words that read as machinery in reader prose. The prompt steers away
+# from them; they are counted per accepted synthesis and never gate acceptance, publication or a retry.
+AVOID_PHRASES = ("admitted", "packet", "notably", "evident", "suggesting", "rather than", "broad but not",
+                 "character")
+AVOID_PATTERNS = {phrase: re.compile(r"\b" + r"\s+".join(map(re.escape, phrase.split())) + r"\b", re.I)
+                  for phrase in AVOID_PHRASES}
+
+
+def reader_prose(narrative):
+    """The analyst's reader-facing sentences. Identifiers, instruments, horizons, labels, classes, modes and the
+    schema version are not prose; neither is anything the renderer writes."""
+    banner, character = narrative["banner"], narrative["character"]
+    paragraphs = [*narrative["summary"], *(p for section in narrative["sections"].values() for p in section)]
+    texts = [banner["title"], banner["limitation"], character["text"]]
+    texts += [p[key] for p in paragraphs for key in ("text", "uncertainty", "alternative")]
+    texts.append((narrative.get("take") or {}).get("text", ""))  # absent from a v1 narrative
+    texts += [item["why"] for item in narrative["attention"]]
+    texts += [w[key] for w in narrative["watches"] for key in ("condition", "confirmation", "contradiction")]
+    texts += [r[key] for r in narrative["relationships"] for key in ("statement", "reason")]
+    texts += [u["reason"] for u in narrative["watch_updates"]] + [c["text"] for c in narrative["changes"]]
+    return texts
+
+
+def style_notes(narrative):
+    """Advisory voice telemetry for one accepted synthesis: observation only, never fatal."""
+    prose = reader_prose(narrative)
+    plain = [TOKEN.sub("", text) for text in prose]
+    counts = {phrase: sum(len(pattern.findall(text)) for text in plain) for phrase, pattern in AVOID_PATTERNS.items()}
+    take = (narrative.get("take") or {}).get("text", "").strip()
+
+    def normalized(text):
+        return " ".join(re.sub(r"[^\w\s]", " ", text.lower()).split())
+    return dict(avoid_phrases=counts, avoid_phrase_total=sum(counts.values()),
+                numeric_placeholders=sum(len(TOKEN.findall(text)) for text in prose),
+                take=dict(present=bool(take), characters=len(take),
+                          repeats_headline=bool(take) and normalized(take) == normalized(narrative["banner"]["title"])))
 
 
 class NarrativeRejected(ValueError):
@@ -328,6 +373,9 @@ def validate_narrative(narrative, packet, context=None, schema=None):
         raise ValueError("sample/live narrative mode mismatch")
     if ";" in narrative["banner"]["title"]:
         raise ValueError("headline must be one claim without a semicolon")
+    take = narrative["take"]
+    if bool(take["text"].strip()) != bool(take["evidence_ids"]):
+        raise ValueError("take text and evidence must be both present or both empty")
     catalog = evidence_catalog(model_packet(packet))
     if context is not None:
         if context.get("evidence_hash") != digest(packet):
@@ -335,7 +383,7 @@ def validate_narrative(narrative, packet, context=None, schema=None):
         shown = supplied_ids(context)
         catalog = {ident: row for ident, row in catalog.items() if ident in shown}
     # Current-condition records cite current evidence only; continuity records may add prior refs.
-    records = [narrative["banner"], *narrative["summary"], *narrative["watches"], narrative["character"]]
+    records = [narrative["banner"], *narrative["summary"], take, *narrative["watches"], narrative["character"]]
     records += [p for section in narrative["sections"].values() for p in section]
     for record in records:
         refs = set(record["evidence_ids"])
@@ -376,6 +424,8 @@ def validate_narrative(narrative, packet, context=None, schema=None):
             raise ValueError("literal numeric claim in attention reason")
         if TRADE_LANGUAGE.search(item["why"]):
             raise ValueError("trade language in attention reason")
+    if TRADE_LANGUAGE.search(SELL_OFF.sub("", take["text"])):
+        raise ValueError("trade language in the take")
     for watch in narrative["watches"]:
         if watch["horizon"].startswith("EVENT("):
             event_id = watch["horizon"][6:-1]

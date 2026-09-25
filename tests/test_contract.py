@@ -97,6 +97,12 @@ def edition_response(profile, context=None):
     for record in records:
         record["evidence_ids"] = [i for i in record["evidence_ids"] if i in shown] or ["SPY-daily"]
     value["relationships"] = [r for r in value["relationships"] if set(r["instruments"]) <= topics]
+    take = value.get("take")
+    if take and take["evidence_ids"]:
+        # The take keeps only supplied rows; with none left it is honestly empty rather than re-pointed.
+        take["evidence_ids"] = [i for i in take["evidence_ids"] if i in shown]
+        if not take["evidence_ids"]:
+            take["text"] = ""
     return value
 
 

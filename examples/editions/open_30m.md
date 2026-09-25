@@ -12,6 +12,8 @@ In this fictional sample, growth has an edge over the broad equity benchmark. QQ
 
 The useful tension is beneath the headline: front-end yields eased while the longer end rose, and the gold fund advanced while miners slipped. Those relationships leave confirmation as the next check rather than a single risk-on story. [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change) [evidence](#evidence-GLD-daily) [evidence](#evidence-GDX-daily)
 
+**The take:** Growth&#x27;s edge rests on one mega-cap, NVDA at +6.39 pp over QQQ, not on broad participation. [evidence](#evidence-NVDA-spread20) [evidence](#evidence-QQQ-spread20)
+
 **OBSERVED SNAPSHOT**
 
 | Measure | Observation | As of |

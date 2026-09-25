@@ -47,6 +47,7 @@ from .synthesize import (
     construct_prompt,
     editorial_notes,
     narrative_schema,
+    style_notes,
     synthesize,
     validate_narrative,
 )
@@ -278,6 +279,8 @@ def run(args):
             for note in notes:
                 print(f"Editorial overshoot kept: {note['path']} {note['keyword']} {note['actual']} > {note['limit']}",
                       flush=True)
+            # Voice telemetry, observation only: it never changes acceptance, publication or the call count.
+            metadata["style"] = style_notes(narrative)
             metadata.update(model_route=model["route"], model=model, narrative_hash=digest(narrative))
             # The accepted response is on disk before anything else can fail; it is paid for.
             write_json(folder / "narrative.json", narrative)

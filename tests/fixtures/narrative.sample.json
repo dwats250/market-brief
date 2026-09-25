@@ -1,5 +1,5 @@
 {
-  "schema_version": "market-brief.narrative.v1",
+  "schema_version": "market-brief.narrative.v2",
   "mode": "SAMPLE",
   "banner": {
     "title": "Growth has the lead. Confirmation is still missing.",
@@ -37,6 +37,14 @@
       "alternative": ""
     }
   ],
+  "take": {
+    "text": "Growth's edge rests on one mega-cap, NVDA at {{NVDA-spread20}} over QQQ, not on broad participation.",
+    "class": "INTERPRETATION",
+    "evidence_ids": [
+      "NVDA-spread20",
+      "QQQ-spread20"
+    ]
+  },
   "sections": {
     "macro": [
       {

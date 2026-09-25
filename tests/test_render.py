@@ -36,7 +36,7 @@ class Page(HTMLParser):
 
 def test_markdown_html_same_facts_mode_and_literal_halt():
     md, page = render(fixture_packet(), narrative())
-    for value in ("FICTIONAL SAMPLE", "HALT", "-4.00 bp", "+1.00 bp", "INTERPRETATION",
+    for value in ("FICTIONAL SAMPLE", "HALT", "\u22124 bp", "+1 bp", "INTERPRETATION",
                   "WATCH", "OBSERVED", "current prints unavailable"):
         assert value in md
         assert value.lower() in page.lower()
@@ -48,7 +48,7 @@ def test_markdown_html_same_facts_mode_and_literal_halt():
     assert 'id="theme-choice"' in page
     assert page.index("What matters next") < page.index("Equity structure") < page.index("Macro &amp; rates")
     assert "direction-positive" in page and "direction-negative" in page
-    assert 'class="number primary direction-neutral">3.86 % yield' in page
+    assert 'class="number primary direction-neutral">3.86%' in page
 
 
 def test_model_html_is_escaped_in_both_formats():

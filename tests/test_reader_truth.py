@@ -553,7 +553,7 @@ def test_i_both_fields_render_caveat_first_each_with_its_own_meaning():
     value = with_macro_paragraph("  These are dated rows, {{treasury-2y-change}} on the 2Y.  ",
                                  "Duration exposure may explain the split. ")
     md, page = render(fixture_packet(), value)
-    expected = [("Caveat", "These are dated rows, -4.00 bp on the 2Y."),
+    expected = [("Caveat", "These are dated rows, \u22124 bp on the 2Y."),
                 ("Could also be", "Duration exposure may explain the split.")]
     assert macro_notes(page, md) == (expected, expected)
     view = presentation(fixture_packet(), value)

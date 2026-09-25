@@ -546,7 +546,9 @@ def test_a_value_that_rounds_to_zero_is_an_unsigned_neutral_zero():
     assert formatted(row) == "0.00 %" and direction(row) == "neutral"
     assert formatted(dict(row, value=0.004)) == "0.00 %" and direction(dict(row, value=0.004)) == "neutral"
     assert formatted(dict(row, value=-0.006)) == "-0.01 %" and direction(dict(row, value=-0.006)) == "negative"
-    assert formatted(dict(row, value=0.0, unit="bp")) == "0.00 bp"
+    # Rates keep the same rule in whole basis points (R6): a change that rounds to zero is an unsigned "0 bp".
+    assert formatted(dict(row, value=0.0, unit="bp")) == "0 bp"
+    assert formatted(dict(row, value=-0.4, unit="bp")) == "0 bp"
 
 
 def contrast(foreground, background):

@@ -256,7 +256,7 @@ def test_treasury_table_pairs_only_compatible_yields_and_changes():
     packet = fixture_packet()
     view = presentation(packet, narrative())
     yields = {row["maturity"]: row for row in view["macro"]["yields"]}
-    assert yields["2Y"]["level"]["display"] == "3.86 % yield" and yields["2Y"]["change"]["display"] == "-4.00 bp"
+    assert yields["2Y"]["level"]["display"] == "3.86%" and yields["2Y"]["change"]["display"] == "\u22124 bp"
     assert view["macro"]["yields_asof"] == "Fri, Sep 4"
     packet = fixture_packet()
     change = next(r for r in packet["observations"] if r["id"] == "treasury-10y-change")

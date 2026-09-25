@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .continuity import interpretation_record
+from .curve import SPREAD_UNIT, bp
 from .evidence import ET, PLACEHOLDER, ROOT, USABLE, evidence_catalog, timestamp
 from .metrics import rank_by_spread
 from .schedule import CHECKPOINT_KINDS, checkpoint_kind, next_checkpoint, session_relation
@@ -63,7 +64,11 @@ SOURCE_KIND_LABELS = {"price": "prices", "quote": "current prints", "economic_se
                       "calendar": "release calendar", "news": "releases"}
 SOURCE_STATUS_LABELS = {"AVAILABLE": "Available", "UNAVAILABLE": "Unavailable", "DEGRADED": "Degraded",
                         "STALE": "Stale", "DELAYED": "Delayed"}
-SIGNED_METRICS = {"daily return", "daily yield change", "premarket return", "intraday return", "distance from 50DMA"}
+# Rates rows (yield and spread levels and their daily changes) are never coloured: the sign carries direction and
+# the curve move label carries meaning, and rising yields are neither good nor bad.
+SIGNED_METRICS = {"daily return", "premarket return", "intraday return", "distance from 50DMA"}
+MINUS = "\u2212"
+RATE_UNITS = {"% yield", "bp", SPREAD_UNIT}
 # Absence vocabulary. `no print`: the current observation is missing while useful history exists.
 # `—`: structurally not applicable. `not collected`: the source or input is not automated.
 NO_PRINT = "no print"
@@ -220,11 +225,25 @@ def direction(row):
     return "positive" if value > 0 else "negative"
 
 
+def rate_display(value, unit):
+    """Rates in desk form: a yield `5.18%`; a move in whole basis points `+7 bp`; a spread level `31 bp`, with a minus
+    sign only when inverted. Basis points are the same integers the curve classifier reads."""
+    if unit == "% yield":
+        return f"{MINUS if value < 0 and round(value, 2) != 0 else ''}{abs(value):.2f}%"
+    whole = bp(value)
+    if whole == 0:
+        return "0 bp"
+    sign = MINUS if whole < 0 else "+" if unit == "bp" else ""
+    return f"{sign}{abs(whole)} bp"
+
+
 def formatted(row):
     if row.get("value") is None:
         return NO_PRINT
     value = row["value"]
-    signed = row["unit"] in {"bp", "pp", "%"}
+    if row["unit"] in RATE_UNITS:
+        return rate_display(value, row["unit"])
+    signed = row["unit"] in {"pp", "%"}
     # A value that rounds to zero is shown as zero: no sign, no colour.
     number = "0.00" if signed and round(value, 2) == 0 else f"{value:+.2f}" if signed else f"{value:.2f}"
     return f"{number} {row['unit']}"

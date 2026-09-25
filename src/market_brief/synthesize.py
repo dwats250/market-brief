@@ -51,6 +51,9 @@ ALLOWED_LABELS = re.compile(
     r"|50[- ]?[SD]?MAs?|[SD]?MA[- ]?50s?"
     r"|S&P[ -]?500|Nasdaq[- ]100|Russell [12]000|Dow 30)\b", re.IGNORECASE)  # Title Case headlines
 TRADE_LANGUAGE = re.compile(r"\b(entry|target|sizing|buy|sell|execute|execution|order)\b", re.I)
+# The one exemption, for the take only: "sell-off" names a market move, not an instruction. Removed before the
+# trade-language check runs, so "sell" as an action still rejects there.
+SELL_OFF = re.compile(r"\bsell-?offs?\b", re.I)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "anthropic/claude-fable-5.1"
 OPENROUTER_FALLBACK_MODEL = "anthropic/claude-fable-5"
@@ -71,12 +74,16 @@ PARAGRAPH = obj({"text": TEXT, "class": {"enum": ["OBSERVED", "INTERPRETATION"]}
                  "alternative": text_field(100, optional=True)})
 SECTION_PARAGRAPH = obj(dict(PARAGRAPH["properties"], text=text_field(240)))
 NARRATIVE_SCHEMA = obj({
-    "schema_version": {"const": "market-brief.narrative.v1"},
+    "schema_version": {"const": "market-brief.narrative.v2"},
     "mode": {"enum": ["LIVE", "SAMPLE"]},
     "banner": obj({"title": HEADLINE, "label": {"enum": ["RISK-ON", "RISK-OFF", "MIXED", "INDETERMINATE"]},
                    "class": {"const": "INTERPRETATION"}, "evidence_ids": REFS,
                    "limitation": text_field(200)}),
     "summary": {"type": "array", "items": PARAGRAPH, "minItems": 1, "maxItems": 2},
+    # The take: the one interpretation this brief could turn out to be wrong about. Always present, and
+    # empty (no text, no evidence) when the evidence is too thin to commit; never both one and the other.
+    "take": obj({"text": text_field(160, optional=True), "class": {"const": "INTERPRETATION"},
+                 "evidence_ids": {"type": "array", "items": IDENTIFIER, "maxItems": 4, "uniqueItems": True}}),
     "sections": obj({k: {"type": "array", "items": SECTION_PARAGRAPH,
                          "maxItems": 0 if k == "cuttingboard" else 1}
                      for k in ("macro", "equities", "attention", "cuttingboard", "events")}),
@@ -158,6 +165,44 @@ def editorial_notes(narrative, schema):
     return sorted(notes, key=lambda note: note["path"])
 
 
+# Voice telemetry: contract and filler words that read as machinery in reader prose. The prompt steers away
+# from them; they are counted per accepted synthesis and never gate acceptance, publication or a retry.
+AVOID_PHRASES = ("admitted", "packet", "notably", "evident", "suggesting", "rather than", "broad but not",
+                 "character")
+AVOID_PATTERNS = {phrase: re.compile(r"\b" + r"\s+".join(map(re.escape, phrase.split())) + r"\b", re.I)
+                  for phrase in AVOID_PHRASES}
+
+
+def reader_prose(narrative):
+    """The analyst's reader-facing sentences. Identifiers, instruments, horizons, labels, classes, modes and the
+    schema version are not prose; neither is anything the renderer writes."""
+    banner, character = narrative["banner"], narrative["character"]
+    paragraphs = [*narrative["summary"], *(p for section in narrative["sections"].values() for p in section)]
+    texts = [banner["title"], banner["limitation"], character["text"]]
+    texts += [p[key] for p in paragraphs for key in ("text", "uncertainty", "alternative")]
+    texts.append((narrative.get("take") or {}).get("text", ""))  # absent from a v1 narrative
+    texts += [item["why"] for item in narrative["attention"]]
+    texts += [w[key] for w in narrative["watches"] for key in ("condition", "confirmation", "contradiction")]
+    texts += [r[key] for r in narrative["relationships"] for key in ("statement", "reason")]
+    texts += [u["reason"] for u in narrative["watch_updates"]] + [c["text"] for c in narrative["changes"]]
+    return texts
+
+
+def style_notes(narrative):
+    """Advisory voice telemetry for one accepted synthesis: observation only, never fatal."""
+    prose = reader_prose(narrative)
+    plain = [TOKEN.sub("", text) for text in prose]
+    counts = {phrase: sum(len(pattern.findall(text)) for text in plain) for phrase, pattern in AVOID_PATTERNS.items()}
+    take = (narrative.get("take") or {}).get("text", "").strip()
+
+    def normalized(text):
+        return " ".join(re.sub(r"[^\w\s]", " ", text.lower()).split())
+    return dict(avoid_phrases=counts, avoid_phrase_total=sum(counts.values()),
+                numeric_placeholders=sum(len(TOKEN.findall(text)) for text in prose),
+                take=dict(present=bool(take), characters=len(take),
+                          repeats_headline=bool(take) and normalized(take) == normalized(narrative["banner"]["title"])))
+
+
 class NarrativeRejected(ValueError):
     """A parsed narrative that failed acceptance; carried so the run can archive it for diagnosis."""
 
@@ -183,10 +228,11 @@ UNSUPPORTED_WIRE_KEYWORDS = ("minLength", "maxLength", "maxItems", "uniqueItems"
 def transport_schema(schema):
     """The provider-compatible shape of the same contract, fully inlined: types, required, enums.
 
-    The prompt advertises this inlined form and the isolated CLI enforces it directly. The OpenRouter
-    `response_format` sends `factored_transport_schema` instead — an isomorphic `$defs`/`$ref` factoring
-    of this same output — because Anthropic's strict-grammar compiler rejects the fully inlined form as
-    too large; the two are proven identical by expanding every local ref back to this schema."""
+    The isolated CLI enforces this inlined form directly. The OpenRouter route sends
+    `factored_transport_schema` instead, both as the user-message copy and as `response_format` — an
+    isomorphic `$defs`/`$ref` factoring of this same output — because Anthropic's strict-grammar compiler
+    rejects the fully inlined form as too large and the inlined copy cost the light edition its input
+    budget; the two are proven identical by expanding every local ref back to this schema."""
 
     def describe(node):
         notes = []
@@ -230,7 +276,17 @@ def transport_schema(schema):
                 result["description"] = description
         return result
 
-    return visit(schema)
+    wire = visit(schema)
+    # A paragraph array states its items' text bound once, on the array, so the summary and section paragraphs are
+    # one identical node that the provider's grammar compiles once. The take made the two separate nodes cross
+    # Anthropic's grammar limit (G2.5, 2026-09-25: HTTP 400 at 5,497 bytes); the bound is still described.
+    properties = wire.get("properties", {})
+    if "summary" in properties and "sections" in properties:
+        for array in [properties["summary"], *properties["sections"]["properties"].values()]:
+            text = array["items"]["properties"]["text"]
+            array["description"] = f"{array.get('description', '')} Each text: {text['description']}".strip()
+            text["description"] = "Non-empty."
+    return wire
 
 
 def factored_transport_schema(schema):
@@ -242,7 +298,8 @@ def factored_transport_schema(schema):
     replaced. Repeated schema nodes are hoisted into local `$defs` and referenced by
     `#/$defs/...`, which shrinks the fully inlined form the compiler reported as "too large" while
     preserving exact validation semantics (expanding every local ref reconstructs `transport_schema`).
-    Only the provider-enforced `response_format` uses this; the prompt keeps the inlined schema.
+    The OpenRouter route uses this form for both the user-message copy and `response_format` (owner
+    ruling 2026-09-25: the inlined prompt copy put the 2026-09-24 light context 26 bytes over budget).
     """
     wire = transport_schema(schema)
     schema_list_keys = ("anyOf", "allOf", "oneOf")
@@ -328,6 +385,9 @@ def validate_narrative(narrative, packet, context=None, schema=None):
         raise ValueError("sample/live narrative mode mismatch")
     if ";" in narrative["banner"]["title"]:
         raise ValueError("headline must be one claim without a semicolon")
+    take = narrative["take"]
+    if bool(take["text"].strip()) != bool(take["evidence_ids"]):
+        raise ValueError("take text and evidence must be both present or both empty")
     catalog = evidence_catalog(model_packet(packet))
     if context is not None:
         if context.get("evidence_hash") != digest(packet):
@@ -335,7 +395,7 @@ def validate_narrative(narrative, packet, context=None, schema=None):
         shown = supplied_ids(context)
         catalog = {ident: row for ident, row in catalog.items() if ident in shown}
     # Current-condition records cite current evidence only; continuity records may add prior refs.
-    records = [narrative["banner"], *narrative["summary"], *narrative["watches"], narrative["character"]]
+    records = [narrative["banner"], *narrative["summary"], take, *narrative["watches"], narrative["character"]]
     records += [p for section in narrative["sections"].values() for p in section]
     for record in records:
         refs = set(record["evidence_ids"])
@@ -376,6 +436,8 @@ def validate_narrative(narrative, packet, context=None, schema=None):
             raise ValueError("literal numeric claim in attention reason")
         if TRADE_LANGUAGE.search(item["why"]):
             raise ValueError("trade language in attention reason")
+    if TRADE_LANGUAGE.search(SELL_OFF.sub("", take["text"])):
+        raise ValueError("trade language in the take")
     for watch in narrative["watches"]:
         if watch["horizon"].startswith("EVENT("):
             event_id = watch["horizon"][6:-1]
@@ -397,9 +459,9 @@ def construct_prompt(packet, full=False, context=None, include_schema=True):
 
     `context` is the exact saved artifact when the caller persisted one; otherwise it is built here.
     `full` reproduces the original evidence-plus-catalog payload for diagnostics.
-    OpenRouter retains the factored schema copy: run 34278983083 failed banner schema
-    validation with strict response_format but no copy. The isolated CLI supplies its
-    contract through --json-schema and opts out of the duplicate user-message schema.
+    OpenRouter retains a schema copy, in the same factored form `response_format` enforces: run
+    34278983083 failed banner schema validation with strict response_format but no copy. The
+    isolated CLI supplies its contract through --json-schema and opts out of the duplicate copy.
     """
     instructions = (ROOT / "prompts/synthesis.md").read_text()
     profile = edition_profile(packet["run"]["checkpoint"])
@@ -414,7 +476,7 @@ def construct_prompt(packet, full=False, context=None, include_schema=True):
         limit = min(120_000, profile["input_limit_bytes"])
     if include_schema:
         schema = NARRATIVE_SCHEMA if full else narrative_schema(context.get("edition") or profile)
-        projected["output_schema"] = transport_schema(schema)
+        projected["output_schema"] = factored_transport_schema(schema)
     user = compact_json(projected)
     size = len(user.encode())
     sections = {key: len(compact_json(value).encode()) for key, value in projected.items()}
@@ -481,30 +543,58 @@ def _openrouter_post(payload, api_key, timeout=180):
         raise _TransientOpenRouterError("OpenRouter network or response failure") from None
 
 
+def _printable(text, limit):
+    """The provider's message made safe to log and save: whitespace becomes one space, other non-printables go, then
+    bounded."""
+    text = "".join(ch if ch.isprintable() else " " if ch.isspace() else "" for ch in text)
+    return " ".join(text.split())[:limit]
+
+
+def _provider_message(raw):
+    """The provider's own error message inside OpenRouter's `metadata.raw` (for example Anthropic's "The compiled
+    grammar is too large…"), bounded and printable. Nothing else from the provider body is kept, and a raw that is
+    not the provider's JSON error, or cannot be read at all, yields nothing."""
+    try:
+        raw = json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, RecursionError):
+        return None
+    error = raw.get("error") if isinstance(raw, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    return _printable(message, 300) if isinstance(message, str) else None
+
+
 def _safe_error(exc, limit=20_000):
-    """Run 34486249474 recorded only `OpenRouter HTTP 400`. Keep the documented error code,
-    a bounded message and provider labels; never the raw provider body, headers or IDs."""
+    """Run 34486249474 recorded only `OpenRouter HTTP 400`, and G2.5 (2026-09-25) only "Provider returned error".
+    Keep the documented error code, a bounded message, provider labels and the provider's own bounded error
+    message; never the rest of the raw provider body, headers or IDs."""
     try:
         body = json.loads(exc.read(limit).decode("utf-8"))
         error = body["error"]
         code, message, metadata = error.get("code"), error.get("message"), error.get("metadata")
-    except (AttributeError, OSError, UnicodeError, ValueError, KeyError, TypeError):
+    except (AttributeError, OSError, UnicodeError, ValueError, KeyError, TypeError, RecursionError):
         return "unknown"
     result = {}
     if type(code) in (int, float):
         result["code"] = code
+    # OpenRouter's own message and labels keep their original truncation (the no-endpoint classifier reads them);
+    # only lone surrogates, which cannot be saved, are dropped.
     if isinstance(message, str):
-        result["message"] = message[:300]
+        result["message"] = message[:300].encode("utf-8", "ignore").decode("utf-8")
     if isinstance(metadata, dict):
-        result["metadata"] = {key: metadata[key][:80] for key in ("provider_name", "error_type", "provider_code")
+        result["metadata"] = {key: metadata[key][:80].encode("utf-8", "ignore").decode("utf-8")
+                              for key in ("provider_name", "error_type", "provider_code")
                               if isinstance(metadata.get(key), str)}
+        detail = _provider_message(metadata.get("raw"))
+        if detail:
+            result["metadata"]["provider_message"] = detail
     return result or "unknown"
 
 
 def _is_model_unavailable(error):
     """Classify a 404 as model-unavailable only from the explicit 'no endpoints found' message on the
     sanitized error; a bare, unreadable, or unrelated 404 is not this condition. Reads the already
-    length-bounded, provider-body-free `_safe_error` output — never the raw response body."""
+    length-bounded `_safe_error` output (which keeps at most the provider's own bounded message) — never the raw
+    response body."""
     message = error.get("message") if isinstance(error, dict) else None
     return isinstance(message, str) and bool(NO_ENDPOINT_404.search(message))
 
@@ -615,9 +705,8 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     system, user = construct_prompt(packet, full=full, context=context)
     profile = edition_profile(packet["run"]["checkpoint"])
     analyst = analyst_model()
-    # The provider-enforced schema is the factored equivalent of the inlined schema the prompt
-    # advertises: same contract, small enough for Anthropic's strict-grammar compiler. `schema_hash`
-    # below records exactly this wire form.
+    # The provider-enforced schema is the same factored form the prompt copy carries: the inlined contract,
+    # small enough for Anthropic's strict-grammar compiler. `schema_hash` below records exactly this wire form.
     schema = factored_transport_schema(
         NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile))
     requested_at = datetime.now(timezone.utc).isoformat()

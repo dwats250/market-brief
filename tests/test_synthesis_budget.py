@@ -124,7 +124,7 @@ def test_transport_schema_uses_only_documented_provider_keywords(checkpoint):
         transport = transport_schema(local)
         Draft202012Validator.check_schema(transport)
         assert keywords(transport) <= PROVIDER_KEYWORDS
-        # Fully inlined: no schema references of any spelling reach the provider.
+        # The inlined form (the Claude CLI's --json-schema, and what every factored ref expands to) has no refs.
         assert not any(token in json.dumps(transport) for token in ("$ref", "$defs", "definitions", "oneOf"))
         # Same shape: a complete bounded response satisfies both contracts.
         Draft202012Validator(transport).validate(maximum_shape(local))
@@ -141,21 +141,25 @@ def test_every_local_bound_is_described_in_transport_and_enforced_only_locally()
     strict = Draft202012Validator(local)
     checked = 0
 
-    def visit(node, current, wire):
+    def visit(node, current, wire, array_note=""):
         nonlocal checked
         if isinstance(current, dict):
             for key, child in node["properties"].items():
                 visit(child, current[key], wire["properties"][key])
                 current_child = current[key]
                 if "maxLength" in child:
-                    assert str(child["maxLength"]) in wire["properties"][key].get("description", "")
+                    described = wire["properties"][key].get("description", "")
+                    if key == "text" and "Each text:" in array_note:
+                        # A paragraph array states its items' text bound once, on the array (one grammar node).
+                        described = array_note.split("Each text:", 1)[1]
+                    assert f"At most {child['maxLength']} characters" in described
                     current[key] = "x" * (child["maxLength"] + 1)
                     assert not strict.is_valid(value) and lenient.is_valid(value)
                     current[key] = current_child
                     checked += 1
         elif isinstance(current, list):
             if "maxItems" in node:
-                assert str(node["maxItems"]) in wire.get("description", "")
+                assert f"At most {node['maxItems']} items" in wire.get("description", "")
                 current.append(current[0] if current else maximum_shape(node["items"]))
                 assert not strict.is_valid(value) and lenient.is_valid(value)
                 current.pop()
@@ -167,7 +171,7 @@ def test_every_local_bound_is_described_in_transport_and_enforced_only_locally()
                     current[index] = child
                     checked += 1
                 else:
-                    visit(node["items"], child, wire["items"])
+                    visit(node["items"], child, wire["items"], wire.get("description", ""))
     visit(local, value, transport)
     assert strict.is_valid(value) and lenient.is_valid(value)
     assert checked >= 40

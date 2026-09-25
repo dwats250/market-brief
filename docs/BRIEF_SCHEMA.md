@@ -17,7 +17,7 @@ not filler. Avoid repeated summaries of the same moves in multiple sections.
 | Order | Section | Content and limits |
 |---|---|---|
 | A | Header | One status / edition / date / as-of line; sample or commissioning truth stated once |
-| B | Headline, character, executive read | One headline claim; INTERPRETATION label with the qualitative state and the session character; one or two short paragraphs |
+| B | Headline, character, executive read | One headline claim; INTERPRETATION label with the qualitative state and the session character; one or two short paragraphs; then "The take:" in one line when the analyst committed to one |
 | C | Compact snapshot | Up to six exact fact chips with their clocks; missing domains in plain language |
 | D | What changed | "Since the previous close · date" or "Since the premarket edition": analyst-interpreted `changed` comparisons and carried relationship assessments; a plain note when nothing comparable changed or continuity is unavailable |
 | E | What matters next | Watches with natural horizons ("Into the close…", "At the next update…"), carried watches with their latest assessment, up to three attention items, today's and next-session events |
@@ -32,7 +32,7 @@ Editions share one contract; `config/editions.json` sets the budget profile and 
 for the two synthesis checkpoints (rich premarket, light opening structure). Deterministic
 checkpoints (open +1M, hourly refreshes, close snapshot) render the last accepted synthesis from
 its frozen interpretation record (`market-brief.continuity.v1`, kind `interpretation`: the
-narrative, every cited row at the values the analyst saw, the prior state it assessed, resolved
+narrative, every cited row at the values the analyst saw (the take's included), the prior state it assessed, resolved
 horizons, selected triggers) under this run's observed record. The header's one clock line therefore
 names two clocks, "Analysis anchored" (the interpretation) and "Observed record refreshed" (this run),
 and the scheduler's next update; a synthesis edition reads "As of". Each row keeps its own observation
@@ -40,13 +40,19 @@ clock. The "What changed" heading carries a sub-caption naming the anchors.
 
 ## Narrative record
 
-Schema name: `market-brief.narrative.v1`. Fields:
+Schema name: `market-brief.narrative.v2` (v1 plus `take`). Besides `schema_version` and `mode`, the narrative
+holds only analyst content; run identity, evidence hash, model identity and route, prompt hash and schema hash
+are caller-owned provenance in `metadata.json`. Fields:
 
-- `run_id`, `evidence_packet_hash`, `model_id`, `prompt_version`.
 - `banner`: `label`, `class=INTERPRETATION`, `evidence_ids`, `limitation`.
   Allowed qualitative labels: RISK-ON, RISK-OFF, MIXED, INDETERMINATE. Optional
   improving/deteriorating modifier only with comparable prior evidence.
 - `summary`: up to two paragraph records.
+- `take`: the one interpretation the analyst could turn out to be wrong about: `text` (one short sentence,
+  160-character target), class INTERPRETATION, up to four current evidence IDs. Empty (no text, no evidence)
+  when the evidence is too thin; never text without evidence or evidence without text. Current supplied
+  evidence only, grounded placeholders, no literal numbers, no trade language (the market noun "sell-off"
+  is allowed). A narrative frozen under v1 has no take and renders without one.
 - `sections`: keyed macro/equities/attention/cuttingboard/events; each paragraph
   has text, class OBSERVED or INTERPRETATION, evidence IDs, uncertainty, and an
   alternative if it proposes a causal relationship. Factual tables come from
@@ -72,10 +78,10 @@ only inside the three continuity records above.
 |---|---|---|
 | `evidence.json` | `market-brief.evidence.v0` (+ `identity` per row, `continuity.comparisons`) | Factual record |
 | `analyst_context.json` | `market-brief.analyst-context.v1` | Exact model input; `evidence_hash`, `edition`, `selection`, `prior_state`, `comparisons` |
-| `narrative.json` | `market-brief.narrative.v1` | Model output, validated |
+| `narrative.json` | `market-brief.narrative.v2` | Model output, validated |
 | `edition_state.json` | `market-brief.continuity.v1`, kind `edition_state` | `observed` (deterministic) + `assessment` (interpretation), content-hashed |
 | `session_handoff.json` | `market-brief.continuity.v1`, kind `session_handoff` | Close-designated state, only after COMPLETED_SESSION or PROVISIONAL_NEAR_CLOSE |
-| `metadata.json` | — | Hashes, model identity/route/profile/usage, validation, continuity outcome |
+| `metadata.json` | — | Hashes (prompt provenance is the prompt hash), model identity/route/profile/usage, validation, continuity outcome; on synthesis editions, `editorial` overshoots and advisory `style` telemetry, never a gate |
 
 Absent source evidence cannot be recovered through model confidence. "No major
 news" is forbidden when collection only checked Fed releases. "No matching

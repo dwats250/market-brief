@@ -12,6 +12,8 @@ In this fictional sample, growth still has an edge over the broad equity benchma
 
 The useful tension is beneath the headline: front-end yields eased while the longer end rose, and the gold fund advanced while miners slipped. Those relationships leave confirmation as the next check rather than a single risk-on story. [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change) [evidence](#evidence-GLD-daily) [evidence](#evidence-GDX-daily)
 
+**The take:** The tension is in the curve and metals, not in growth&#x27;s 20-session lead over SPY, which stands at +1.87 pp. [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change) [evidence](#evidence-GDX-spread20) [evidence](#evidence-QQQ-spread20)
+
 **OBSERVED SNAPSHOT**
 
 | Measure | Observation | As of |

@@ -695,14 +695,16 @@ def session_handoff(state):
 # --- frozen interpretation and deterministic refreshes -----------------------------------------
 
 def cited_ids(narrative, attention=(), carried=()):
-    """Every evidence reference the page will resolve: the narrative's cited IDs and numeric placeholders,
-    the selected triggers' rows, and the placeholders inside carried watches' criteria (written by an
-    earlier analyst, rendered again beside this narrative)."""
+    """Every evidence reference the page will resolve: the narrative's cited IDs and numeric placeholders
+    (the take's included), the selected triggers' rows, and the placeholders inside carried watches' criteria
+    (written by an earlier analyst, rendered again beside this narrative)."""
     ids = set()
     records = [narrative["banner"], narrative["character"], *narrative["summary"], *narrative["watches"],
                *narrative.get("relationships", []), *narrative.get("watch_updates", []),
                *narrative.get("changes", [])]
     records += [p for section in narrative["sections"].values() for p in section]
+    if narrative.get("take"):  # a narrative frozen under the v1 contract has no take
+        records.append(narrative["take"])
     for record in records:
         ids |= set(record.get("evidence_ids", []))
         for value in record.values():

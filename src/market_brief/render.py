@@ -5,7 +5,7 @@ what matters next → equity interpretation and support → macro interpretation
 view → cross-asset structure → collapsed sources & coverage. Deterministic rows are the record;
 the analyst's interpretation sits above them and is labeled once.
 
-Two clocks. The interpretation (headline, character, read, what changed, watches, section
+Two clocks. The interpretation (headline, character, read, the take, what changed, watches, section
 paragraphs, flagged reasons) is rendered from a frozen interpretation record at the values the analyst
 saw; the observed record (figures, tables, events, sources, ledger) is this run's. A synthesis edition
 freezes its own record, so both clocks coincide; a deterministic refresh carries the record forward.
@@ -620,6 +620,11 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     # record. Each row keeps its own observation clock; the page clock never claims every datum is that fresh.
     data_clock = pacific_time(actual_started_at)
     interpretation_clock = pacific_time(interpreted["target_time"])
+    # The take is interpretation-clock prose, so a carried page shows it at the values its analyst saw. An empty
+    # take, or a narrative frozen before the take existed, renders nothing at all.
+    take = narrative.get("take") or {}
+    take = (dict(text=expand(take["text"].strip()), evidence_ids=take["evidence_ids"],
+                 refs=refs(take["evidence_ids"])) if take.get("text", "").strip() else None)
     next_label = next_update_label(next_checkpoint(target, checkpoint), session_date)
     clocks = (f"Analysis anchored {interpretation_clock} · Observed record refreshed {data_clock}" if carried
               else f"As of {data_clock}") + f" · {next_label}"
@@ -646,7 +651,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
         character_ids=narrative["character"]["evidence_ids"],
         character_refs=refs(narrative["character"]["evidence_ids"]),
         chips=chips, figures=figures,
-        summary=[paragraph(p) for p in narrative["summary"]],
+        summary=[paragraph(p) for p in narrative["summary"]], take=take,
         since=dict(heading="What changed", label=since_caption(anchors), entries=since_entries, note=since_note,
                    status=prior.get("status", "cold_start")),
         next=dict(watches=watches, carried=carried_watches, attention=attention, events=events,
@@ -697,6 +702,8 @@ def markdown(view):
         lines += [esc(view["banner"]["limitation"]), ""]
     for p in view["summary"]:
         lines += [para(p), ""]
+    if view["take"]:
+        lines += [f"**The take:** {esc(view['take']['text'])} {refs(view['take']['evidence_ids'])}", ""]
     if view["figures"]:
         lines += ["**OBSERVED SNAPSHOT**", "", "| Measure | Observation | As of |", "|---|---:|---|"]
         for chip in view["figures"]:

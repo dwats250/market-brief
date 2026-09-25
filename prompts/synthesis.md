@@ -70,24 +70,24 @@ changes, and carried-watch assessments. For a rich edition give roughly 80
 words to the summary, 100 to sections, 100 to watches, and 70–120 to the rest;
 spend the balance up to 500 only on distinct useful analysis. The range is
 guidance, not a fill target: write less when coverage is thin, and zero is a
-valid answer for every optional array. Each field's description states its
-maximum characters or items, a backstop, not a target; limits are checked after
-generation, and a response truncated by the generation limit or well past a
-stated limit is discarded unpublished, with no second attempt. Empty
-uncertainty and alternative strings are correct without a specific new point.
-Keep continuity records to short assessments that do not repeat the summary.
-Cite only the evidence each claim needs, usually two IDs, at most four; narrow
-a claim whose support cannot fit. Use the supplied comparisons and
+valid answer for every optional array. Each field's or array's description
+states its maximum characters or items, a backstop, not a target; limits are
+checked after generation, and a response truncated by the generation limit or
+well past a stated limit is discarded unpublished, with no second attempt.
+Empty uncertainty and alternative strings are correct without a specific new
+point. Keep continuity records to short assessments that do not repeat the
+summary. Cite only the evidence each claim needs, usually two IDs, at most
+four; narrow a claim whose support cannot fit. Use the supplied comparisons and
 classifications; do not recompute the tables or explore unsupported scenarios.
 
 NUMBERS: no literal digits in prose, titles, or watches, including dates,
 times, counts, and percentages, except bounded labels (2Y, 5Y, 10Y, 30Y,
 5-session, 20-session, 50-session, 50-day) in natural forms such as 10-year,
 over 20 sessions, or 50DMA, and index names such as S&P 500 or Nasdaq-100; the
-renderer shows the session date. To quote a numeric fact write {{evidence-id}}
-and include that ID in the same record's evidence_ids; the renderer substitutes
-its exact value with its sign and unit, so write no unit, % sign, or up/down
-word beside it. Never calculate a number yourself.
+renderer shows the date. To quote a numeric fact write {{evidence-id}} and
+include that ID in the same record's evidence_ids; the renderer substitutes its
+exact value with its sign and unit, so write no unit, % sign, or up/down word
+beside it. Never calculate a number yourself.
 
 RECORDS. Every banner, paragraph, and watch cites relevant evidence_ids from
 the supplied catalog; never cite a source ID as evidence. A section with no

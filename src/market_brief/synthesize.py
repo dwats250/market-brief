@@ -543,17 +543,23 @@ def _openrouter_post(payload, api_key, timeout=180):
         raise _TransientOpenRouterError("OpenRouter network or response failure") from None
 
 
+def _printable(text, limit):
+    """Provider text made safe to log and save: whitespace becomes one space, other non-printables go, then bounded."""
+    text = "".join(ch if ch.isprintable() else " " if ch.isspace() else "" for ch in text)
+    return " ".join(text.split())[:limit]
+
+
 def _provider_message(raw):
     """The provider's own error message inside OpenRouter's `metadata.raw` (for example Anthropic's "The compiled
     grammar is too large…"), bounded and printable. Nothing else from the provider body is kept, and a raw that is
-    not the provider's JSON error yields nothing."""
+    not the provider's JSON error, or cannot be read at all, yields nothing."""
     try:
         raw = json.loads(raw) if isinstance(raw, str) else raw
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     error = raw.get("error") if isinstance(raw, dict) else None
     message = error.get("message") if isinstance(error, dict) else None
-    return "".join(ch for ch in message if ch.isprintable())[:300] if isinstance(message, str) else None
+    return _printable(message, 300) if isinstance(message, str) else None
 
 
 def _safe_error(exc, limit=20_000):
@@ -564,15 +570,16 @@ def _safe_error(exc, limit=20_000):
         body = json.loads(exc.read(limit).decode("utf-8"))
         error = body["error"]
         code, message, metadata = error.get("code"), error.get("message"), error.get("metadata")
-    except (AttributeError, OSError, UnicodeError, ValueError, KeyError, TypeError):
+    except (AttributeError, OSError, UnicodeError, ValueError, KeyError, TypeError, RecursionError):
         return "unknown"
     result = {}
     if type(code) in (int, float):
         result["code"] = code
     if isinstance(message, str):
-        result["message"] = message[:300]
+        result["message"] = _printable(message, 300)
     if isinstance(metadata, dict):
-        result["metadata"] = {key: metadata[key][:80] for key in ("provider_name", "error_type", "provider_code")
+        result["metadata"] = {key: _printable(metadata[key], 80) for key in ("provider_name", "error_type",
+                                                                            "provider_code")
                               if isinstance(metadata.get(key), str)}
         detail = _provider_message(metadata.get("raw"))
         if detail:
@@ -583,7 +590,8 @@ def _safe_error(exc, limit=20_000):
 def _is_model_unavailable(error):
     """Classify a 404 as model-unavailable only from the explicit 'no endpoints found' message on the
     sanitized error; a bare, unreadable, or unrelated 404 is not this condition. Reads the already
-    length-bounded, provider-body-free `_safe_error` output — never the raw response body."""
+    length-bounded `_safe_error` output (which keeps at most the provider's own bounded message) — never the raw
+    response body."""
     message = error.get("message") if isinstance(error, dict) else None
     return isinstance(message, str) and bool(NO_ENDPOINT_404.search(message))
 

@@ -297,6 +297,25 @@ def test_a_provider_400_keeps_the_providers_own_bounded_message_and_nothing_else
     assert synthesize._provider_message("plain text body") is None
     assert synthesize._provider_message({"error": "not a dict"}) is None
     assert synthesize._provider_message(None) is None
+    assert synthesize._provider_message('{"error": {"message": 5}}') is None
+    assert synthesize._provider_message({"error": {"message": ["a"]}}) is None
+    assert synthesize._provider_message({"error": {"message": "grammar\ttoo\nlarge"}}) == "grammar too large"
+    assert synthesize._provider_message("[" * 20000) is None  # nesting past the JSON parser's recursion limit
+
+
+def test_every_provider_error_shape_is_recorded_without_escaping_the_fail_closed_path(monkeypatch):
+    import io
+    from urllib.error import HTTPError
+    nested = json.dumps({"error": {"code": 400, "message": "Provider returned error",
+                                   "metadata": {"provider_name": "Anthropic", "raw": "[" * 20000}}})
+    surrogate = '{"error": {"code": 400, "message": "bad \\ud800 text", "metadata": {"provider_name": "An\\ud800"}}}'
+    for body in (nested, "[" * 20000, surrogate):
+        def fake_urlopen(request, timeout, body=body):
+            raise HTTPError(request.full_url, 400, "error", {}, io.BytesIO(body.encode()))
+        monkeypatch.setattr(synthesize, "urlopen", fake_urlopen)
+        with pytest.raises(ValueError, match="OpenRouter HTTP 400") as exc:
+            synthesize_openrouter(fixture_packet(), api_key="secret")
+        str(exc.value).encode("utf-8")  # savable: no lone surrogate reaches metadata.json
 
 
 def test_a_rejected_take_is_one_paid_call_and_no_retry():
@@ -793,10 +812,14 @@ def test_summary_and_section_paragraphs_are_one_wire_node_with_every_text_bound_
         assert len(items) == 1  # one node: summary and every section paragraph
         assert next(iter(arrays.values()))["items"]["properties"]["text"] == {"type": "string",
                                                                               "description": "Non-empty."}
-        summary_limit = local["properties"]["summary"]["items"]["properties"]["text"]["maxLength"]
-        assert arrays["summary"]["description"].endswith(f"Each text: At most {summary_limit} characters, non-empty.")
-        for key in ("macro", "equities", "attention", "cuttingboard", "events"):
-            assert arrays[key]["description"].endswith("Each text: At most 240 characters, non-empty.")
+        summary = local["properties"]["summary"]
+        assert arrays["summary"]["description"] == (
+            f"At most {summary['maxItems']} items. Each text: At most "
+            f"{summary['items']['properties']['text']['maxLength']} characters, non-empty.")
+        for key in ("macro", "equities", "attention", "events"):
+            assert arrays[key]["description"] == "At most 1 items. Each text: At most 240 characters, non-empty."
+        assert arrays["cuttingboard"]["description"] == \
+            "At most 0 items. Each text: At most 240 characters, non-empty."
         factored = factored_transport_schema(local)
         paragraph_keys = {"text", "class", "evidence_ids", "uncertainty", "alternative"}
         found = []

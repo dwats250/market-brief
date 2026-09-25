@@ -159,7 +159,7 @@ def test_every_local_bound_is_described_in_transport_and_enforced_only_locally()
                     checked += 1
         elif isinstance(current, list):
             if "maxItems" in node:
-                assert str(node["maxItems"]) in wire.get("description", "")
+                assert f"At most {node['maxItems']} items" in wire.get("description", "")
                 current.append(current[0] if current else maximum_shape(node["items"]))
                 assert not strict.is_valid(value) and lenient.is_valid(value)
                 current.pop()

@@ -49,9 +49,9 @@ from market_brief.synthesize import (
 )
 
 # The fixtures' take: it compresses the stance the read already makes and claims nothing the sample cannot show.
-TAKE = ("Growth's lead, QQQ {{QQQ-spread20}} ahead of SPY over 20 sessions, is the first read to go if mega-cap "
-        "strength fades.")
-TAKE_IDS = ["QQQ-spread20", "NVDA-spread20"]
+TAKE = ("The tension is in the curve and metals, not in growth's 20-session lead over SPY, which holds at "
+        "{{QQQ-spread20}}.")
+TAKE_IDS = ["treasury-10y-change", "GDX-spread20", "QQQ-spread20"]
 MISMATCH = "take text and evidence must be both present or both empty"
 # The template's <style> block on main @ a7dc6cde; The Take adds no CSS.
 STYLE_SHA256 = "174f3751b23221f7fced442a4973098b2acddc93ca9735d71d61cea0e7c73bb1"
@@ -290,25 +290,25 @@ def read_block(page):
 def test_the_take_renders_after_the_read_and_before_the_figures():
     packet, value = fixture_packet(), with_take()
     view = presentation(packet, value)
-    assert view["take"]["text"] == ("Growth's lead, QQQ +1.87 pp ahead of SPY over 20 sessions, is the first read "
-                                    "to go if mega-cap strength fades.")
+    assert view["take"]["text"] == ("The tension is in the curve and metals, not in growth's 20-session lead over "
+                                    "SPY, which holds at +1.87 pp.")
     assert [r["id"] for r in view["take"]["refs"]] == TAKE_IDS
     md, page = render(packet, value)
     read = read_block(page)
     last_summary = view["summary"][-1]["text"]
     assert read.index(last_summary) < read.index("<b>The take:</b>")
     take = read.split("<b>The take:</b>", 1)[1]
-    assert take.startswith(" Growth&#39;s lead, QQQ +1.87 pp ahead of SPY over 20 sessions, is the first read to go "
-                           "if mega-cap strength fades. <details class=\"cite\">")
+    assert take.startswith(" The tension is in the curve and metals, not in growth&#39;s 20-session lead over SPY, "
+                           "which holds at +1.87 pp. <details class=\"cite\">")
     marker = take.split("<details", 1)[1].split("</details>", 1)[0]
     assert re.findall(r'<span class="ref"><a href="#evidence-([^"]+)"', marker) == TAKE_IDS
     assert read.rstrip().endswith("</details></div></div>")  # the take is the last block inside `.read`
     # Markdown: the take is the paragraph after the read, then one ordinary blank line.
     lines = md.splitlines()
     index = next(i for i, line in enumerate(lines) if line.startswith("**The take:**"))
-    assert lines[index] == ("**The take:** Growth&#x27;s lead, QQQ +1.87 pp ahead of SPY over 20 sessions, is the "
-                            "first read to go if mega-cap strength fades. [evidence](#evidence-QQQ-spread20) "
-                            "[evidence](#evidence-NVDA-spread20)")
+    assert lines[index] == ("**The take:** The tension is in the curve and metals, not in growth&#x27;s 20-session "
+                            "lead over SPY, which holds at +1.87 pp. [evidence](#evidence-treasury-10y-change) "
+                            "[evidence](#evidence-GDX-spread20) [evidence](#evidence-QQQ-spread20)")
     assert lines[index - 1] == "" and lines[index + 1] == "" and lines[index + 2] == "**OBSERVED SNAPSHOT**"
     assert lines[index - 2].startswith(view["summary"][-1]["text"][:40])
 
@@ -381,7 +381,7 @@ def test_the_take_changes_no_non_interpretation_continuity_state():
 
 # --- the production day: frozen take, legacy compatibility, cadence, telemetry ---------------------------
 
-OPENING_TAKE = "SPY's slide to {{SPY-intraday}} is a rates story until tech confirms it."
+OPENING_TAKE = "SPY at {{SPY-intraday}} is a rates story until tech confirms it."
 
 
 def opening_take(live):
@@ -404,7 +404,7 @@ def test_a_carried_take_keeps_the_values_and_clock_its_analyst_saw(monkeypatch, 
     structure, refresh = day.page("OPEN_30M"), day.page("HOURLY_1300")
     for page in (structure, refresh):
         line = take_line(page)
-        assert "SPY&#39;s slide to -0.53 % is a rates story until tech confirms it." in line
+        assert "SPY at -0.53 % is a rates story until tech confirms it." in line
         assert "+0.80 %" not in line
         marker = re.search(r'href="#evidence-SPY-intraday">([^<]*)</a><b>([^<]*)</b><small>([^<]*)</small>', line)
         assert marker.groups() == ("SPY · Intraday vs prior close", "-0.53 %", "7:01 AM PT")
@@ -650,6 +650,11 @@ def test_the_prompt_says_what_the_validator_checks_literally_in_the_take():
     assert "checked literally" in take and "(sell-off is fine)" in take
     for word in synthesize.TRADE_LANGUAGE.pattern.split("(", 1)[1].split(")", 1)[0].split("|"):
         assert re.search(rf"\b{word}\b", take), word
+
+
+def test_the_prompt_says_attention_reasons_get_the_same_word_check_without_the_exemption():
+    records = " ".join(PROMPT.split("RECORDS.", 1)[1].split("\n\n", 1)[0].split())
+    assert "`why` under the take's word check, sell-off included" in records
 
 
 def test_the_prompt_says_placeholders_carry_their_own_sign_and_unit():

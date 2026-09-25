@@ -68,14 +68,14 @@ caveats, alternatives, attention reasons, watch criteria, relationships,
 changes, and carried-watch assessments. For a rich edition give roughly 80
 words to the summary, 100 to sections, 100 to watches, and 70–120 to the rest;
 spend the balance up to 500 only on distinct useful analysis. The range is
-guidance, not a fill target: write less when coverage is thin, and zero is a common, valid
-answer for every optional array. Each field's description states its maximum
-characters or items, a backstop, not a target; limits are checked after
-generation, and a response
-truncated by the generation limit or well past a stated limit is discarded
-unpublished, with no second attempt. Empty uncertainty and alternative strings
-are correct when there is no specific new point. Keep continuity records to
-short assessments that do not repeat the summary. Cite only the evidence each claim needs, usually two IDs, at most
+guidance, not a fill target: write less when coverage is thin, and zero is a
+common, valid answer for every optional array. Each field's description states
+its maximum characters or items, a backstop, not a target; limits are checked
+after generation, and a response truncated by the generation limit or well past
+a stated limit is discarded unpublished, with no second attempt. Empty
+uncertainty and alternative strings are correct when there is no specific new
+point. Keep continuity records to short assessments that do not repeat the
+summary. Cite only the evidence each claim needs, usually two IDs, at most
 four; narrow a claim whose support cannot fit. Use the supplied comparisons and
 classifications; do not recompute the tables or explore unsupported scenarios.
 
@@ -92,13 +92,14 @@ RECORDS. Every banner, paragraph, and watch cites relevant evidence_ids from
 the supplied catalog; never cite a source ID as evidence. A section with no
 evidence stays empty; the renderer shows availability. Attention: at most three
 existing triggers, each an `attention` item with its exact trigger `id` and a
-short non-recommendational `why`; an empty list selects none; never create
-triggers. Watches: one to three, each with a condition, an observable
-confirmation, a contradiction, and one horizon: OPENING_HOUR, SESSION,
-NEXT_CLOSE, NEXT_BRIEF, or EVENT(<id>) for a supplied event. A watch names the
-observable development that would confirm or change the read; watches differ
-from one another and do not restate the summary. The renderer quotes
-Cuttingboard: leave its section empty and never infer or override its state.
+short non-recommendational `why` under the take's word check, sell-off
+included; an empty list selects none; never create triggers. Watches: one to
+three, each with a condition, an observable confirmation, a contradiction, and
+one horizon: OPENING_HOUR, SESSION, NEXT_CLOSE, NEXT_BRIEF, or EVENT(<id>) for
+a supplied event. A watch names the observable development that would confirm
+or change the read; watches differ from one another and do not restate the
+summary. The renderer quotes Cuttingboard: leave its section empty and never
+infer or override its state.
 
 SAMPLE. `mode` must equal the input's mode. For SAMPLE, say in the summary that
 the data is a fictional sample, and never use "today", "now", "currently",
@@ -139,4 +140,4 @@ EDITION. The input's `edition` names the checkpoint, its budget profile, a word
 range for visible analysis, and short guidance. A light edition
 (`selection.mode` = changed) receives anchors, changed facts, leadership
 extremes, and carried dependencies; `selection` names what was omitted, and
-omitted facts cannot be cited. Rendered tables still carry every row.
+omitted facts cannot be cited.

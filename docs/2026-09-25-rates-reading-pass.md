@@ -711,6 +711,13 @@ Baseline at 14670b0: 474 passed, ruff clean. Tests-first for S1–S2 (new behavi
 - **FOMC title verified.** The Fed press feed item "Federal Reserve issues FOMC statement" (published 2026-09-16 18:00Z)
   is in the archived production evidence of 2026-09-17/18; the sibling item "…release economic projections from the
   September 15-16 FOMC meeting" must not match. Pattern `\bFOMC statement\b`; the FOMC path ships.
+- **Independent verification of S1–S2** (background workflow, 9 agents): a blind oracle written from the R8 text alone
+  agreed with `curve.classify` on all 65,000 grid cases (Δ2, Δ10 in −12…12, 5s30s None or −12…12, t in 1, 2, 3, 5) and
+  184,512 more at fractional thresholds, 0 disagreements. Code review found two real low-severity defects, each confirmed
+  by two refuters and fixed with regression tests: a Treasury-only close was recorded as `EARLIER_HISTORY_ONLY` (spread
+  rows counted as price history in `continuity.closing_data`), and a curve older than the seven-day admission window read
+  as "no 2Y or 10Y yield" instead of stale. A third finding (spread rows reach the analyst before S8 allows `2s10s` in
+  prose) was refuted as slice ordering on an undeployed branch; S8 closes it and nothing merges before it.
 - **Real curve.** Treasury's 2026 feed (fetched 2026-09-25) gives Sep 24: 2Y 4.87 / 5Y 5.03 / 10Y 5.18 / 30Y 5.47 (+2 / +4 /
   +7 / +7 bp vs Sep 23): 2s10s 31 bp, 5 bp steeper; 5s30s 44 bp, 3 bp steeper → Bear steepener. Real Dec 2025 / Jan 2026
   entries back the January fixtures (`tests/fixtures/treasury.*.xml`, trimmed from Treasury's own XML).

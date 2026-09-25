@@ -575,3 +575,31 @@ def test_release_note_dates_an_item_from_another_day():
                           [dict(id="e0", title="Monthly Treasury Statement", scheduled_at="2026-10-12T18:00:00+00:00")],
                           [])
     assert notes["text"] == "Curve predates the Mon, Oct 12 · 11:00 AM PT Monthly Treasury Statement release."
+
+
+# --- review regressions ------------------------------------------------------------------------------------
+
+def test_a_treasury_only_close_is_not_mistaken_for_earlier_price_history():
+    from market_brief.continuity import closing_data
+    now = utc("2026-09-24T20:03:00+00:00")
+    packet = rates_packet(now, rows_for("2026-09-23", SEP24_LEVELS, SEP24_CHANGES, prior="2026-09-22"),
+                          checkpoint="CLOSE_1M")
+    assert any(row["topic"] == "US 2s10s" for row in packet["derived"])
+    assert closing_data(packet) == dict(status="NONE", reason="no usable price observations")
+
+
+def test_a_curve_older_than_the_admission_window_is_stale_not_missing():
+    # Eight calendar days: normalization rejects the rows as stale, and the record must say so, not "no 2Y yield".
+    packet = rates_packet(utc("2026-09-25T13:00:00+00:00"),
+                          rows_for("2026-09-17", SEP24_LEVELS, SEP24_CHANGES, prior="2026-09-16"))
+    assert {row["status"] for row in packet["observations"]} == {"STALE"} and not packet["derived"]
+    curve = packet["curve"]
+    assert (curve["freshness"], curve["reason"], curve["observed_at"], curve["age_days"]) == \
+        ("stale", "stale_observation", "2026-09-17", 8)
+    assert curve["sentence"] == "The latest official curve is more than five days old."
+
+
+def test_staleness_outranks_a_missing_tenor():
+    packet = rates_packet(utc("2026-09-24T13:00:00+00:00"),
+                          rows_for("2026-09-17", {"10Y": 5.18}, {"10Y": 7}, prior="2026-09-16"))
+    assert packet["curve"]["reason"] == "stale_observation"

@@ -204,14 +204,14 @@ def release_notes(curve_date, run, events, context_items):
 
 def _unavailable(tenors, fresh):
     """Why the move cannot be named, in the order a reader would want to hear it, or None."""
+    if fresh["status"] == "stale":
+        return "stale_observation", "The latest official curve is more than five days old."
     two, ten = _leg(tenors, "2Y", "level"), _leg(tenors, "10Y", "level")
     missing = [tenor for tenor, row in (("2Y", two), ("10Y", ten)) if not row]
     if missing:
         return "missing_tenor", f"The latest curve has no {' or '.join(missing)} yield."
     if not _same_entry(two, ten):
         return "mixed_entries", "The 2Y and 10Y yields come from different daily entries."
-    if fresh["status"] == "stale":
-        return "stale_observation", "The latest official curve is more than five days old."
     before, after = _leg(tenors, "2Y", "change"), _leg(tenors, "10Y", "change")
     if not before and not after:
         return "no_prior_entry", "There is no prior daily entry to compare with."
@@ -228,6 +228,12 @@ def curve_record(packet, tenors, spreads, threshold):
     run = timestamp(packet["run"]["target_time"])
     run_date = run.astimezone(ET).date()
     dates = sorted({legs["level"]["observed_at"] for legs in tenors.values() if legs.get("level")})
+    if not dates:
+        # Normalization rejects a daily row more than seven days old as STALE and drops its value; the curve it
+        # came from is still dated, and it is stale, not missing.
+        dates = sorted({row["observed_at"] for row in packet.get("observations", [])
+                        if row.get("status") == "STALE" and row.get("metric") == LEVEL
+                        and (row.get("topic") or "").removeprefix("US ") in TENORS and row.get("observed_at")})
     latest = dates[-1] if dates else None
     fresh = curve_freshness(date.fromisoformat(latest), run_date) if latest else dict(
         status=None, expected=expected_curve_date(run_date).isoformat(), age_days=None)

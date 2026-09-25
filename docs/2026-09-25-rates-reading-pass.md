@@ -665,7 +665,7 @@ Baseline at 14670b0: 474 passed, ruff clean. Tests-first for S1–S2 (new behavi
   `packet["curve"]` record; called from `metrics.derive` so every packet path gets it; `evidence.WINDOWS` for the new
   metrics. Tests: `tests/test_curve.py` (every label, t and t−1 boundaries, ties, inverted/zero-crossing, missing 30Y/2Y,
   no prior, stale, mixed, long-end note, Sep 24 Bear steepener, Oct 12/13 bond holiday, CPI morning, FOMC).
-- [ ] **S3 · R6 formatting and colour.** `render.formatted`/`direction`: `5.18%`, integer bp, unsigned spread levels,
+- [x] **S3 · R6 formatting and colour.** `render.formatted`/`direction`: `5.18%`, integer bp, unsigned spread levels,
   neutral colour for every rates row. Update the pinned `-4.00 bp` / `3.86 % yield` / `0.00 bp` assertions.
 - [x] **S4 · R9 module, R7 reader phrasing, SVG.** `render.py` rates view model (caption per freshness, four-tenor table,
   spread lines, curve move, notes, inline SVG with ghost), template + Markdown; proof extended to 30Y and spreads.
@@ -682,7 +682,7 @@ Baseline at 14670b0: 474 passed, ruff clean. Tests-first for S1–S2 (new behavi
   before/after; decide light headroom; prove the narrative schema byte-identical.
 - [x] **S9 · R13.** DECISIONS, PROJECT_STATE, BRIEF_SCHEMA, README; regenerate `examples/editions/*` with the PR #33
   replay recipe.
-- [ ] **S10 · Verification.** Render the eight §6 pages; headless-Chrome screenshots at 390/1000 × light/dark; overdue
+- [x] **S10 · Verification.** Render the eight §6 pages; headless-Chrome screenshots at 390/1000 × light/dark; overdue
   state, § hit area, no 390 px overflow; independent review of the whole diff against this file.
 
 ### Discrepancies (§2 vs code)
@@ -755,6 +755,67 @@ Baseline at 14670b0: 474 passed, ruff clean. Tests-first for S1–S2 (new behavi
   voice slice's prompt-size guard is raised to < 10,200 and named in the commit).
 - **Narrative schema byte-identical.** Local, transport and factored forms of the full, rich and light contracts hash the
   same on 14670b0 and this branch (factored 5,197 / 5,195 bytes); `tests/test_rates_contract.py` pins the digests.
+- **§6 verification pages** (session scratchpad `pages.py`: the production CLI in LIVE mode through the test day
+  harness, analyst stubbed with a valid edition response): Fri Sep 25 premarket, open +1M, opening structure, 10:00 AM
+  PT carried refresh and close snapshot on Treasury's real Sep 24 curve (Bear steepener); Mon Oct 12 (Columbus Day: Friday's
+  curve, "official daily observation"); Tue Oct 13 (Friday's curve, "latest official daily observation", Prices from
+  Monday's NYSE close); a stale curve (Sep 18 on Sep 25); an inverted twist (2s10s −35 bp, 7 bp steeper, less inverted;
+  5s30s turned positive); Fri Jan 2, 2026 (Dec 31 level from the previous year's feed; Thu Jan 1 expected, so "latest");
+  a CPI morning (Oct 14; "Curve predates the 5:30 AM PT Consumer Price Index release and the 5:30 AM PT Real Earnings
+  release.").
+- **Screenshots inspected** (headless Chrome over DevTools, exact viewports; scratchpad `cdp.py`): each of the nine pages
+  above at 390 and 1000 px in light and dark (first screen and the Macro & rates module; full page in light), the
+  overdue state before and after the deadline at both widths, the guide opened at 390 light and 1000 dark, and base vs
+  new example premarket. Looked at directly: the rates module at 390/1000 (S4), the replay header and first screen in
+  both themes (S6), the inverted module at 390 light and the stale module at 1000 dark; four review agents viewed all
+  the rest (every page, both widths, both themes).
+- **Browser measurements.** No horizontal overflow at 390 px on any page; exactly one `§ evidence` per page; every §
+  marker fully hittable at all four corners, at least 32×37 px (8–9 per page followed by a block; `position:relative`
+  keeps the padding above the next block), with the glyph 7.7 px from the preceding text on both base and branch (no
+  visual shift); chart 120 px tall with 11 px tenor labels at both widths and none on the stale page; h2 25/28 px,
+  sections 40/52 px apart under a 2 px rule; the Next line flips to "Update due 11:00 AM PT has not published" between
+  18:14 and 18:16 UTC for an 11:00 AM PT update (15-minute grace), also with a malformed URL fragment.
+- **Final independent review** (23 agents: four screenshot inspectors, four requirement reviewers, one acceptance critic,
+  refuters per finding). The critic found 33 of 34 §5 boxes met; the 34th (branch-range `git diff --check`) failed on
+  Treasury's own trailing space in the three XML fixtures, now stripped. Upheld and fixed, each with a regression test:
+  the stale note claimed page-wide suppression; a curve past the seven-day admission window dropped the whole module (it
+  now keeps a dated caption and says its yields are not shown); headline figures could show a stale curve's changes;
+  the curve record bypassed `model_packet`'s authority filter (it now reaches the analyst only when every row it read is
+  permitted, and its release note only when every release is); a malformed URL fragment stopped the overdue check (the
+  check now runs first and the anchor reveal guards its decode); a commissioning run's Next skipped its phase's
+  still-pending scheduled checkpoint; the § tap area fell to 30–31 px where a block followed; the Metals caption dangled
+  "…spread," when no metal had a relative row. Refuted but strengthened anyway: browser tests for the overdue script,
+  the 390 px overflow check on a page with the chart, and the base narrative contract pinned too. Refuted and left: the
+  PRD's own "Treasuries sold off; yields rose" wording in the prompt contains a semicolon, which the headline validator
+  forbids (owner decision, below).
 - **Real curve.** Treasury's 2026 feed (fetched 2026-09-25) gives Sep 24: 2Y 4.87 / 5Y 5.03 / 10Y 5.18 / 30Y 5.47 (+2 / +4 /
   +7 / +7 bp vs Sep 23): 2s10s 31 bp, 5 bp steeper; 5s30s 44 bp, 3 bp steeper → Bear steepener. Real Dec 2025 / Jan 2026
   entries back the January fixtures (`tests/fixtures/treasury.*.xml`, trimmed from Treasury's own XML).
+
+### Deferred ideas (not built)
+
+- Keep a stale curve's change rows out of the analyst's context (or reject citations of them), so frozen prose cannot
+  quote changes the module hides.
+- Dark notice ground: faint (4.16:1) and negative (4.45:1) on `--notice` #353535 are below 4.5; R4 left dark unchanged.
+- One minus glyph site-wide: equities still print the ASCII hyphen (`-0.53 %`) beside rates' U+2212.
+- Collect calendar events back to the curve's date, so a holiday-spanning curve can name the earlier releases it
+  predates (today only the run's and the next session's events are collected).
+- The markers' line wrap: a trailing § can wrap alone onto the next line (pre-existing, unchanged width); a
+  non-breaking space before the marker would keep it with its last word.
+- Tighter rates table on wide screens (a stale two-column table spreads across 892 px).
+- The prior-entry date in the fictional replay fixture's change baselines (its ghost legend reads "prior entry").
+- Spread and tenor change identities embed the prior entry's date in their basis, so cross-session comparisons of those
+  rows are always `unavailable` (pre-existing for tenor changes).
+
+### Owner decisions
+
+- **Merge and first live synthesis.** Nothing is pushed. A zero-cost Claude CLI replay of the archived 09-24/09-25
+  contexts with the new prompt (as used for the voice slice) would show whether the analyst uses `curve.label` and the
+  timing rule before the first paid call; it was not run because this pass allows no model calls.
+- **Minus sign.** Rates use U+2212 as the PRD's examples do; equities keep the hyphen. Unify either way?
+- **Semicolon in the bond convention.** The prompt quotes the PRD's "Treasuries sold off; yields rose"; a headline in
+  that form would fail closed (headlines may not contain a semicolon). Keep the PRD wording, or phrase it with a comma?
+- **Overdue text on fictional pages.** The check runs on SAMPLE pages too, so example editions viewed later read
+  "Update due … has not published".
+- **Readings recorded above** for approval: exact-minute "coincide", stale tables without the change column, "The
+  latest curve move" instead of "Today's", flip notes on the spread line, the Oct 12 / Oct 13 holiday split.

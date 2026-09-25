@@ -141,7 +141,7 @@ def test_stale_curve_shows_levels_with_their_date_and_nothing_else():
     assert "5.18%" in section
     assert "curve-move" not in section and "curve-chart" not in section and "steeper" not in section
     assert '<dt>2s10s</dt><dd>31 bp</dd>' in section
-    assert "This curve is more than five days old, so its changes and curve move are not shown." in section
+    assert "This curve is more than five days old, so only its levels are shown here." in section
     proof = {line["id"] for line in presentation(packet, narrative())["macro"]["yields_proof"]}
     assert "treasury-10y" in proof and not any(ident.endswith("-change") for ident in proof)
     assert "Daily change" not in md.split("## Macro & rates", 1)[1].split("## Sector view", 1)[0]
@@ -244,3 +244,43 @@ def test_chart_markup_is_inline_quiet_and_theme_aware():
     assert "<img" not in page and "<path" not in svg  # straight segments only, no smoothing
     assert "stroke-dasharray:4 4" in page.split("</style>", 1)[0]
     assert "var(--teal)" in page.split("</style>", 1)[0].split(".curve-chart", 1)[1]
+
+
+# --- review regressions ------------------------------------------------------------------------------------
+
+def test_a_curve_past_the_admission_window_keeps_a_dated_module():
+    packet = rates_packet(now=NOW.replace(day=14))  # Monday, September 14: the Friday, September 4 curve is 10 days old
+    assert packet["curve"]["freshness"] == "stale" and not any(r["topic"].startswith("US ") for r in packet["derived"])
+    md, page = render(packet, narrative())
+    section = macro_section(page)
+    assert '<div class="caption">U.S. Treasury par curve<span>Fri, Sep 4 · latest official daily observation</span>' \
+        in section
+    assert "This curve is more than a week old, so its yields are not shown." in section
+    assert "<table" not in section.split('<div class="para">', 1)[0] and "curve-chart" not in section
+    assert "**U.S. TREASURY PAR CURVE** · Fri, Sep 4 · latest official daily observation" in md
+    assert "Macro & rates" not in "".join(presentation(packet, narrative())["limitations"])
+
+
+def test_a_stale_curve_puts_no_change_in_the_headline_figures():
+    fresh = {chip["id"] for chip in presentation(rates_packet(), narrative())["chips"]}
+    assert {"treasury-2y-change", "treasury-10y-change"} <= fresh
+    for day in (11, 10):  # without equity figures the chips fall back to the first facts; still no stale change
+        stale = {chip["id"] for chip in presentation(rates_packet(now=NOW.replace(day=day)), narrative())["chips"]}
+        assert not any(ident.startswith("treasury-") and ident.endswith("-change") for ident in stale), day
+
+
+def test_the_metals_caption_never_dangles():
+    packet = rates_packet()
+    packet["derived"] = [row for row in packet["derived"] if row["id"] not in ("SLV-spread20", "GDX-spread20")]
+    md, page = render(packet, narrative())
+    assert presentation(packet, narrative())["cross_asset"]["spread_label"] == ""
+    assert '<h2>Metals</h2><div class="caption"><span>' in page and "spread, <" not in page
+    metals = md.split("## Metals", 1)[1].split("\n\n", 2)[1]
+    assert not metals.startswith(" ·") and "spread, " not in metals
+
+
+def test_the_rates_page_fits_a_phone(tmp_path):
+    from test_cadence import phone_layout_width
+    _, page = render(rates_packet(), narrative())
+    assert '<div class="curve-chart">' in page and '<dl class="spreads">' in page
+    assert phone_layout_width(page, tmp_path) <= 390

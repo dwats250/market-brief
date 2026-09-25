@@ -26,7 +26,7 @@ p,.para{margin:12px 0}
 .fine{font-size:14px;color:var(--muted);margin:6px 0 0}
 section{border-top:2px solid var(--rule-strong);padding-top:26px;margin-top:52px}
 .direction-positive{color:var(--positive)}.direction-negative{color:var(--negative)}.direction-neutral{color:var(--neutral)}
-details.cite{display:inline;font-size:13px}details.cite summary{display:inline;list-style:none;cursor:pointer;color:var(--teal);padding:9px 13px;margin:0 -10px;font-size:14px;white-space:nowrap;user-select:none}details.cite summary::-webkit-details-marker{display:none}details.cite summary:hover,details.cite[open] summary{text-decoration:underline;text-underline-offset:3px}
+details.cite{display:inline;font-size:13px}details.cite summary{display:inline;list-style:none;cursor:pointer;color:var(--teal);padding:9px 13px;margin:0 -10px;font-size:14px;white-space:nowrap;user-select:none;position:relative}details.cite summary::-webkit-details-marker{display:none}details.cite summary:hover,details.cite[open] summary{text-decoration:underline;text-underline-offset:3px}
 .refs{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:2px 14px;align-items:baseline;margin:6px 0 8px;max-width:560px;color:var(--muted);line-height:1.45;font-size:13px}.refs .ref{display:contents}.refs a{color:var(--muted);text-decoration-color:var(--line)}.refs b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}.refs small{font-size:11px;color:var(--faint);white-space:nowrap}.refs .more{grid-column:1/-1;font-size:11px;letter-spacing:.04em;margin-top:2px}.refs .more a{color:var(--faint)}
 details.proof{display:block;margin:8px 0 0}details.proof summary{font-size:12px;padding:0;margin:0;color:var(--faint)}details.proof[open] summary{color:var(--teal)}
 .since .sub{font-size:13px;color:var(--faint);margin:-4px 0 6px}.since ul{margin:6px 0;padding-left:20px}.since li{margin:6px 0}.since li b{font-weight:600}
@@ -129,16 +129,6 @@ footer{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-
     else root.dataset.theme = value;
     try { localStorage.setItem(key, value); } catch (error) {}
   });
-  const reveal = () => {
-    const target = location.hash.length > 1 ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
-    if (!target) return;
-    for (let node = target.parentElement; node; node = node.parentElement) {
-      if (node.tagName === 'DETAILS') node.open = true;
-    }
-    target.scrollIntoView();
-  };
-  window.addEventListener('hashchange', reveal);
-  reveal();
   // A page never claims freshness it no longer has: once the next scheduled update is past its grace period, the
   // Next line says it has not published, in the page's own PT words. Phones keep tabs open, so check again.
   const next = document.querySelector('[data-next-at]');
@@ -153,6 +143,19 @@ footer{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-
     document.addEventListener('visibilitychange', overdue);
     setInterval(overdue, 60000);
   }
+  const reveal = () => {
+    let target = null;
+    try {
+      target = location.hash.length > 1 ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+    } catch (error) {}
+    if (!target) return;
+    for (let node = target.parentElement; node; node = node.parentElement) {
+      if (node.tagName === 'DETAILS') node.open = true;
+    }
+    target.scrollIntoView();
+  };
+  window.addEventListener('hashchange', reveal);
+  reveal();
 })();
 </script>
 </main></body></html>

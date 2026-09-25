@@ -225,6 +225,7 @@ def test_the_marker_hit_area_is_padding_with_a_matching_negative_margin():
     # A 14 px glyph line plus vertical padding clears 32 px; the net horizontal offset stays the old 3 px gap.
     assert 14 + 2 * vertical >= 32 and horizontal - int(margin[1]) == 3
     assert "white-space:nowrap" in rule  # "§ evidence" never breaks between the mark and its label
+    assert "position:relative" in rule  # painted above a following block, so its padding stays tappable
     assert "details.proof summary{font-size:12px;padding:0;margin:0;" in style()  # the table proof keeps its place
 
 
@@ -265,3 +266,42 @@ def test_the_guide_skips_a_move_it_cannot_name():
     fixture["derived"] = [row for row in fixture["derived"] if not row["topic"].startswith("US ")]
     fixture.pop("curve")
     assert "<dt>2s10s</dt>" in guide(render(fixture, narrative())[1])
+
+
+# --- review regressions ------------------------------------------------------------------------------------------
+
+def test_a_commissioning_page_names_the_pending_scheduled_checkpoint_next():
+    packet, value = live(fixture_packet(), "PREMARKET")  # 5:45 AM PT, before the 6:00 AM PT premarket synthesis
+    assert presentation(packet, value)["clocks"][-1]["text"] == "6:31 AM PT · price refresh"  # its own slot is done
+    packet["run"]["commissioning"] = True
+    assert presentation(packet, value)["clocks"][-1]["text"] == "6:00 AM PT · analysis update"
+
+
+def browser_next_line(page, tmp_path, now, fragment=""):
+    """The Next line after the page's own script ran in headless Chrome with Date.now frozen at `now`."""
+    import shutil
+    import subprocess
+    from datetime import datetime
+    chrome = shutil.which("google-chrome") or shutil.which("google-chrome-stable") or shutil.which("chromium")
+    if not chrome:
+        pytest.skip("headless Chrome is not installed")
+    frozen = int(datetime.fromisoformat(now).timestamp() * 1000)
+    target = tmp_path / "brief.html"
+    target.write_text(page.replace("<main>", f"<main><script>Date.now = () => {frozen};</script>", 1))
+    result = subprocess.run([chrome, "--headless=new", "--disable-gpu", "--no-sandbox", "--dump-dom",
+                             target.as_uri() + fragment], capture_output=True, text=True, timeout=90, check=False)
+    found = re.search(r'<div class="clock( overdue)?" data-next-at="[^"]+"[^>]*><dt>Next</dt><dd>([^<]*)</dd>',
+                      result.stdout)
+    assert found, result.stderr[-500:]
+    return bool(found[1]), found[2]
+
+
+def test_the_overdue_script_in_a_browser(tmp_path):
+    packet, value = live(fixture_packet(), "HOURLY_1300")
+    packet["run"]["target_time"] = f"{TUE}T17:01:00+00:00"  # the 10:01 AM PT refresh; next is 11:00 AM PT (18:00Z)
+    _, page = render(packet, value)
+    assert browser_next_line(page, tmp_path, f"{TUE}T18:14:59+00:00") == (False, "11:00 AM PT · price refresh")
+    overdue = (True, "Update due 11:00 AM PT has not published")
+    assert browser_next_line(page, tmp_path, f"{TUE}T18:15:01+00:00") == overdue
+    # A malformed fragment in the URL cannot stop the check.
+    assert browser_next_line(page, tmp_path, f"{TUE}T18:30:00+00:00", "#%E0%A4%A")[0] is True

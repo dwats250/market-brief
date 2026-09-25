@@ -141,9 +141,15 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
                  for source in projected["sources"]],
         cuttingboard=projected["cuttingboard"],
     )
-    if packet.get("curve"):
-        result["curve"] = {key: packet["curve"][key] for key in CURVE_FIELDS
-                           if packet["curve"].get(key) not in (None, "", [])}
+    curve = packet.get("curve") or {}
+    permitted = set(evidence_catalog(projected)) | {row["id"] for row in [*projected["events"],
+                                                                        *projected["context_items"]]}
+    if curve and set(curve.get("inputs", [])) <= permitted:
+        # The authority filter holds for the curve record too: it reaches the analyst only when every row it read is
+        # permitted, and its release note only when every release it names is.
+        releases_permitted = {item["id"] for item in curve.get("releases", [])} <= permitted
+        result["curve"] = {key: curve[key] for key in CURVE_FIELDS if curve.get(key) not in (None, "", [])
+                           and (key != "release_note" or releases_permitted)}
     if packet.get("history_lag"):
         result["history_lag"] = packet["history_lag"]
     if packet.get("history_errors"):

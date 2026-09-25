@@ -27,6 +27,9 @@ def digest(value):
 
 
 def test_the_narrative_schema_is_byte_identical():
+    # The base contract itself (its default bounds are the rich profile's), then each edition's bounded form.
+    base = s.NARRATIVE_SCHEMA
+    assert (digest(base), digest(s.factored_transport_schema(base))) == SCHEMA_SHA256["rich"]
     for profile, checkpoint in (("rich", "PREMARKET"), ("light", "OPEN_30M")):
         schema = s.narrative_schema(edition_profile(checkpoint))
         assert (digest(schema), digest(s.factored_transport_schema(schema))) == SCHEMA_SHA256[profile], profile
@@ -112,3 +115,21 @@ def test_the_curve_record_cannot_be_cited():
     value["sections"]["macro"][0]["evidence_ids"] = ["curve"]
     with pytest.raises(ValueError, match="unsupplied evidence reference: curve"):
         s.validate_narrative(value, packet)
+
+
+def test_the_curve_record_passes_the_authority_filter():
+    from test_rates_module import rates_packet
+    event = dict(id="cpi", title="Consumer Price Index", source_id="bls", published_at=None,
+                 checked_at="2026-09-08T12:45:00+00:00", scheduled_at="2026-09-08T12:30:00+00:00", status="SCHEDULED")
+    packet = rates_packet(events=[event])
+    profile = edition_profile("PREMARKET")
+    assert analyst_context(packet, profile)["curve"]["release_note"].startswith("Curve predates")
+    # A calendar the analyst may not read: the move stays, the release note goes.
+    blocked = copy.deepcopy(packet)
+    next(source for source in blocked["sources"] if source["id"] == "bls")["llm_allowed"] = False
+    curve = analyst_context(blocked, profile)["curve"]
+    assert curve["label"] == "Bear steepener" and "release_note" not in curve
+    # Rates the analyst may not read: no curve record at all.
+    blocked = copy.deepcopy(packet)
+    next(source for source in blocked["sources"] if source["id"] == "sample-rates")["llm_allowed"] = False
+    assert "curve" not in analyst_context(blocked, profile)

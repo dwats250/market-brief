@@ -90,7 +90,9 @@ RATE_METRICS = {LEVEL, CHANGE, SPREAD_LEVEL, SPREAD_CHANGE}
 CURVE_TITLE = "U.S. Treasury par curve"
 CURVE_CAPTIONS = {"current": "official daily observation", "older": "latest official daily observation",
                   "stale": "latest official daily observation"}
-STALE_NOTE = "This curve is more than five days old, so its changes and curve move are not shown."
+STALE_NOTE = "This curve is more than five days old, so only its levels are shown here."
+# Evidence normalization admits no daily row more than seven days old, so such a curve has no yields to show.
+OVER_AGE_NOTE = "This curve is more than a week old, so its yields are not shown."
 # Chart geometry in CSS px. x is log-maturity as a share of the plot width (2Y 0, 5Y .34, 10Y .59, 30Y 1.0); the
 # plot is inset by its container's padding so end dots and labels are never clipped. The y window spans at least
 # 100 bp so a one-day move looks proportionate; no gridlines and no y-axis labels (the table carries the values).
@@ -486,6 +488,13 @@ def rates_module(packet, facts, catalog):
     and notes, all from this run's deterministic rows and curve record; the analyst's paragraphs follow it."""
     yields, asof = treasury_rows(facts)
     if not yields:
+        record = packet.get("curve") or {}
+        if record.get("freshness") == "stale" and record.get("observed_at"):
+            # Rows past the admission window arrive without values; the curve is still dated, and says so.
+            notes = [OVER_AGE_NOTE, *([record["release_note"]] if record.get("release_note") else [])]
+            return dict(yields=[], asof=None, proof_ids=[], curve=dict(
+                title=CURVE_TITLE, caption=f"{short_date(record['observed_at'])} · {CURVE_CAPTIONS['stale']}",
+                stale=True, spreads=[], move=None, chart=None, notes=notes))
         return dict(yields=[], asof=None, curve=None, proof_ids=[])
     tenors = rates(packet)
     spreads = {row["id"]: row for row in facts if row["metric"] in (SPREAD_LEVEL, SPREAD_CHANGE)}
@@ -632,9 +641,11 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
 
     current_sectors = sorted((r for r in facts if r["frequency"] == "intraday" and r["topic"] in SECTORS),
                              key=lambda r: abs(r["value"]), reverse=True)
+    # A stale curve's changes are not shown anywhere a figure could put them (R6).
+    curve_stale = (packet.get("curve") or {}).get("freshness") == "stale"
     priority = [current_or_daily("SPY"), current_or_daily("QQQ"),
                 current_sectors[0]["id"] if current_sectors else None, current_or_daily("GLD"),
-                "treasury-2y-change", "treasury-10y-change"]
+                *([] if curve_stale else ["treasury-2y-change", "treasury-10y-change"])]
     chips = [dict(catalog[i], display=formatted(catalog[i]), direction=direction(catalog[i]),
                   metric_label=metric_label(catalog[i], session),
                   observed_label=observed_label(catalog[i]["observed_at"]),
@@ -642,7 +653,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
              for i in dict.fromkeys(priority) if i and i in catalog][:6]
     if not chips:
         chips = [dict(row, metric_label=metric_label(row, session), observed_short=figure_clock(row))
-                 for row in facts[:4]]
+                 for row in facts if not (curve_stale and row["metric"] in (CHANGE, SPREAD_CHANGE))][:4]
     # The page shows three figures: the first three of the same deterministic priority order
     # (SPY, QQQ, then the leading current sector print when one exists, else GLD). No new ranking.
     figures = chips[:3]
@@ -658,6 +669,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     metal_rows = compact_equity_rows(facts, METALS, daily_today)
     metal_change, metal_asof = change_column(metal_rows, daily_today, session)
     module = rates_module(packet, treasuries, catalog)
+    metal_pairs = [f"{row['symbol']} vs {row['relative_label']}" for row in metal_rows if row["relative"]["id"]]
     yields = module["yields"]
 
     # What matters next: watches with their frozen horizons, carried watches, attention, events.
@@ -736,7 +748,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     omitted = []
     if not mega_rows and not narrative["sections"]["equities"] and not equity:
         omitted.append("Equity structure")
-    if not yields and not other_macro and not narrative["sections"]["macro"]:
+    if not yields and not module["curve"] and not other_macro and not narrative["sections"]["macro"]:
         omitted.append("Macro & rates")
     if not sector_rows:
         omitted.append("Sector view")
@@ -824,7 +836,9 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     edition_word = EDITION_WORDS.get(interpreted.get("checkpoint")) or EDITION_LABELS.get(
         interpreted.get("checkpoint"), "analysis").removesuffix(" edition").lower()
     analysis = f"{interpretation_clock} · {edition_word}"
-    upcoming = next_update(next_checkpoint(target, checkpoint), session_date)
+    # A commissioning run never claims its phase's scheduled slot, so that checkpoint can still be next.
+    upcoming = next_update(next_checkpoint(target, None if packet["run"].get("commissioning") else checkpoint),
+                           session_date)
     next_label = upcoming["text"]
     if not carried and prices == interpretation_clock:
         # A synthesis edition whose prices and analysis share one clock.
@@ -878,9 +892,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
         sectors=dict(rows=sector_rows, change_label=sector_change, asof=sector_asof, proof=proof(sector_rows),
                      spread_label="20-session return spread vs SPY, strongest to weakest"),
         cross_asset=dict(rows=metal_rows, change_label=metal_change, asof=metal_asof, proof=proof(metal_rows),
-                         spread_label="20-session return spread, "
-                         + ", ".join(f"{row['symbol']} vs {row['relative_label']}" for row in metal_rows
-                                     if row["relative"]["id"])),
+                         spread_label=("20-session return spread, " + ", ".join(metal_pairs)) if metal_pairs else ""),
         guide=dict(move=(dict(label=module["curve"]["move"]["label"], text=module["curve"]["move"]["sentence"])
                          if module["curve"] and module["curve"]["move"] and not module["curve"]["move"]["unavailable"]
                          else None),
@@ -980,14 +992,15 @@ def markdown(view):
         if eq["lookback"]:
             lines.append("")
     mac = view["macro"]
-    if mac["paragraphs"] or mac["yields"] or mac["facts"]:
+    if mac["paragraphs"] or mac["curve"] or mac["facts"]:
         lines += ["## Macro & rates", ""]
-        if mac["yields"]:
+        if mac["curve"]:
             curve = mac["curve"]
             dated = not mac["yields_asof"]
             head = "| Maturity | Yield |" + ("" if curve["stale"] else " Daily change |") + (" Date |" if dated else "")
-            lines += [f"**{curve['title'].upper()}** · {esc(curve['caption'])}", "", head,
-                      "|---|---:|" + ("" if curve["stale"] else "---:|") + ("---|" if dated else "")]
+            lines += [f"**{curve['title'].upper()}** · {esc(curve['caption'])}", ""]
+            if mac["yields"]:
+                lines += [head, "|---|---:|" + ("" if curve["stale"] else "---:|") + ("---|" if dated else "")]
             for row in mac["yields"]:
                 note = f" ({esc(row['change_note'])})" if row["change_note"] else ""
                 change = "" if curve["stale"] else f" {row['change']['display']}{note} |"
@@ -1026,7 +1039,8 @@ def markdown(view):
     cross = view["cross_asset"]
     if cross["rows"]:
         asof = f" · {esc(cross['asof'])}" if cross["asof"] else ""
-        lines += ["## Metals", "", f"{esc(cross['spread_label'])} · {esc(cross['change_label'])}{asof}", "",
+        lines += ["## Metals", "", " · ".join(filter(None, (esc(cross["spread_label"]), esc(cross["change_label"]))))
+                  + asof, "",
                   "| Instrument | Change | 20D | Spread | vs 50DMA |",
                   "|---|---:|---:|---:|---:|"]
         for row in cross["rows"]:

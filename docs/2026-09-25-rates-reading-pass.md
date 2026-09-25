@@ -673,7 +673,7 @@ Baseline at 14670b0: 474 passed, ruff clean. Tests-first for S1–S2 (new behavi
 - [x] **S5 · R1 header, R2 overdue.** Masthead date, Prices/Analysis/Next block (combined synthesis line), non-LIVE
   status line only, "What changed … through the … analysis", Markdown clock lines; `data-next-at` + grace constant +
   IIFE check. Update pinned header strings (`test_cadence`, `test_render`, `test_reader_truth`).
-- [ ] **S6 · R3 typography, R4 palette, R5 § evidence.** CSS sizes/spacing/`--rule-strong`, "What changed" section,
+- [x] **S6 · R3 typography, R4 palette, R5 § evidence.** CSS sizes/spacing/`--rule-strong`, "What changed" section,
   Metals rename, light palette, no text opacity, first-marker label via template namespace, 32×32 hit area. Raise faint
   floor, assert text-on-notice, re-pin `STYLE_SHA256`.
 - [ ] **S7 · R12 guide.** Collapsed `How to read this brief` details above Sources & coverage; HTML only.

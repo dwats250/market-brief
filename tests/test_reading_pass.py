@@ -6,10 +6,11 @@ import re
 
 import pytest
 from test_cadence import TUE, Day
-from test_pipeline import fixture_packet, narrative
+from test_pipeline import fixture_packet, freeze_clock, narrative
 from test_render import clock_lines
 
-from market_brief.evidence import timestamp
+from market_brief import cli
+from market_brief.evidence import ROOT, read_json, timestamp
 from market_brief.render import OVERDUE_GRACE, presentation, render
 from market_brief.schedule import next_checkpoint
 
@@ -141,3 +142,87 @@ def test_the_next_session_premarket_carries_its_date_in_the_overdue_words():
     _, page = render(packet, value)
     assert 'data-next-when="Wed, Sep 9 · 6:00 AM PT"' in page
     assert "<dt>Next</dt><dd>Wed, Sep 9 · 6:00 AM PT · premarket analysis</dd>" in page
+
+
+# --- R3 hierarchy and typography ------------------------------------------------------------------------------
+
+def style():
+    return (ROOT / "templates/brief.html.j2").read_text().split("<style>", 1)[1].split("</style>", 1)[0]
+
+
+def test_section_headings_space_and_rules():
+    css = style()
+    desktop, mobile = css.split("@media(max-width:600px)", 1)
+    assert "h2{font:600 28px/1.2 Georgia" in desktop and "h2{font-size:25px}" in mobile
+    assert "section{border-top:2px solid var(--rule-strong);padding-top:26px;margin-top:52px}" in desktop
+    assert "section{margin-top:40px;padding-top:22px}" in mobile
+    assert "h1{font:500 52px/1.05 Georgia" in desktop and "h1{font-size:38px" in mobile  # h1 stays dominant
+    for block in (":root{", 'html[data-theme="dark"]{', "html:not([data-theme]){"):
+        assert "--rule-strong:#" in css.split(block, 1)[1].split("}", 1)[0], block
+
+
+def replayed(tmp_path, monkeypatch, checkpoint="PREMARKET"):
+    """The fictional replay the example editions come from: the sample continuity and its narrative."""
+    raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
+    freeze_clock(monkeypatch, raw["target_time"])
+    monkeypatch.setattr(cli, "RUN_ROOT", tmp_path)
+    monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
+    assert cli.main(["premarket", "--replay", "--checkpoint", checkpoint]) == 0
+    folder = next(p for p in (tmp_path / "runs").glob("*/*") if (p / "brief.html").exists())
+    return (folder / "brief.md").read_text(), (folder / "brief.html").read_text()
+
+
+def test_what_changed_is_a_real_section_and_metals_is_named_plainly(tmp_path, monkeypatch):
+    md, page = replayed(tmp_path, monkeypatch)
+    assert '<section class="since"><h2>What changed</h2><p class="sub">vs the previous close · Fri, Sep 4</p>' in page
+    assert page.index('<section class="since">') < page.index('<section class="next">')
+    assert ".since h2" not in style()  # the standard heading, no override
+    md, page = render(fixture_packet(), narrative())
+    assert "<h2>Metals</h2>" in page and "<h2>Cross-asset structure</h2>" not in page
+    assert "Metals structure" not in page and "METALS STRUCTURE" not in md and "\n## Metals\n" in md
+    assert '<h2>Metals</h2><div class="caption">20-session return spread, ' in page
+    assert "Energy" not in re.findall(r"<h2>([^<]*)</h2>", page)
+
+
+# --- R4 no text dimmed by opacity -------------------------------------------------------------------------------
+
+def test_no_text_is_dimmed_by_opacity():
+    css = style()
+    assert "opacity" not in css
+    assert "td.secondary{font-size:13.5px;color:var(--faint)}" in css
+    assert "details.cite summary{display:inline;list-style:none;cursor:pointer;color:var(--teal);" in css
+
+
+# --- R5 § evidence ----------------------------------------------------------------------------------------------
+
+LABELLED = '<summary aria-label="Supporting evidence" title="Supporting evidence">§ evidence</summary>'
+BARE = '<summary aria-label="Supporting evidence" title="Supporting evidence">§</summary>'
+
+
+def test_the_first_marker_in_document_order_is_labelled_once():
+    _, page = render(fixture_packet(), narrative())
+    assert page.count(LABELLED) == 1 and page.count(BARE) >= 3
+    assert page.index(LABELLED) < page.index(BARE)
+    assert page.index(LABELLED) > page.index('<div class="dek">')  # here the character line's own marker
+
+
+def test_without_character_refs_the_label_moves_to_the_next_marker():
+    value = narrative()
+    value["character"]["evidence_ids"] = []
+    _, page = render(fixture_packet(), value)
+    dek = page.split('<div class="dek">', 1)[1].split("</div>", 1)[0]
+    assert "<details" not in dek
+    assert page.count(LABELLED) == 1
+    assert page.index(LABELLED) > page.index('<div class="read">')
+
+
+def test_the_marker_hit_area_is_padding_with_a_matching_negative_margin():
+    rule = style().split("details.cite summary{", 1)[1].split("}", 1)[0]
+    padding = re.search(r"padding:(\d+)px (\d+)px", rule)
+    margin = re.search(r"margin:0 -(\d+)px", rule)
+    assert padding and margin
+    vertical, horizontal = int(padding[1]), int(padding[2])
+    # A 14 px glyph line plus vertical padding clears 32 px; the net horizontal offset stays the old 3 px gap.
+    assert 14 + 2 * vertical >= 32 and horizontal - int(margin[1]) == 3
+    assert "white-space:nowrap" in rule  # "§ evidence" never breaks between the mark and its label
+    assert "details.proof summary{font-size:12px;padding:0;margin:0;" in style()  # the table proof keeps its place

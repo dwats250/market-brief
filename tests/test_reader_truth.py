@@ -88,11 +88,12 @@ def surfaces(packet, value=None):
     captions = [view["sectors"]["change_label"], view["cross_asset"]["change_label"]]
     html_figures = re.findall(r'<div class="figure"><span class="eyebrow">[^<]*? · ([^<]*)</span>', page)
     # The two tables that hold current prints here: sectors (XLI) and metals (GLD).
-    html_captions = re.findall(r'<div class="caption">(?:[^<]*strongest to weakest|Metals structure)'
-                               r'<span>([^<]*)</span>', page)
+    html_captions = re.findall(r'<div class="caption">(?:[^<]*strongest to weakest'
+                               r'|20-session return spread, [A-Z]+ vs [^<]*)<span>([^<]*)</span>', page)
     md_chips = [line.split(" | ", 1)[0].split(" · ", 1)[1] for line in md.splitlines()
                 if re.match(r"\| (SPY|QQQ|XLI|GLD) · ", line)]
-    md_captions = [line for line in md.splitlines() if "strongest to weakest" in line or "METALS STRUCTURE" in line]
+    md_captions = [line for line in md.splitlines()
+                   if "strongest to weakest" in line or re.match(r"20-session return spread, [A-Z]+ vs ", line)]
     return dict(marker=marker, proofs=proofs, ledger=ledger, figures=figures, measures=measures,
                 captions=captions, html_figures=html_figures, html_captions=html_captions, md_chips=md_chips,
                 md_captions=md_captions, page=page, md=md, view=view)
@@ -256,7 +257,7 @@ def test_d2_prior_snapshot_refs_are_labeled_by_their_own_clock(day, monkeypatch)
                 (f"SPY · {INTRADAY_LABEL}", "-0.53 %", "6:31 AM PT")]
     for checkpoint in ("OPEN_30M", "HOURLY_1300"):
         page = day.page(checkpoint)
-        since = page.split('<div class="since">', 1)[1].split("</div>", 1)[0]
+        since = page.split('<section class="since">', 1)[1].split("</section>", 1)[0]
         assert markers(since) == expected, checkpoint
         assert "Premarket return" not in page and "premarket return" not in page, checkpoint
 

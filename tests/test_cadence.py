@@ -127,7 +127,8 @@ def interpretation_fragments(page):
     what changed, and the watches. Everything else on the page belongs to the data clock. The one
     deterministic annotation a refresh may add to a watch, `horizon passed`, is stripped before comparing."""
     head = page.split("<h1>", 1)[1].split('<div class="figures">', 1)[0]
-    since = page.split('<div class="since">', 1)[1].split("<section", 1)[0] if '<div class="since">' in page else ""
+    since = (page.split('<section class="since">', 1)[1].split("</section>", 1)[0]
+             if '<section class="since">' in page else "")
     watches = page.split('<span class="eyebrow">Watches</span>', 1)[1].split('<span class="eyebrow">Flagged', 1)[0]
     return head, since, watches.replace(PASSED, "")
 
@@ -580,14 +581,19 @@ def test_secondary_text_keeps_readable_contrast_in_both_themes():
     light, dark = theme_tokens(css, ":root{"), theme_tokens(css, 'html[data-theme="dark"]{')
     system_dark = theme_tokens(css, "html:not([data-theme]){")
     assert dark == system_dark  # the explicit dark choice and the system preference share one palette
-    for tokens, floor in ((light, 3.9), (dark, 4.5)):
+    for tokens in (light, dark):
         paper = tokens["paper"]
         assert contrast(tokens["ink"], paper) >= 7
         assert contrast(tokens["muted"], paper) >= 4.5
-        assert contrast(tokens["faint"], paper) >= floor
+        assert contrast(tokens["faint"], paper) >= 4.5  # the light floor rose from 3.9 with the retuned palette (R4)
         assert contrast(tokens["faint"], paper) < contrast(tokens["muted"], paper)  # still the quieter tone
-        for token in ("teal", "positive", "negative", "amber"):
+        for token in ("teal", "positive", "negative", "amber", "neutral"):
             assert contrast(tokens[token], paper) >= 4.5, token
+    # Light text also sits on the notice ground (notices, a targeted ledger row): every text token clears 4.5:1 there.
+    for token in ("ink", "muted", "faint", "teal", "positive", "negative", "amber", "neutral"):
+        assert contrast(light[token], light["notice"]) >= 4.5, token
+    # The retuned light set (R4) and its muted-teal accent, not the #35 brown.
+    assert light["paper"] == "#e6dfcc" and light["teal"] == "#3f6660"
 
 
 def phone_layout_width(page, tmp_path, width=390):

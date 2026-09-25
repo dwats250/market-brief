@@ -58,10 +58,10 @@ def test_empty_sections_are_omitted_and_consolidated():
 def test_populated_sections_still_render_in_reading_order():
     _, page = render(fixture_packet(), narrative())
     for heading in ("What matters next", "Equity structure", "Macro &amp; rates", "Sector view",
-                    "Cross-asset structure", "Cuttingboard context", "Sources &amp; coverage"):
+                    "Metals", "Cuttingboard context", "Sources &amp; coverage"):
         assert f"<h2>{heading}</h2>" in page
     order = [page.index(f"<h2>{h}</h2>") for h in ("What matters next", "Equity structure", "Macro &amp; rates",
-                                                   "Sector view", "Cross-asset structure", "Sources &amp; coverage")]
+                                                   "Sector view", "Metals", "Sources &amp; coverage")]
     assert order == sorted(order)
     # Attention items and today's event live inside What matters next, not in their own sections.
     matters = page.split("<h2>What matters next</h2>", 1)[1].split("</section>", 1)[0]
@@ -311,8 +311,8 @@ def test_markdown_tables_keep_shared_clocks_out_of_header_rows():
     for line in md.splitlines():
         if line.startswith("|"):
             assert line.rstrip().endswith("|"), line
-    assert ("**METALS STRUCTURE** · 20-session return spread, GDX vs GLD · Intraday vs prior close"
-            " · as of 12:59 PM PT") in md
+    assert ("\n20-session return spread, GDX vs GLD · Intraday vs prior close · as of 12:59 PM PT\n") in md
+    assert "Cross-asset" not in md and "METALS STRUCTURE" not in md and "\n## Metals\n" in md
 
 
 def test_provisional_session_ending_prints_are_labeled_in_the_brief():

@@ -2,7 +2,7 @@
 
 Order: header → headline / character / short executive read → compact snapshot → what changed →
 what matters next → equity interpretation and support → macro interpretation and rates → sector
-view → cross-asset structure → collapsed sources & coverage. Deterministic rows are the record;
+view → metals → collapsed sources & coverage. Deterministic rows are the record;
 the analyst's interpretation sits above them and is labeled once.
 
 Two clocks. The interpretation (headline, character, read, the take, what changed, watches, section
@@ -722,7 +722,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     if not sector_rows:
         omitted.append("Sector view")
     if not metal_rows:
-        omitted.append("Cross-asset structure")
+        omitted.append("Metals")
     limitations = [reader_limitation(item) for item in packet["coverage"]["limitations"]]
     if omitted:
         limitations.append("Not in this edition: " + ", ".join(omitted))
@@ -1003,8 +1003,7 @@ def markdown(view):
     cross = view["cross_asset"]
     if cross["rows"]:
         asof = f" · {esc(cross['asof'])}" if cross["asof"] else ""
-        lines += ["## Cross-asset structure", "",
-                  f"**METALS STRUCTURE** · {esc(cross['spread_label'])} · {esc(cross['change_label'])}{asof}", "",
+        lines += ["## Metals", "", f"{esc(cross['spread_label'])} · {esc(cross['change_label'])}{asof}", "",
                   "| Instrument | Change | 20D | Spread | vs 50DMA |",
                   "|---|---:|---:|---:|---:|"]
         for row in cross["rows"]:

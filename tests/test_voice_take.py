@@ -49,9 +49,9 @@ from market_brief.synthesize import (
 )
 
 # The fixtures' take: it compresses the stance the read already makes and claims nothing the sample cannot show.
-TAKE = ("The tension is in the curve and metals, not in growth's 20-session lead over SPY, which holds at "
+TAKE = ("The tension is in the curve and metals, not in growth's 20-session lead over SPY, which stands at "
         "{{QQQ-spread20}}.")
-TAKE_IDS = ["treasury-10y-change", "GDX-spread20", "QQQ-spread20"]
+TAKE_IDS = ["treasury-2y-change", "treasury-10y-change", "GDX-spread20", "QQQ-spread20"]
 MISMATCH = "take text and evidence must be both present or both empty"
 # The template's <style> block on main @ a7dc6cde; The Take adds no CSS.
 STYLE_SHA256 = "174f3751b23221f7fced442a4973098b2acddc93ca9735d71d61cea0e7c73bb1"
@@ -291,7 +291,7 @@ def test_the_take_renders_after_the_read_and_before_the_figures():
     packet, value = fixture_packet(), with_take()
     view = presentation(packet, value)
     assert view["take"]["text"] == ("The tension is in the curve and metals, not in growth's 20-session lead over "
-                                    "SPY, which holds at +1.87 pp.")
+                                    "SPY, which stands at +1.87 pp.")
     assert [r["id"] for r in view["take"]["refs"]] == TAKE_IDS
     md, page = render(packet, value)
     read = read_block(page)
@@ -299,7 +299,7 @@ def test_the_take_renders_after_the_read_and_before_the_figures():
     assert read.index(last_summary) < read.index("<b>The take:</b>")
     take = read.split("<b>The take:</b>", 1)[1]
     assert take.startswith(" The tension is in the curve and metals, not in growth&#39;s 20-session lead over SPY, "
-                           "which holds at +1.87 pp. <details class=\"cite\">")
+                           "which stands at +1.87 pp. <details class=\"cite\">")
     marker = take.split("<details", 1)[1].split("</details>", 1)[0]
     assert re.findall(r'<span class="ref"><a href="#evidence-([^"]+)"', marker) == TAKE_IDS
     assert read.rstrip().endswith("</details></div></div>")  # the take is the last block inside `.read`
@@ -307,8 +307,9 @@ def test_the_take_renders_after_the_read_and_before_the_figures():
     lines = md.splitlines()
     index = next(i for i, line in enumerate(lines) if line.startswith("**The take:**"))
     assert lines[index] == ("**The take:** The tension is in the curve and metals, not in growth&#x27;s 20-session "
-                            "lead over SPY, which holds at +1.87 pp. [evidence](#evidence-treasury-10y-change) "
-                            "[evidence](#evidence-GDX-spread20) [evidence](#evidence-QQQ-spread20)")
+                            "lead over SPY, which stands at +1.87 pp. [evidence](#evidence-treasury-2y-change) "
+                            "[evidence](#evidence-treasury-10y-change) [evidence](#evidence-GDX-spread20) "
+                            "[evidence](#evidence-QQQ-spread20)")
     assert lines[index - 1] == "" and lines[index + 1] == "" and lines[index + 2] == "**OBSERVED SNAPSHOT**"
     assert lines[index - 2].startswith(view["summary"][-1]["text"][:40])
 
@@ -654,7 +655,7 @@ def test_the_prompt_says_what_the_validator_checks_literally_in_the_take():
 
 def test_the_prompt_says_attention_reasons_get_the_same_word_check_without_the_exemption():
     records = " ".join(PROMPT.split("RECORDS.", 1)[1].split("\n\n", 1)[0].split())
-    assert "`why` under the take's word check, sell-off included" in records
+    assert "`why` under the take's word check with no sell-off exemption" in records
 
 
 def test_the_prompt_says_placeholders_carry_their_own_sign_and_unit():

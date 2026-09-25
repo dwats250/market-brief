@@ -92,8 +92,8 @@ RECORDS. Every banner, paragraph, and watch cites relevant evidence_ids from
 the supplied catalog; never cite a source ID as evidence. A section with no
 evidence stays empty; the renderer shows availability. Attention: at most three
 existing triggers, each an `attention` item with its exact trigger `id` and a
-short non-recommendational `why` under the take's word check, sell-off
-included; an empty list selects none; never create triggers. Watches: one to
+short non-recommendational `why` under the take's word check with no sell-off
+exemption; an empty list selects none; never create triggers. Watches: one to
 three, each with a condition, an observable confirmation, a contradiction, and
 one horizon: OPENING_HOUR, SESSION, NEXT_CLOSE, NEXT_BRIEF, or EVENT(<id>) for
 a supplied event. A watch names the observable development that would confirm

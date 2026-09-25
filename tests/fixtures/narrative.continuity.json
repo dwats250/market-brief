@@ -38,9 +38,10 @@
     }
   ],
   "take": {
-    "text": "The tension is in the curve and metals, not in growth's 20-session lead over SPY, which holds at {{QQQ-spread20}}.",
+    "text": "The tension is in the curve and metals, not in growth's 20-session lead over SPY, which stands at {{QQQ-spread20}}.",
     "class": "INTERPRETATION",
     "evidence_ids": [
+      "treasury-2y-change",
       "treasury-10y-change",
       "GDX-spread20",
       "QQQ-spread20"

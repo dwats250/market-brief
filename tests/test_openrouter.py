@@ -4,13 +4,16 @@ import pytest
 from test_pipeline import fixture_packet, narrative
 from test_schema_factoring import expand_local_refs
 
+from market_brief.context import edition_profile
 from market_brief.synthesize import (
     OPENROUTER_FALLBACK_MODEL,
     OPENROUTER_MODEL,
     _ModelUnavailableError,
     _openrouter_narrative,
     _TransientOpenRouterError,
+    narrative_schema,
     synthesize_openrouter,
+    transport_schema,
 )
 
 # Strict json_schema structured output is served, per live OpenRouter endpoint data, only by the
@@ -468,12 +471,12 @@ def test_transport_failure_makes_one_http_request_and_enables_metadata(monkeypat
         assert payload["provider"] == PROVIDER_ROUTE
         assert "models" not in payload
         assert payload["reasoning"] == {"effort": "low", "exclude": True}
-        # The prompt advertises the fully inlined schema; the provider enforces its factored
-        # equivalent. Same contract: expanding the factored refs reconstructs the advertised schema.
+        # The prompt copy and the provider-enforced schema are the same factored form, and expanding its
+        # refs reconstructs the fully inlined transport contract exactly.
         advertised = json.loads(payload["messages"][1]["content"])["output_schema"]
         enforced = payload["response_format"]["json_schema"]["schema"]
-        assert "$defs" not in advertised and enforced.get("$defs")
-        assert expand_local_refs(enforced) == advertised
+        assert advertised == enforced and enforced.get("$defs")
+        assert expand_local_refs(enforced) == transport_schema(narrative_schema(edition_profile("PREMARKET")))
         if failure == "timeout":
             raise TimeoutError()
         if failure == "http":

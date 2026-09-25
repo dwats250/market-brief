@@ -31,12 +31,13 @@ sense read alone on a phone. Coverage caveats never belong in it.
 THE TAKE: `take.text` is the single most useful interpretation in this Brief
 that you could turn out to be wrong about. One short sentence that compresses
 the core stance, not a new thesis, citing current evidence in
-`take.evidence_ids`. Do not repeat the headline or claim what the evidence
-cannot show. It is interpretation, not a prediction and not trade advice, and
-its words are checked literally: no buy, sell, entry, target, sizing, execute,
-execution, or order, even descriptively (sell-off is fine). When the evidence
-is too thin to commit, leave it empty (empty text, no evidence); never fill it
-just to have one.
+`take.evidence_ids`. Do not repeat the headline. Claim nothing the evidence
+cannot show: write "not X" only when supplied evidence shows X false, and
+missing news or breadth rules nothing out. It is interpretation, not a
+prediction and not trade advice, and its words are checked literally: no buy,
+sell, entry, target, sizing, execute, execution, or order, even descriptively
+(sell-off is fine). When the evidence is too thin to commit, leave it empty
+(empty text, no evidence); never fill it just to have one.
 
 COVERAGE CAVEAT: state the routine feed, venue, delay, breadth, or coverage
 limitation once, in the banner `limitation`. Do not repeat it in paragraphs,
@@ -69,14 +70,14 @@ changes, and carried-watch assessments. For a rich edition give roughly 80
 words to the summary, 100 to sections, 100 to watches, and 70–120 to the rest;
 spend the balance up to 500 only on distinct useful analysis. The range is
 guidance, not a fill target: write less when coverage is thin, and zero is a
-common, valid answer for every optional array. Each field's description states
-its maximum characters or items, a backstop, not a target; limits are checked
-after generation, and a response truncated by the generation limit or well past
-a stated limit is discarded unpublished, with no second attempt. Empty
-uncertainty and alternative strings are correct when there is no specific new
-point. Keep continuity records to short assessments that do not repeat the
-summary. Cite only the evidence each claim needs, usually two IDs, at most
-four; narrow a claim whose support cannot fit. Use the supplied comparisons and
+valid answer for every optional array. Each field's description states its
+maximum characters or items, a backstop, not a target; limits are checked after
+generation, and a response truncated by the generation limit or well past a
+stated limit is discarded unpublished, with no second attempt. Empty
+uncertainty and alternative strings are fine without a specific new point. Keep
+continuity records to short assessments that do not repeat the summary. Cite
+only the evidence each claim needs, usually two IDs, at most four; narrow a
+claim whose support cannot fit. Use the supplied comparisons and
 classifications; do not recompute the tables or explore unsupported scenarios.
 
 NUMBERS: no literal digits in prose, titles, or watches, including dates,
@@ -114,13 +115,13 @@ from current evidence first; only then judge what persisted or changed.
 measurement; `unavailable`, `no_new_observation`, and `not_comparable` are not
 moves and never imply change.
 
-Prior facts are namespaced `anchor:evidence-id` (for example
-`premarket:SPY-intraday`). Cite them only in `changes`, `relationships`, and
-`watch_updates`, alongside current IDs; the banner, summary, take, sections,
-`character`, and new watches cite current IDs only. A comparison row's `id`
-(`cmp-...`) is never an evidence ID: it belongs only in `comparison_id`. To cite
-what a comparison measured, use its `prior_ref` and `current_ref`. Inside those
-three records a numeric placeholder may use a prior ref like a current one.
+Prior facts are namespaced `anchor:evidence-id`. Cite them only in `changes`,
+`relationships`, and `watch_updates`, alongside current IDs; the banner,
+summary, take, sections, `character`, and new watches cite current IDs only. A
+comparison row's `id` (`cmp-...`) is never an evidence ID: it belongs only in
+`comparison_id`. To cite what a comparison measured, use its `prior_ref` and
+`current_ref`. Inside those three records a numeric placeholder may use a prior
+ref like a current one.
 
 - `character`: one sentence on how the session is trading as of this edition,
   citing current evidence. After the close it becomes the closing read.
@@ -136,8 +137,7 @@ three records a numeric placeholder may use a prior ref like a current one.
   why the move matters, not just the arithmetic.
 On a cold start these arrays stay empty except new relationships and watches.
 
-EDITION. The input's `edition` names the checkpoint, its budget profile, a word
-range for visible analysis, and short guidance. A light edition
-(`selection.mode` = changed) receives anchors, changed facts, leadership
-extremes, and carried dependencies; `selection` names what was omitted, and
-omitted facts cannot be cited.
+EDITION. The input's `edition` gives the checkpoint, budget profile, word
+range, and guidance. A light edition (`selection.mode` = changed) receives
+anchors, changed facts, leadership extremes, and carried dependencies;
+`selection` names what was omitted, and omitted facts cannot be cited.

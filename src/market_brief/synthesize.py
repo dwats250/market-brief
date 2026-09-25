@@ -228,10 +228,11 @@ UNSUPPORTED_WIRE_KEYWORDS = ("minLength", "maxLength", "maxItems", "uniqueItems"
 def transport_schema(schema):
     """The provider-compatible shape of the same contract, fully inlined: types, required, enums.
 
-    The prompt advertises this inlined form and the isolated CLI enforces it directly. The OpenRouter
-    `response_format` sends `factored_transport_schema` instead — an isomorphic `$defs`/`$ref` factoring
-    of this same output — because Anthropic's strict-grammar compiler rejects the fully inlined form as
-    too large; the two are proven identical by expanding every local ref back to this schema."""
+    The isolated CLI enforces this inlined form directly. The OpenRouter route sends
+    `factored_transport_schema` instead, both as the user-message copy and as `response_format` — an
+    isomorphic `$defs`/`$ref` factoring of this same output — because Anthropic's strict-grammar compiler
+    rejects the fully inlined form as too large and the inlined copy cost the light edition its input
+    budget; the two are proven identical by expanding every local ref back to this schema."""
 
     def describe(node):
         notes = []
@@ -287,7 +288,8 @@ def factored_transport_schema(schema):
     replaced. Repeated schema nodes are hoisted into local `$defs` and referenced by
     `#/$defs/...`, which shrinks the fully inlined form the compiler reported as "too large" while
     preserving exact validation semantics (expanding every local ref reconstructs `transport_schema`).
-    Only the provider-enforced `response_format` uses this; the prompt keeps the inlined schema.
+    The OpenRouter route uses this form for both the user-message copy and `response_format` (owner
+    ruling 2026-09-25: the inlined prompt copy put the 2026-09-24 light context 26 bytes over budget).
     """
     wire = transport_schema(schema)
     schema_list_keys = ("anyOf", "allOf", "oneOf")
@@ -447,9 +449,9 @@ def construct_prompt(packet, full=False, context=None, include_schema=True):
 
     `context` is the exact saved artifact when the caller persisted one; otherwise it is built here.
     `full` reproduces the original evidence-plus-catalog payload for diagnostics.
-    OpenRouter retains the factored schema copy: run 34278983083 failed banner schema
-    validation with strict response_format but no copy. The isolated CLI supplies its
-    contract through --json-schema and opts out of the duplicate user-message schema.
+    OpenRouter retains a schema copy, in the same factored form `response_format` enforces: run
+    34278983083 failed banner schema validation with strict response_format but no copy. The
+    isolated CLI supplies its contract through --json-schema and opts out of the duplicate copy.
     """
     instructions = (ROOT / "prompts/synthesis.md").read_text()
     profile = edition_profile(packet["run"]["checkpoint"])
@@ -464,7 +466,7 @@ def construct_prompt(packet, full=False, context=None, include_schema=True):
         limit = min(120_000, profile["input_limit_bytes"])
     if include_schema:
         schema = NARRATIVE_SCHEMA if full else narrative_schema(context.get("edition") or profile)
-        projected["output_schema"] = transport_schema(schema)
+        projected["output_schema"] = factored_transport_schema(schema)
     user = compact_json(projected)
     size = len(user.encode())
     sections = {key: len(compact_json(value).encode()) for key, value in projected.items()}
@@ -665,9 +667,8 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     system, user = construct_prompt(packet, full=full, context=context)
     profile = edition_profile(packet["run"]["checkpoint"])
     analyst = analyst_model()
-    # The provider-enforced schema is the factored equivalent of the inlined schema the prompt
-    # advertises: same contract, small enough for Anthropic's strict-grammar compiler. `schema_hash`
-    # below records exactly this wire form.
+    # The provider-enforced schema is the same factored form the prompt copy carries: the inlined contract,
+    # small enough for Anthropic's strict-grammar compiler. `schema_hash` below records exactly this wire form.
     schema = factored_transport_schema(
         NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile))
     requested_at = datetime.now(timezone.utc).isoformat()

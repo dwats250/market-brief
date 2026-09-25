@@ -653,6 +653,14 @@ def test_the_prompt_says_what_the_validator_checks_literally_in_the_take():
         assert re.search(rf"\b{word}\b", take), word
 
 
+def test_the_take_rules_out_an_alternative_only_on_supplied_evidence():
+    """G3, from a zero-cost replay of the 2026-09-24 premarket: the take said "not isolated stock news" although
+    no news is collected. Absence of evidence rules nothing out; only supplied evidence can exclude."""
+    take = " ".join(PROMPT.split("THE TAKE:", 1)[1].split("\n\n", 1)[0].split())
+    assert 'Claim nothing the evidence cannot show: write "not X" only when supplied evidence shows X false' in take
+    assert "missing news or breadth rules nothing out" in take
+
+
 def test_the_prompt_says_attention_reasons_get_the_same_word_check_without_the_exemption():
     records = " ".join(PROMPT.split("RECORDS.", 1)[1].split("\n\n", 1)[0].split())
     assert "`why` under the take's word check with no sell-off exemption" in records

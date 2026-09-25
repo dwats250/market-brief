@@ -53,8 +53,8 @@ TAKE = ("The tension is in the curve and metals, not in growth's 20-session lead
         "{{QQQ-spread20}}.")
 TAKE_IDS = ["treasury-2y-change", "treasury-10y-change", "GDX-spread20", "QQQ-spread20"]
 MISMATCH = "take text and evidence must be both present or both empty"
-# The template's <style> block on main @ a7dc6cde; The Take adds no CSS.
-STYLE_SHA256 = "174f3751b23221f7fced442a4973098b2acddc93ca9735d71d61cea0e7c73bb1"
+# The template's <style> block on main @ ae7ffce (#35 light palette); The Take adds no CSS.
+STYLE_SHA256 = "3d48cbe445f45fa2b300c1545360ae2f797f896fe4797bd84dd1ff4f19574f18"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):

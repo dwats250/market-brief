@@ -141,14 +141,18 @@ def test_every_local_bound_is_described_in_transport_and_enforced_only_locally()
     strict = Draft202012Validator(local)
     checked = 0
 
-    def visit(node, current, wire):
+    def visit(node, current, wire, array_note=""):
         nonlocal checked
         if isinstance(current, dict):
             for key, child in node["properties"].items():
                 visit(child, current[key], wire["properties"][key])
                 current_child = current[key]
                 if "maxLength" in child:
-                    assert str(child["maxLength"]) in wire["properties"][key].get("description", "")
+                    described = wire["properties"][key].get("description", "")
+                    if key == "text" and "Each text:" in array_note:
+                        # A paragraph array states its items' text bound once, on the array (one grammar node).
+                        described = array_note.split("Each text:", 1)[1]
+                    assert f"At most {child['maxLength']} characters" in described
                     current[key] = "x" * (child["maxLength"] + 1)
                     assert not strict.is_valid(value) and lenient.is_valid(value)
                     current[key] = current_child
@@ -167,7 +171,7 @@ def test_every_local_bound_is_described_in_transport_and_enforced_only_locally()
                     current[index] = child
                     checked += 1
                 else:
-                    visit(node["items"], child, wire["items"])
+                    visit(node["items"], child, wire["items"], wire.get("description", ""))
     visit(local, value, transport)
     assert strict.is_valid(value) and lenient.is_valid(value)
     assert checked >= 40

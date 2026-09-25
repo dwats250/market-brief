@@ -268,6 +268,37 @@ def test_attention_reason_trade_rule_is_unchanged_by_the_take_exemption():
             validate_narrative(value, fixture_packet())
 
 
+def test_a_provider_400_keeps_the_providers_own_bounded_message_and_nothing_else(monkeypatch):
+    """G2.5 recorded only "Provider returned error": OpenRouter's `metadata.raw` carried the reason and was dropped."""
+    import io
+    from urllib.error import HTTPError
+    raw = json.dumps({"type": "error", "request_id": "req_PRIVATE_SENTINEL", "error": {
+        "type": "invalid_request_error",
+        "message": "The compiled grammar is too large, which would cause performance issues.\u0007" + "x" * 400}})
+    body = json.dumps({"error": {"code": 400, "message": "Provider returned error",
+                                 "metadata": {"provider_name": "Anthropic", "raw": raw}},
+                       "user_id": "PRIVATE_USER_SENTINEL"}).encode()
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(1)
+        raise HTTPError(request.full_url, 400, "error", {}, io.BytesIO(body))
+
+    monkeypatch.setattr(synthesize, "urlopen", fake_urlopen)
+    with pytest.raises(ValueError, match="OpenRouter HTTP 400") as exc:
+        synthesize_openrouter(fixture_packet(), api_key="secret")
+    recorded = str(exc.value)
+    assert calls == [1]
+    assert "The compiled grammar is too large, which would cause performance issues." in recorded
+    message = json.loads(recorded.split("diagnostic=", 1)[1])["error"]["metadata"]["provider_message"]
+    assert len(message) == 300 and "\u0007" not in message and message.isprintable()
+    for private in ("req_PRIVATE_SENTINEL", "PRIVATE_USER_SENTINEL", "invalid_request_error", "secret"):
+        assert private not in recorded
+    assert synthesize._provider_message("plain text body") is None
+    assert synthesize._provider_message({"error": "not a dict"}) is None
+    assert synthesize._provider_message(None) is None
+
+
 def test_a_rejected_take_is_one_paid_call_and_no_retry():
     calls = []
 
@@ -699,17 +730,88 @@ def test_the_prompt_keeps_every_semantic_truth_rule():
         assert phrase in lowered, phrase
 
 
-def test_factored_grammar_size_is_recorded_and_bounded():
+def schema_shape(schema):
+    """Distinct compiled structure of a factored schema: every `$defs` body counted once, each `$ref` one node."""
+    counts = dict(nodes=0, objects=0, properties=0)
+
+    def walk(node):
+        if not isinstance(node, dict):
+            return
+        counts["nodes"] += 1
+        if "$ref" in node:
+            return
+        if node.get("type") == "object":
+            counts["objects"] += 1
+            counts["properties"] += len(node["properties"])
+        for child in (*node.get("properties", {}).values(), *node.get("anyOf", []), *node.get("$defs", {}).values()):
+            walk(child)
+        walk(node.get("items"))
+    walk(schema)
+    return counts
+
+
+# The largest provider schema Anthropic compiled fresh and accepted (69c225d, production 2026-09-18). G2.5 on
+# 2026-09-25 (5,497 B, 75 nodes, 12 objects, 58 properties) was rejected; a 5,510-byte design ceiling let it through.
+ACCEPTED_ENVELOPE = dict(bytes=5295, nodes=72, objects=11, properties=55)
+
+
+def test_the_provider_schema_stays_inside_the_envelope_anthropic_has_accepted():
     sizes = {}
     for name, local in (("FULL", NARRATIVE_SCHEMA), ("PREMARKET", narrative_schema(edition_profile("PREMARKET"))),
                         ("OPEN_30M", narrative_schema(edition_profile("OPEN_30M")))):
         inline = synthesize.compact_json(transport_schema(local))
-        factored = synthesize.compact_json(factored_transport_schema(local))
-        sizes[name] = (len(inline.encode()), len(factored.encode()))
-        assert expand_local_refs(json.loads(factored)) == json.loads(inline)
-        # The design estimate for the Take was about 5,510 bytes factored; the live gate proves compilation.
-        assert sizes[name][1] <= 5510
-    print("inline/factored bytes:", sizes)
+        factored = factored_transport_schema(local)
+        assert expand_local_refs(factored) == json.loads(inline)
+        shape = dict(bytes=len(synthesize.compact_json(factored).encode()), **schema_shape(factored))
+        sizes[name] = (len(inline.encode()), shape)
+        for measure, ceiling in ACCEPTED_ENVELOPE.items():
+            assert shape[measure] <= ceiling, (name, measure, shape[measure], ceiling)
+    print("inline bytes / factored shape:", sizes)
+
+
+def test_the_g25_rejected_schema_shape_is_outside_the_envelope(monkeypatch):
+    """The guard would have caught the rejected schema: each paragraph text bound back on its own field."""
+    local = narrative_schema(edition_profile("PREMARKET"))
+    wire = transport_schema(local)
+    for array in [wire["properties"]["summary"], *wire["properties"]["sections"]["properties"].values()]:
+        array["description"], bound = array["description"].split(" Each text: ", 1)
+        array["items"]["properties"]["text"]["description"] = bound
+    monkeypatch.setattr(synthesize, "transport_schema", lambda schema: json.loads(json.dumps(wire)))
+    rejected = synthesize.factored_transport_schema(local)
+    shape = dict(bytes=len(synthesize.compact_json(rejected).encode()), **schema_shape(rejected))
+    assert shape == dict(bytes=5497, nodes=75, objects=12, properties=58)
+    assert any(shape[measure] > ceiling for measure, ceiling in ACCEPTED_ENVELOPE.items())
+
+
+def test_summary_and_section_paragraphs_are_one_wire_node_with_every_text_bound_described():
+    for profile in (None, edition_profile("PREMARKET"), edition_profile("OPEN_30M")):
+        local = NARRATIVE_SCHEMA if profile is None else narrative_schema(profile)
+        wire = transport_schema(local)
+        arrays = {"summary": wire["properties"]["summary"],
+                  **{key: value for key, value in wire["properties"]["sections"]["properties"].items()}}
+        items = {json.dumps(array["items"], sort_keys=True) for array in arrays.values()}
+        assert len(items) == 1  # one node: summary and every section paragraph
+        assert next(iter(arrays.values()))["items"]["properties"]["text"] == {"type": "string",
+                                                                              "description": "Non-empty."}
+        summary_limit = local["properties"]["summary"]["items"]["properties"]["text"]["maxLength"]
+        assert arrays["summary"]["description"].endswith(f"Each text: At most {summary_limit} characters, non-empty.")
+        for key in ("macro", "equities", "attention", "cuttingboard", "events"):
+            assert arrays[key]["description"].endswith("Each text: At most 240 characters, non-empty.")
+        factored = factored_transport_schema(local)
+        paragraph_keys = {"text", "class", "evidence_ids", "uncertainty", "alternative"}
+        found = []
+
+        def collect(node):
+            if isinstance(node, dict):
+                if node.get("type") == "object" and set(node.get("properties", {})) == paragraph_keys:
+                    found.append(node)
+                for value in node.values():
+                    collect(value)
+            elif isinstance(node, list):
+                for value in node:
+                    collect(value)
+        collect(factored)
+        assert len(found) == 1  # the provider compiles one paragraph rule for the summary and every section
 
 
 def test_budgets_are_the_authoritative_edition_limits():

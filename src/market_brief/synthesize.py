@@ -276,7 +276,17 @@ def transport_schema(schema):
                 result["description"] = description
         return result
 
-    return visit(schema)
+    wire = visit(schema)
+    # A paragraph array states its items' text bound once, on the array, so the summary and section paragraphs are
+    # one identical node that the provider's grammar compiles once. The take made the two separate nodes cross
+    # Anthropic's grammar limit (G2.5, 2026-09-25: HTTP 400 at 5,497 bytes); the bound is still described.
+    properties = wire.get("properties", {})
+    if "summary" in properties and "sections" in properties:
+        for array in [properties["summary"], *properties["sections"]["properties"].values()]:
+            text = array["items"]["properties"]["text"]
+            array["description"] = f"{array.get('description', '')} Each text: {text['description']}".strip()
+            text["description"] = "Non-empty."
+    return wire
 
 
 def factored_transport_schema(schema):
@@ -533,9 +543,23 @@ def _openrouter_post(payload, api_key, timeout=180):
         raise _TransientOpenRouterError("OpenRouter network or response failure") from None
 
 
+def _provider_message(raw):
+    """The provider's own error message inside OpenRouter's `metadata.raw` (for example Anthropic's "The compiled
+    grammar is too large…"), bounded and printable. Nothing else from the provider body is kept, and a raw that is
+    not the provider's JSON error yields nothing."""
+    try:
+        raw = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    error = raw.get("error") if isinstance(raw, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    return "".join(ch for ch in message if ch.isprintable())[:300] if isinstance(message, str) else None
+
+
 def _safe_error(exc, limit=20_000):
-    """Run 34486249474 recorded only `OpenRouter HTTP 400`. Keep the documented error code,
-    a bounded message and provider labels; never the raw provider body, headers or IDs."""
+    """Run 34486249474 recorded only `OpenRouter HTTP 400`, and G2.5 (2026-09-25) only "Provider returned error".
+    Keep the documented error code, a bounded message, provider labels and the provider's own bounded error
+    message; never the rest of the raw provider body, headers or IDs."""
     try:
         body = json.loads(exc.read(limit).decode("utf-8"))
         error = body["error"]
@@ -550,6 +574,9 @@ def _safe_error(exc, limit=20_000):
     if isinstance(metadata, dict):
         result["metadata"] = {key: metadata[key][:80] for key in ("provider_name", "error_type", "provider_code")
                               if isinstance(metadata.get(key), str)}
+        detail = _provider_message(metadata.get("raw"))
+        if detail:
+            result["metadata"]["provider_message"] = detail
     return result or "unknown"
 
 

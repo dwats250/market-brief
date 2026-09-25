@@ -55,6 +55,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  g25-experiment:
+    # Isolated one-shot PR #34 grammar/validation check. This job deliberately has no
+    # github-pages environment and cannot publish or upload production continuity.
+    if: inputs.experiment == true && inputs.continuity_check != true && inputs.cloudflare_wakeup != true && inputs.cloudflare_smoke != true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+      APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c818061db11eae4151635d89b91600672722e151
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Market Brief at the pinned PR head
+        run: python -m pip install -e .
+      - name: Restore production continuity read-only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m market_brief continuity-restore --repository "$GITHUB_REPOSITORY" --branch main
+      - name: Run exactly one non-publishing PREMARKET experiment
+        run: python -m market_brief premarket --commissioning --experiment
+      - name: Upload G2.5 evidence and rendered page
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: g25-c818061-${{ github.run_id }}
+          path: |
+            runs/
+            !runs/continuity/
+          if-no-files-found: warn
+          retention-days: 7
+
   continuity-check:
     # Isolated: no Pages environment, no collection, no synthesis, no publishing. Proves the
     # runner-boundary restore and re-uploads whatever it restored under a separate artifact name.
@@ -83,7 +121,7 @@ jobs:
           retention-days: 7
 
   brief:
-    if: inputs.continuity_check != true && inputs.cloudflare_smoke != true
+    if: inputs.experiment != true && inputs.continuity_check != true && inputs.cloudflare_smoke != true
     runs-on: ubuntu-latest
     environment:
       name: github-pages

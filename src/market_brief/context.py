@@ -104,8 +104,14 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
     groups, baselines = {}, {}
     events, context_items = [], []
     for row in valued.values():
-        baselines.setdefault(row["metric"], row.get("baseline"))
-        groups.setdefault(row["topic"], []).append(compact_fact(row))
+        baselines.setdefault(row["metric"], set()).add(row.get("baseline"))
+    for row in valued.values():
+        fact = compact_fact(row)
+        if len(baselines[row["metric"]]) > 1:
+            # One legend entry would misstate some of these rows (2s10s is 10Y minus 2Y, 5s30s is 30Y minus 5Y).
+            fact["baseline"] = row.get("baseline")
+        groups.setdefault(row["topic"], []).append(fact)
+    baselines = {metric: next(iter(values)) for metric, values in baselines.items() if len(values) == 1}
     for row in projected["events"]:
         events.append({key: row[key] for key in ("id", "title", "scheduled_at", "session_relation", "status")
                        if row.get(key) is not None})

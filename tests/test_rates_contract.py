@@ -134,3 +134,24 @@ def test_the_curve_record_passes_the_authority_filter():
     blocked = copy.deepcopy(packet)
     next(source for source in blocked["sources"] if source["id"] == "sample-rates")["llm_allowed"] = False
     assert "curve" not in analyst_context(blocked, profile)
+
+
+def test_the_baseline_legend_never_misstates_a_row():
+    """The legend names one baseline per metric; a metric whose rows differ (2s10s is 10Y minus 2Y, 5s30s is 30Y
+    minus 5Y) carries each row's own baseline instead, so no row reads under another row's definition."""
+    from test_curve import SEP25, rates_packet
+
+    from market_brief.collect import treasury_rows
+    feed = (ROOT / "tests/fixtures/treasury.2026-09.xml").read_text()
+    packet = rates_packet(SEP25, treasury_rows(feed, SEP25, SEP25))
+    rows = {row["id"]: row for row in [*packet["observations"], *packet["derived"]]}
+    for checkpoint in ("PREMARKET", "OPEN_30M"):
+        context = analyst_context(packet, edition_profile(checkpoint))
+        for group in context["catalog"]:
+            for fact in group["rows"]:
+                stated = fact.get("baseline", context["baselines"].get(fact["metric"]))
+                assert stated == rows[fact["id"]]["baseline"], (checkpoint, fact["id"], stated)
+        facts = {fact["id"]: fact for group in context["catalog"] for fact in group["rows"]}
+        assert "curve spread" not in context["baselines"]
+        assert facts["treasury-5s30s"]["baseline"] == "30Y minus 5Y daily par yield, one daily entry"
+        assert "baseline" not in facts["treasury-10y"]  # one shared baseline stays in the legend

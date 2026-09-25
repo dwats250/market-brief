@@ -788,6 +788,23 @@ Baseline at 14670b0: 474 passed, ruff clean. Tests-first for S1–S2 (new behavi
   the 390 px overflow check on a page with the chart, and the base narrative contract pinned too. Refuted and left: the
   PRD's own "Treasuries sold off; yields rose" wording in the prompt contains a semicolon, which the headline validator
   forbids (owner decision, below).
+- **Live merge gate (2026-09-25, one call).** The production OpenRouter key exists only as an Actions secret and no
+  workflow could be dispatched, so by owner ruling the one call used the code's no-key route (local Claude CLI,
+  `--json-schema`) with the configured analyst family, Fable 5.1 (`claude-fable-5-1`; served model reported
+  `claude-fable-5-1`). Context: the real 2026-09-24 OPEN_30M run (hash-exact rebuild at base) with Treasury rows
+  re-collected from Treasury's own feed; light profile; context 32,696 B, production-form user message 37,908 B (2,092
+  headroom); prompt v0.3 (file sha256 1f17efd1…; production-form prompt hash c4079872…, CLI-form 3b9d73f8… because the
+  CLI user message carries no schema copy); curve record "Parallel shift higher" with the long-end note "5s30s flattened
+  5 bp."; no release-after-curve note (production's BLS calendar was unavailable on every archived day). Result: PASS
+  on every local validator in 117 s, no editorial overrun. The only rates prose: "Yesterday's curve was a parallel shift
+  higher, yet rate-sensitive XLU and XLRE are little changed so far; today's yields are unknown." It dates the curve,
+  uses the supplied label, disclaims intraday yields and claims no cause or reaction; `2s10s`/`5s30s` were not used, so
+  their live acceptance rests on the unit tests. Three independent reviewers found no material A–E violation (minor
+  notes: the "yet … so far" contrast, the label cited on the 2Y change only, the unenforced word range as before this
+  pass). One context defect surfaced: the analyst's baseline legend is keyed by metric, so both spread levels read "10Y
+  minus 2Y". Fixed mechanically (a legend entry only when every row of the metric shares it; otherwise each row carries
+  its own) with a regression test; contexts without such a conflict are byte-identical (fixtures 14,084 / 12,963 B), the
+  09-24 context grows by 55 B to 37,963 (2,037 headroom). Per the gate, the merge is held for the owner.
 - **Real curve.** Treasury's 2026 feed (fetched 2026-09-25) gives Sep 24: 2Y 4.87 / 5Y 5.03 / 10Y 5.18 / 30Y 5.47 (+2 / +4 /
   +7 / +7 bp vs Sep 23): 2s10s 31 bp, 5 bp steeper; 5s30s 44 bp, 3 bp steeper → Bear steepener. Real Dec 2025 / Jan 2026
   entries back the January fixtures (`tests/fixtures/treasury.*.xml`, trimmed from Treasury's own XML).

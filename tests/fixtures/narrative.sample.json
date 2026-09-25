@@ -38,11 +38,11 @@
     }
   ],
   "take": {
-    "text": "Growth's edge rests on one mega-cap, NVDA at {{NVDA-spread20}} over QQQ, not on broad participation.",
+    "text": "Growth's lead, QQQ {{QQQ-spread20}} ahead of SPY over 20 sessions, is the first read to go if mega-cap strength fades.",
     "class": "INTERPRETATION",
     "evidence_ids": [
-      "NVDA-spread20",
-      "QQQ-spread20"
+      "QQQ-spread20",
+      "NVDA-spread20"
     ]
   },
   "sections": {

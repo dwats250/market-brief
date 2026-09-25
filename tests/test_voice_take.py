@@ -48,8 +48,10 @@ from market_brief.synthesize import (
     validate_narrative,
 )
 
-TAKE = "Growth's edge rests on one mega-cap, NVDA at {{NVDA-spread20}} over QQQ, not on broad participation."
-TAKE_IDS = ["NVDA-spread20", "QQQ-spread20"]
+# The fixtures' take: it compresses the stance the read already makes and claims nothing the sample cannot show.
+TAKE = ("Growth's lead, QQQ {{QQQ-spread20}} ahead of SPY over 20 sessions, is the first read to go if mega-cap "
+        "strength fades.")
+TAKE_IDS = ["QQQ-spread20", "NVDA-spread20"]
 MISMATCH = "take text and evidence must be both present or both empty"
 # The template's <style> block on main @ a7dc6cde; The Take adds no CSS.
 STYLE_SHA256 = "174f3751b23221f7fced442a4973098b2acddc93ca9735d71d61cea0e7c73bb1"
@@ -288,25 +290,25 @@ def read_block(page):
 def test_the_take_renders_after_the_read_and_before_the_figures():
     packet, value = fixture_packet(), with_take()
     view = presentation(packet, value)
-    assert view["take"]["text"] == ("Growth's edge rests on one mega-cap, NVDA at +6.39 pp over QQQ, "
-                                    "not on broad participation.")
+    assert view["take"]["text"] == ("Growth's lead, QQQ +1.87 pp ahead of SPY over 20 sessions, is the first read "
+                                    "to go if mega-cap strength fades.")
     assert [r["id"] for r in view["take"]["refs"]] == TAKE_IDS
     md, page = render(packet, value)
     read = read_block(page)
     last_summary = view["summary"][-1]["text"]
     assert read.index(last_summary) < read.index("<b>The take:</b>")
     take = read.split("<b>The take:</b>", 1)[1]
-    assert take.startswith(" Growth&#39;s edge rests on one mega-cap, NVDA at +6.39 pp over QQQ, not on broad "
-                           "participation. <details class=\"cite\">")
+    assert take.startswith(" Growth&#39;s lead, QQQ +1.87 pp ahead of SPY over 20 sessions, is the first read to go "
+                           "if mega-cap strength fades. <details class=\"cite\">")
     marker = take.split("<details", 1)[1].split("</details>", 1)[0]
     assert re.findall(r'<span class="ref"><a href="#evidence-([^"]+)"', marker) == TAKE_IDS
     assert read.rstrip().endswith("</details></div></div>")  # the take is the last block inside `.read`
     # Markdown: the take is the paragraph after the read, then one ordinary blank line.
     lines = md.splitlines()
     index = next(i for i, line in enumerate(lines) if line.startswith("**The take:**"))
-    assert lines[index] == ("**The take:** Growth&#x27;s edge rests on one mega-cap, NVDA at +6.39 pp over QQQ, not on "
-                            "broad participation. [evidence](#evidence-NVDA-spread20) "
-                            "[evidence](#evidence-QQQ-spread20)")
+    assert lines[index] == ("**The take:** Growth&#x27;s lead, QQQ +1.87 pp ahead of SPY over 20 sessions, is the "
+                            "first read to go if mega-cap strength fades. [evidence](#evidence-QQQ-spread20) "
+                            "[evidence](#evidence-NVDA-spread20)")
     assert lines[index - 1] == "" and lines[index + 1] == "" and lines[index + 2] == "**OBSERVED SNAPSHOT**"
     assert lines[index - 2].startswith(view["summary"][-1]["text"][:40])
 
@@ -641,6 +643,20 @@ def test_the_prompt_defines_the_take():
     for phrase in ("one short sentence", "current evidence", "do not repeat the headline", "leave it empty",
                    "never fill it", "not a prediction", "not trade advice"):
         assert phrase in lowered, phrase
+
+
+def test_the_prompt_says_what_the_validator_checks_literally_in_the_take():
+    take = " ".join(PROMPT.split("THE TAKE:", 1)[1].split("\n\n", 1)[0].split())
+    assert "checked literally" in take and "(sell-off is fine)" in take
+    for word in synthesize.TRADE_LANGUAGE.pattern.split("(", 1)[1].split(")", 1)[0].split("|"):
+        assert re.search(rf"\b{word}\b", take), word
+
+
+def test_the_prompt_says_placeholders_carry_their_own_sign_and_unit():
+    numbers = " ".join(PROMPT.split("NUMBERS:", 1)[1].split("\n\n", 1)[0].split())
+    assert "with its sign and unit, so write no unit, % sign, or up/down word beside it" in numbers
+    budget = " ".join(PROMPT.split("BUDGET.", 1)[1].split("\n\n", 1)[0].split())
+    assert "a backstop, not a target" in budget
 
 
 def test_the_prompt_keeps_every_semantic_truth_rule():

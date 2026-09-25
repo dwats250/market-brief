@@ -124,7 +124,7 @@ def test_transport_schema_uses_only_documented_provider_keywords(checkpoint):
         transport = transport_schema(local)
         Draft202012Validator.check_schema(transport)
         assert keywords(transport) <= PROVIDER_KEYWORDS
-        # Fully inlined: no schema references of any spelling reach the provider.
+        # The inlined form (the Claude CLI's --json-schema, and what every factored ref expands to) has no refs.
         assert not any(token in json.dumps(transport) for token in ("$ref", "$defs", "definitions", "oneOf"))
         # Same shape: a complete bounded response satisfies both contracts.
         Draft202012Validator(transport).validate(maximum_shape(local))

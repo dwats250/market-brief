@@ -33,11 +33,11 @@ that you could turn out to be wrong about. One short sentence that compresses
 the core stance, not a new thesis, citing current evidence in
 `take.evidence_ids`. Do not repeat the headline. Claim nothing the evidence
 cannot show: write "not X" only when supplied evidence shows X false, and
-missing news or breadth rules nothing out. It is interpretation, not a
-prediction and not trade advice, and its words are checked literally: no buy,
-sell, entry, target, sizing, execute, execution, or order, even descriptively
-(sell-off is fine). When the evidence is too thin to commit, leave it empty
-(empty text, no evidence); never fill it just to have one.
+missing data rules nothing out. It is interpretation, not a prediction and not
+trade advice, and its words are checked literally: no buy, sell, entry, target,
+sizing, execute, execution, or order, even descriptively (sell-off is fine).
+When the evidence is too thin to commit, leave it empty (empty text, no
+evidence); never fill it just to have one.
 
 COVERAGE CAVEAT: state the routine feed, venue, delay, breadth, or coverage
 limitation once, in the banner `limitation`. Do not repeat it in paragraphs,
@@ -74,10 +74,10 @@ valid answer for every optional array. Each field's description states its
 maximum characters or items, a backstop, not a target; limits are checked after
 generation, and a response truncated by the generation limit or well past a
 stated limit is discarded unpublished, with no second attempt. Empty
-uncertainty and alternative strings are fine without a specific new point. Keep
-continuity records to short assessments that do not repeat the summary. Cite
-only the evidence each claim needs, usually two IDs, at most four; narrow a
-claim whose support cannot fit. Use the supplied comparisons and
+uncertainty and alternative strings are correct without a specific new point.
+Keep continuity records to short assessments that do not repeat the summary.
+Cite only the evidence each claim needs, usually two IDs, at most four; narrow
+a claim whose support cannot fit. Use the supplied comparisons and
 classifications; do not recompute the tables or explore unsupported scenarios.
 
 NUMBERS: no literal digits in prose, titles, or watches, including dates,

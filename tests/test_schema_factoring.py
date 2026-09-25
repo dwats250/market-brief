@@ -2,9 +2,10 @@
 
 Anthropic's strict-grammar compiler rejects the fully inlined Market Brief schema as too large
 ("The compiled grammar is too large", HTTP 400). The fix factors repeated genuine schema nodes into
-local `$defs` for the OpenRouter `response_format` only; the prompt keeps advertising the fully
-inlined form. These tests prove the two are the same contract by expanding every local ref back to
-the inlined schema exactly — no field, type, requirement, or enum may differ.
+local `$defs`. The OpenRouter route sends this factored form both as `response_format` and, since the
+owner ruling of 2026-09-25, as the user-message copy; only the Claude CLI's `--json-schema` carries the
+inlined form. These tests prove the two are the same contract by expanding every local ref back to the
+inlined schema exactly — no field, type, requirement, or enum may differ.
 """
 
 import json
@@ -113,7 +114,8 @@ def test_openrouter_prompt_copy_and_response_format_are_one_factored_schema():
     assert metadata["schema_hash"] == digest(enforced)  # provenance records what was sent on the wire
 
 
-@pytest.mark.parametrize("checkpoint, full", [("PREMARKET", False), ("OPEN_30M", False), ("PREMARKET", True)])
+@pytest.mark.parametrize("checkpoint, full", [("PREMARKET", False), ("OPEN_30M", False), ("PREMARKET", True),
+                                              ("OPEN_30M", True)])
 def test_the_prompt_schema_copy_expands_exactly_to_the_inline_transport_schema(checkpoint, full):
     """The schema the analyst reads in the user message, for every synthesis profile and the diagnostic
     full packet: structurally the inlined transport contract, only factored. No field, bound description,
@@ -129,6 +131,21 @@ def test_the_prompt_schema_copy_expands_exactly_to_the_inline_transport_schema(c
     _, user = construct_prompt(packet, full=full, context=context)
     prompt_schema = json.loads(user)["output_schema"]
     contract = NARRATIVE_SCHEMA if full else narrative_schema(profile)
+    # The real emitted request: its user-message copy and `response_format` are one schema.
+    sent = []
+
+    def requester(payload, api_key):
+        sent.append(payload)
+        return {"id": "r", "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(narrative())}}]}
+
+    try:
+        synthesize_openrouter(packet, api_key="secret", requester=requester, full=full, context=context)
+    except ValueError:
+        pass  # acceptance of the stand-in narrative is not what this test measures
+    assert len(sent) == 1
+    copy_sent = json.loads(sent[0]["messages"][1]["content"])["output_schema"]
+    enforced = sent[0]["response_format"]["json_schema"]["schema"]
+    assert compact(copy_sent) == compact(enforced) == compact(prompt_schema)
     assert prompt_schema.get("$defs")
     assert expand_local_refs(prompt_schema) == transport_schema(contract)
     assert compact(prompt_schema) == compact(factored_transport_schema(contract))

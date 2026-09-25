@@ -668,7 +668,7 @@ def test_the_take_rules_out_an_alternative_only_on_supplied_evidence():
     no news is collected. Absence of evidence rules nothing out; only supplied evidence can exclude."""
     take = " ".join(PROMPT.split("THE TAKE:", 1)[1].split("\n\n", 1)[0].split())
     assert 'Claim nothing the evidence cannot show: write "not X" only when supplied evidence shows X false' in take
-    assert "missing news or breadth rules nothing out" in take
+    assert "and missing data rules nothing out" in take
 
 
 def test_the_prompt_says_attention_reasons_get_the_same_word_check_without_the_exemption():
@@ -693,7 +693,9 @@ def test_the_prompt_keeps_every_semantic_truth_rule():
                    "`comparison_id`", "omitted facts cannot be cited", "sample", "never present sample data as live",
                    "once, in the banner `limitation`", "indeterminate", "improving/deteriorating",
                    "prior state is structured earlier analysis", "never evidence", "no_new_observation",
-                   "no second attempt", "discarded"):
+                   "no second attempt", "discarded", "missing breadth, news, fx, or live rates stay unknown",
+                   "never claim complete news or event coverage",
+                   "empty uncertainty and alternative strings are correct without a specific new point"):
         assert phrase in lowered, phrase
 
 

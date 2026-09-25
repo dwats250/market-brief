@@ -653,6 +653,16 @@ def test_the_prompt_says_what_the_validator_checks_literally_in_the_take():
         assert re.search(rf"\b{word}\b", take), word
 
 
+def test_the_prior_ref_namespace_keeps_its_concrete_example_and_no_identifier_is_wrapped():
+    """A zero-cost replay of the 2026-09-24 premarket, run while the example had been trimmed, cited
+    `anchor:previous_close:QQQ-intraday` in four continuity records: the bare template was read literally. The
+    example is load-bearing, and a code span broken across lines would teach a broken identifier."""
+    continuity = " ".join(PROMPT.split("CONTINUITY.", 1)[1].split())
+    assert "namespaced `anchor:evidence-id` (for example `premarket:SPY-intraday`)" in continuity
+    assert all("\n" not in span for span in re.findall(r"`[^`]*`", PROMPT))
+    assert not any(line.endswith("-") for line in PROMPT.splitlines())
+
+
 def test_the_take_rules_out_an_alternative_only_on_supplied_evidence():
     """G3, from a zero-cost replay of the 2026-09-24 premarket: the take said "not isolated stock news" although
     no news is collected. Absence of evidence rules nothing out; only supplied evidence can exclude."""

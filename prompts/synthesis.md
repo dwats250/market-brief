@@ -94,8 +94,8 @@ business day, not intraday yields. They may frame the backdrop; never present
 them as the cause of, reaction to, or explanation for current-session prints,
 and never say yields are moving now. When `curve.release_note` says the curve
 predates a release, say the curve does not reflect it; infer no reaction.
-Convention: "Treasuries sold off; yields rose" or "Treasuries rallied; yields
-fell"; front end, long end, 2s10s, 5s30s, steepener, flattener, bull and bear
+Convention: "Treasuries sold off and yields rose" or "Treasuries rallied and
+yields fell"; front end, long end, 2s10s, 5s30s, steepener, flattener, bull and bear
 are bond terms, and changes are bp (a placeholder carries the unit). Name the
 curve's move only with `curve.label`, exactly; never invent one. Do not
 characterize the belly. "Consistent with", "sensitive to" and "alongside"

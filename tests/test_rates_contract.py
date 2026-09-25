@@ -78,7 +78,8 @@ def test_the_prompt_states_the_rates_convention_and_timing_tersely():
     for phrase in ("official daily par curve from the previous business day", "not intraday yields",
                    "never present them as the cause of, reaction to, or explanation for current-session prints",
                    "never say yields are moving now", "`curve.release_note`", "the curve does not reflect it",
-                   '"Treasuries sold off; yields rose"', '"Treasuries rallied; yields fell"', "front end, long end",
+                   '"Treasuries sold off and yields rose"', '"Treasuries rallied and yields fell"',
+                   "front end, long end",
                    "steepener, flattener, bull and bear", "changes are bp", "`curve.label`, exactly",
                    "never invent one", "Do not characterize the belly", '"Consistent with", "sensitive to" and '
                    '"alongside"', "never tie the prior-day curve to a same-session move"):

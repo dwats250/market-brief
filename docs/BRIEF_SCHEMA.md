@@ -16,16 +16,17 @@ not filler. Avoid repeated summaries of the same moves in multiple sections.
 
 | Order | Section | Content and limits |
 |---|---|---|
-| A | Header | One status / edition / date / as-of line; sample or commissioning truth stated once |
+| A | Header | Masthead with the date; a status line only when not LIVE (`SAMPLE · Premarket edition`); three clocks: `Prices` (latest table print or `prior close <date>`), `Analysis` (`<time> · premarket` / `opening structure`), `Next` (`<time> · price refresh` / `analysis update` / `close snapshot`, or `<date> · <time> · premarket analysis`), or one `Prices & analysis` line when a synthesis's two clocks coincide; sample or commissioning truth stated once |
 | B | Headline, character, executive read | One headline claim; INTERPRETATION label with the qualitative state and the session character; one or two short paragraphs; then "The take:" in one line when the analyst committed to one |
 | C | Compact snapshot | Up to six exact fact chips with their clocks; missing domains in plain language |
-| D | What changed | "Since the previous close · date" or "Since the premarket edition": analyst-interpreted `changed` comparisons and carried relationship assessments; a plain note when nothing comparable changed or continuity is unavailable |
+| D | What changed | A section captioned by its anchors ("vs the previous close · date", "vs premarket and the 6:31 AM PT refresh"), ending on a carried page at its analysis ("· through the 7:01 AM PT analysis"): analyst-interpreted `changed` comparisons and carried relationship assessments; a plain note when nothing comparable changed or continuity is unavailable |
 | E | What matters next | Watches with natural horizons ("Into the close…", "At the next update…"), carried watches with their latest assessment, up to three attention items, today's and next-session events |
 | F | Equity structure | Interpretation first, then the mega-cap table (dated change, 20D, vs QQQ · 20s, vs 50DMA) |
-| G | Macro & rates | Interpretation, then Treasury maturities with yield and paired daily change in bp |
+| G | Macro & rates | The rates module first: "U.S. Treasury par curve · <date> · official daily observation" (or "latest official daily observation"), 2Y/5Y/10Y/30Y with yield (`5.18%`) and paired daily change (whole bp, neutral colour), 2s10s and 5s30s lines ("31 bp · 5 bp steeper"), the named curve move in bold with its sentence, an inline chart of the observed tenors with the prior entry dashed, notes (release-after-curve, stale, missing spread); then the analyst's paragraphs; then the proof |
 | H | Sector view | Sector names first, tickers muted, ranked by the labeled 20-session spread vs SPY strongest to weakest; a separate dated change column; missing ranks last |
-| I | Cross-asset structure | One row per metal instrument with its named benchmark |
+| I | Metals | One row per metal instrument with its named benchmark |
 | J | Cuttingboard context | Optional literal quotation; omitted when absent |
+| Guide | How to read this brief (collapsed, HTML only) | The latest curve move, 2s10s, 5s30s, bull and bear, the par curve, the three clocks, § evidence, all curve moves |
 | Footer | Sources & coverage (collapsed) | Basis, limitations, source ledger, evidence ledger, technical details including continuity status |
 
 Editions share one contract; `config/editions.json` sets the budget profile and word guidance
@@ -33,10 +34,11 @@ for the two synthesis checkpoints (rich premarket, light opening structure). Det
 checkpoints (open +1M, hourly refreshes, close snapshot) render the last accepted synthesis from
 its frozen interpretation record (`market-brief.continuity.v1`, kind `interpretation`: the
 narrative, every cited row at the values the analyst saw (the take's included), the prior state it assessed, resolved
-horizons, selected triggers) under this run's observed record. The header's one clock line therefore
-names two clocks, "Analysis anchored" (the interpretation) and "Observed record refreshed" (this run),
-and the scheduler's next update; a synthesis edition reads "As of". Each row keeps its own observation
-clock. The "What changed" heading carries a sub-caption naming the anchors.
+horizons, selected triggers) under this run's observed record. The header therefore names each clock for
+what it measures: "Prices" (the latest table print), "Analysis" (the interpretation and its edition) and
+"Next" (the scheduler's next update, which the page marks "Update due … has not published" once it is
+overdue in the reader's browser). Each row keeps its own observation clock. The "What changed" heading
+carries a sub-caption naming the anchors and, on a carried page, the analysis it runs through.
 
 ## Narrative record
 

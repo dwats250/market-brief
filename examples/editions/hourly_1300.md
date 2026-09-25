@@ -1,7 +1,11 @@
 # Growth has the lead. Confirmation is still missing.
 
 SAMPLE · Hourly refresh · Tuesday, Sep 8
-Analysis anchored 6:00 AM PT · Observed record refreshed 10:01 AM PT · Next update · 11:00 AM PT
+
+- Prices · 10:01 AM PT
+- Analysis · 6:00 AM PT · premarket
+- Next · 11:00 AM PT · price refresh
+
 > FICTIONAL SAMPLE / REPLAY — not current market facts.
 
 **INTERPRETATION — MIXED** · A growth-led, mixed fictional map: the benchmark edge sits with QQQ while the curve and metals send conflicting signals. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change)
@@ -48,18 +52,28 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 ## Macro & rates
 
-The front-end move was -4.00 bp, against +1.00 bp at the longer end. Calling that simply lower rates would hide the curve&#x27;s divergence. The gold fund and miners also moved in opposite directions. [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change) [evidence](#evidence-GLD-daily) [evidence](#evidence-GDX-daily)
+**U.S. TREASURY PAR CURVE** · Fri, Sep 4 · latest official daily observation
+
+| Maturity | Yield | Daily change |
+|---|---:|---:|
+| 2Y | 3.86% | −4 bp |
+| 5Y | no print | — |
+| 10Y | 4.12% | +1 bp |
+| 30Y | no print | — |
+
+- 2s10s · 26 bp · 5 bp steeper
+
+**Bull steepener** — Front-end yields fell more than the long end.
+
+No 5s30s: the latest curve has no 5Y or 30Y yield.
+
+Curve predates the 7:00 AM PT Fictional manufacturing survey release.
+
+The front-end move was −4 bp, against +1 bp at the longer end. Calling that simply lower rates would hide the curve&#x27;s divergence. The gold fund and miners also moved in opposite directions. [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change) [evidence](#evidence-GLD-daily) [evidence](#evidence-GDX-daily)
 
 Caveat: These are dated daily observations, not evidence of a premarket reaction.
 
 Could also be: Different duration exposure and company-specific effects may explain some of the contrast.
-
-**TREASURY PAR YIELDS** · Fri, Sep 4
-
-| Maturity | Yield | Daily change | Date |
-|---|---:|---:|---|
-| 2Y | 3.86 % yield | -4.00 bp |  |
-| 10Y | 4.12 % yield | +1.00 bp |  |
 
 Exact values and baselines for every cell are in the evidence ledger.
 
@@ -73,9 +87,9 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 Exact values and baselines for every cell are in the evidence ledger.
 
-## Cross-asset structure
+## Metals
 
-**METALS STRUCTURE** · 20-session return spread, GDX vs GLD · Intraday vs prior close · as of 10:01 AM PT
+20-session return spread, GDX vs GLD · Intraday vs prior close · as of 10:01 AM PT
 
 | Instrument | Change | 20D | Spread | vs 50DMA |
 |---|---:|---:|---:|---:|
@@ -98,18 +112,18 @@ Exact values and baselines for every cell are in the evidence ledger.
 **US 2Y**
 
 <a id="evidence-treasury-2y"></a>
-**treasury-2y** · US 2Y · 3.86 % yield · previous daily Treasury-style observation · observed/published 2026-09-04 · source sample-rates
+**treasury-2y** · US 2Y · 3.86% · previous daily Treasury-style observation · observed/published 2026-09-04 · source sample-rates
 
 <a id="evidence-treasury-2y-change"></a>
-**treasury-2y-change** · US 2Y · -4.00 bp · previous daily Treasury-style observation · observed/published 2026-09-04 · source sample-rates
+**treasury-2y-change** · US 2Y · −4 bp · previous daily Treasury-style observation · observed/published 2026-09-04 · source sample-rates
 
 **US 10Y**
 
 <a id="evidence-treasury-10y"></a>
-**treasury-10y** · US 10Y · 4.12 % yield · previous daily Treasury-style observation · observed/published 2026-09-04 · source sample-rates
+**treasury-10y** · US 10Y · 4.12% · previous daily Treasury-style observation · observed/published 2026-09-04 · source sample-rates
 
 <a id="evidence-treasury-10y-change"></a>
-**treasury-10y-change** · US 10Y · +1.00 bp · previous daily Treasury-style observation · observed/published 2026-09-04 · source sample-rates
+**treasury-10y-change** · US 10Y · +1 bp · previous daily Treasury-style observation · observed/published 2026-09-04 · source sample-rates
 
 **SPY**
 
@@ -221,6 +235,14 @@ Exact values and baselines for every cell are in the evidence ledger.
 
 <a id="evidence-GDX-spread20"></a>
 **GDX-spread20** · GDX · -3.13 pp · twenty-session price return minus GLD · observed/published 2026-09-04 · source sample-prices
+
+**US 2s10s**
+
+<a id="evidence-treasury-2s10s"></a>
+**treasury-2s10s** · US 2s10s · 26 bp · 10Y minus 2Y daily par yield, one daily entry · observed/published 2026-09-04 · source sample-rates
+
+<a id="evidence-treasury-2s10s-change"></a>
+**treasury-2s10s-change** · US 2s10s · +5 bp · previous daily Treasury-style observation · observed/published 2026-09-04 · source sample-rates
 
 **Fictional manufacturing survey**
 

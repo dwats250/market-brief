@@ -680,7 +680,7 @@ Baseline at 14670b0: 474 passed, ruff clean. Tests-first for S1–S2 (new behavi
 - [x] **S8 · R11 analyst contract.** `ALLOWED_LABELS` + prompt label list; prompt bond/timing/language rules; 30Y and
   spread rows as context anchors plus the compact curve record; measure fixture and archived production contexts
   before/after; decide light headroom; prove the narrative schema byte-identical.
-- [ ] **S9 · R13.** DECISIONS, PROJECT_STATE, BRIEF_SCHEMA, README; regenerate `examples/editions/*` with the PR #33
+- [x] **S9 · R13.** DECISIONS, PROJECT_STATE, BRIEF_SCHEMA, README; regenerate `examples/editions/*` with the PR #33
   replay recipe.
 - [ ] **S10 · Verification.** Render the eight §6 pages; headless-Chrome screenshots at 390/1000 × light/dark; overdue
   state, § hit area, no 390 px overflow; independent review of the whole diff against this file.

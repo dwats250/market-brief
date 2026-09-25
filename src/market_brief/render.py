@@ -912,7 +912,7 @@ def markdown(view):
     lines = [f"# {esc(view['banner']['title'])}", "", esc(header), ""]
     lines += [f"- {clock['label']} · {esc(clock['text'])}" for clock in view["clocks"]]  # labels are constants
     if view["truth"]:
-        lines.append(f"> {esc(view['truth'])}")
+        lines += ["", f"> {esc(view['truth'])}"]
     lines += ["", f"**INTERPRETATION — {view['banner']['label']}** · {esc(view['character'])} "
               f"{refs(view['character_ids'])}", ""]
     if view["banner"]["limitation"]:

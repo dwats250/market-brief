@@ -677,7 +677,7 @@ Baseline at 14670b0: 474 passed, ruff clean. Tests-first for S1–S2 (new behavi
   Metals rename, light palette, no text opacity, first-marker label via template namespace, 32×32 hit area. Raise faint
   floor, assert text-on-notice, re-pin `STYLE_SHA256`.
 - [x] **S7 · R12 guide.** Collapsed `How to read this brief` details above Sources & coverage; HTML only.
-- [ ] **S8 · R11 analyst contract.** `ALLOWED_LABELS` + prompt label list; prompt bond/timing/language rules; 30Y and
+- [x] **S8 · R11 analyst contract.** `ALLOWED_LABELS` + prompt label list; prompt bond/timing/language rules; 30Y and
   spread rows as context anchors plus the compact curve record; measure fixture and archived production contexts
   before/after; decide light headroom; prove the narrative schema byte-identical.
 - [ ] **S9 · R13.** DECISIONS, PROJECT_STATE, BRIEF_SCHEMA, README; regenerate `examples/editions/*` with the PR #33
@@ -718,6 +718,43 @@ Baseline at 14670b0: 474 passed, ruff clean. Tests-first for S1–S2 (new behavi
   rows counted as price history in `continuity.closing_data`), and a curve older than the seven-day admission window read
   as "no 2Y or 10Y yield" instead of stale. A third finding (spread rows reach the analyst before S8 allows `2s10s` in
   prose) was refuted as slice ordering on an undeployed branch; S8 closes it and nothing merges before it.
+- **Context sizes (R11).** Bytes of the synthesis user message (context plus the factored output schema), the quantity
+  the edition budgets bound. "Base rebuild" is this method run on 14670b0: each archived context rebuilt from its own
+  `evidence.json` with the archived prior state and comparisons; `=` marks a rebuild whose hash equals the archived
+  context hash (13 of 18), `≠` a run produced by older code (09-14/15, 09-23 OPEN_30M), whose archived size is the
+  production number. "After" re-collects the Treasury rows from Treasury's own 2026 feed at each run's time (30Y,
+  integer bp), then re-derives and rebuilds with this branch (curve rows as anchors, the curve record). Carried prior
+  values keep their archived (unrounded) form, so "after" is conservative. Script: session scratchpad `measure_ctx.py`.
+
+  | Context | Profile | Archived | Base rebuild | After | Δ | Headroom after |
+  |---|---|---:|---:|---:|---:|---:|
+  | fixture PREMARKET | rich | — | 13,411 | 14,084 | +673 | 49,916 |
+  | fixture OPEN_30M | light | — | 12,203 | 12,963 | +760 | 27,037 |
+  | 09-14 PREMARKET bdee78d0 | rich | 48,902 | 48,950 ≠ | 50,285 | +1,335 | 13,715 |
+  | 09-14 OPEN_30M 65bf4263 | light | 34,109 | 34,068 ≠ | 35,403 | +1,335 | 4,597 |
+  | 09-15 PREMARKET 1a3b2836 | rich | 29,900 | 29,948 ≠ | 31,293 | +1,345 | 32,707 |
+  | 09-15 OPEN_30M 718df6d1 | light | 35,846 | 35,947 ≠ | 37,292 | +1,345 | 2,708 |
+  | 09-16 OPEN_30M 0a77dea4 | light | 19,330 | 19,330 = | 20,669 | +1,339 | 19,331 |
+  | 09-17 OPEN_30M cf7ac84a | light | 19,002 | 19,002 = | 20,337 | +1,335 | 19,663 |
+  | 09-18 PREMARKET 0ca8e18f | rich | 40,260 | 40,260 = | 41,602 | +1,342 | 22,398 |
+  | 09-18 OPEN_30M 5c201c0e | light | 20,416 | 20,416 = | 21,758 | +1,342 | 18,242 |
+  | 09-21 PREMARKET 234d70b5 | rich | 45,276 | 45,276 = | 46,653 | +1,377 | 17,347 |
+  | 09-21 OPEN_30M b0d4b881 | light | 32,278 | 32,278 = | 33,655 | +1,377 | 6,345 |
+  | 09-22 PREMARKET a2e6b4fb | rich | 46,122 | 46,122 = | 47,472 | +1,350 | 16,528 |
+  | 09-22 OPEN_30M d7e186cf | light | 29,808 | 29,808 = | 31,158 | +1,350 | 8,842 |
+  | 09-23 PREMARKET 40e2f9a3 | rich | 46,034 | 46,034 = | 47,393 | +1,359 | 16,607 |
+  | 09-23 OPEN_30M 46ba4ab2 | light | 35,099 | 34,817 ≠ | 36,176 | +1,359 | 3,824 |
+  | 09-24 OPEN_30M 82b4d2e3 | light | 36,535 | 36,535 = | **37,908** | +1,373 | **2,092** |
+  | 09-24 PREMARKET f64d0f2e | rich | 46,585 | 46,585 = | 47,958 | +1,373 | 16,042 |
+  | 09-25 PREMARKET bac374c7 / 5c7d64b5 (G2.5 runs) | rich | 43,294 | 43,294 = | 44,629 | +1,335 | 19,371 |
+
+  The 09-23 OPEN_30M archived at 35,099 (older code); archived + Δ is 36,458, still below the 09-24 maximum.
+- **Light-headroom decision: keep.** The largest light context keeps 2,092 bytes of headroom (≥ 1,500), so the 30Y and
+  spread rows stay light-context anchors and the curve record goes to both profiles. The addition costs about 1.34–1.38
+  KB per production context (six rows plus the ~500-byte record) and the prompt grows by 868 bytes (9,294 → 10,162; the
+  voice slice's prompt-size guard is raised to < 10,200 and named in the commit).
+- **Narrative schema byte-identical.** Local, transport and factored forms of the full, rich and light contracts hash the
+  same on 14670b0 and this branch (factored 5,197 / 5,195 bytes); `tests/test_rates_contract.py` pins the digests.
 - **Real curve.** Treasury's 2026 feed (fetched 2026-09-25) gives Sep 24: 2Y 4.87 / 5Y 5.03 / 10Y 5.18 / 30Y 5.47 (+2 / +4 /
   +7 / +7 bp vs Sep 23): 2s10s 31 bp, 5 bp steeper; 5s30s 44 bp, 3 bp steeper → Bear steepener. Real Dec 2025 / Jan 2026
   entries back the January fixtures (`tests/fixtures/treasury.*.xml`, trimmed from Treasury's own XML).

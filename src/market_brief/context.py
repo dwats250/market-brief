@@ -10,7 +10,10 @@ import re
 from .evidence import ROOT, digest, evidence_catalog, model_packet, read_json
 
 CONTEXT_SCHEMA = "market-brief.analyst-context.v1"
-ANCHOR_TOPICS = ("SPY", "QQQ", "GLD", "US 2Y", "US 5Y", "US 10Y")
+ANCHOR_TOPICS = ("SPY", "QQQ", "GLD", "US 2Y", "US 5Y", "US 10Y", "US 30Y", "US 2s10s", "US 5s30s")
+# The curve record the analyst reads beside the rows it cites: read-only, never evidence (`curve.py`).
+CURVE_FIELDS = ("label", "sentence", "note", "pair", "inputs", "observed_at", "prior_observed_at", "freshness",
+                "reason", "release_note")
 # Metrics that describe the current window; large dated background (20-session returns, 50DMA
 # distances, spreads) is kept only when an anchor, a carried record, a trigger, or leadership cites it.
 CURRENT_METRICS = {"daily return", "premarket return", "intraday return", "daily yield change"}
@@ -138,6 +141,9 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
                  for source in projected["sources"]],
         cuttingboard=projected["cuttingboard"],
     )
+    if packet.get("curve"):
+        result["curve"] = {key: packet["curve"][key] for key in CURVE_FIELDS
+                           if packet["curve"].get(key) not in (None, "", [])}
     if packet.get("history_lag"):
         result["history_lag"] = packet["history_lag"]
     if packet.get("history_errors"):

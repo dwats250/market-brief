@@ -683,10 +683,11 @@ def test_ugly_voice_is_one_openrouter_call_with_the_narrative_unchanged():
 PROMPT = (ROOT / "prompts/synthesis.md").read_text()
 
 
-def test_prompt_is_v0_3_and_smaller_than_v0_2():
+def test_prompt_is_v0_3_within_its_byte_budget():
     assert PROMPT.splitlines()[0] == "# Market Brief synthesis v0.3"
     size = len(PROMPT.encode())
-    assert size < 9649 and size <= 9300
+    # v0.3 plus the rates rules and curve-slope labels of the Rates & Reading Pass (R11, +868 bytes).
+    assert size < 10200
 
 
 def test_the_voice_leads_the_prompt():

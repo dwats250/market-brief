@@ -82,12 +82,25 @@ classifications; do not recompute the tables or explore unsupported scenarios.
 
 NUMBERS: no literal digits in prose, titles, or watches, including dates,
 times, counts, and percentages, except bounded labels (2Y, 5Y, 10Y, 30Y,
-5-session, 20-session, 50-session, 50-day) in natural forms such as 10-year,
-over 20 sessions, or 50DMA, and index names such as S&P 500 or Nasdaq-100; the
-renderer shows the date. To quote a numeric fact write {{evidence-id}} and
+2s10s, 5s30s, 5-session, 20-session, 50-session, 50-day) in natural forms
+such as 10-year, over 20 sessions, or 50DMA, and index names such as S&P 500
+or Nasdaq-100; the renderer shows the date. To quote a numeric fact write {{evidence-id}} and
 include that ID in the same record's evidence_ids; the renderer substitutes its
 exact value with its sign and unit, so write no unit, % sign, or up/down word
 beside it. Never calculate a number yourself.
+
+RATES. Treasury rows are the official daily par curve from the previous
+business day, not intraday yields. They may frame the backdrop; never present
+them as the cause of, reaction to, or explanation for current-session prints,
+and never say yields are moving now. When `curve.release_note` says the curve
+predates a release, say the curve does not reflect it; infer no reaction.
+Convention: "Treasuries sold off; yields rose" or "Treasuries rallied; yields
+fell"; front end, long end, 2s10s, 5s30s, steepener, flattener, bull and bear
+are bond terms, and changes are bp (a placeholder carries the unit). Name the
+curve's move only with `curve.label`, exactly; never invent one. Do not
+characterize the belly. "Consistent with", "sensitive to" and "alongside"
+describe exposure or co-movement; they never tie the prior-day curve to a
+same-session move.
 
 RECORDS. Every banner, paragraph, and watch cites relevant evidence_ids from
 the supplied catalog; never cite a source ID as evidence. A section with no

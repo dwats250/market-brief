@@ -44,9 +44,10 @@ EVENT_HORIZON = re.compile(r"^EVENT\([a-zA-Z][\w-]{0,79}\)$")
 # five/twenty/fifty-session windows in their grammatical forms ("20-session", "over 20 sessions",
 # "50-day", "50DMAs", "SMA50"), and index names. Any other digit in prose is a literal numeric claim.
 # Run 34554487893 was rejected on "over 20 sessions" and run 34556169474 on plural "50DMAs" while
-# every placeholder was grounded; singular, plural and abbreviated forms of one label are one label.
+# every placeholder was grounded; singular, plural and abbreviated forms of one label are one label. The two curve
+# slopes the brief names are labels too, in exactly their desk forms (`2s10s`, `5s30s`, case-sensitive).
 ALLOWED_LABELS = re.compile(
-    r"\b(?:(?:2|5|10|30)[- ]?(?:Y|yr|year)s?"
+    r"\b(?:(?-i:2s10s|5s30s)|(?:2|5|10|30)[- ]?(?:Y|yr|year)s?"
     r"|(?:5|20|50)[- ]?(?:trading[- ])?(?:sessions?|days?|d)"
     r"|50[- ]?[SD]?MAs?|[SD]?MA[- ]?50s?"
     r"|S&P[ -]?500|Nasdaq[- ]100|Russell [12]000|Dow 30)\b", re.IGNORECASE)  # Title Case headlines

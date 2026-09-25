@@ -667,7 +667,7 @@ Baseline at 14670b0: 474 passed, ruff clean. Tests-first for S1–S2 (new behavi
   no prior, stale, mixed, long-end note, Sep 24 Bear steepener, Oct 12/13 bond holiday, CPI morning, FOMC).
 - [ ] **S3 · R6 formatting and colour.** `render.formatted`/`direction`: `5.18%`, integer bp, unsigned spread levels,
   neutral colour for every rates row. Update the pinned `-4.00 bp` / `3.86 % yield` / `0.00 bp` assertions.
-- [ ] **S4 · R9 module, R7 reader phrasing, SVG.** `render.py` rates view model (caption per freshness, four-tenor table,
+- [x] **S4 · R9 module, R7 reader phrasing, SVG.** `render.py` rates view model (caption per freshness, four-tenor table,
   spread lines, curve move, notes, inline SVG with ghost), template + Markdown; proof extended to 30Y and spreads.
   Tests: `tests/test_rates_module.py` (order, phrasing incl. inverted/flip, stale suppression, SVG geometry).
 - [ ] **S5 · R1 header, R2 overdue.** Masthead date, Prices/Analysis/Next block (combined synthesis line), non-LIVE

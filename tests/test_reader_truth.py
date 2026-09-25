@@ -545,7 +545,7 @@ def test_i_empty_or_blank_fields_render_no_label(uncertainty, alternative):
     for text in (page, md):
         assert "Caveat:" not in text and "Could also be:" not in text
     assert not re.search(r'<p class="fine">\s*</p>', page)  # no blank, unlabeled note either
-    macro = md.split("## Macro & rates", 1)[1].split("**TREASURY", 1)[0]
+    macro = md.split("## Macro & rates", 1)[1].split("## Sector view", 1)[0]
     assert not re.search(r"\n[ \t]+\n", macro) and not re.search(r"\]\(#evidence-[^)]+\) +\n", macro)
 
 

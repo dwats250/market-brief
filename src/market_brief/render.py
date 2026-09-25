@@ -12,6 +12,7 @@ freezes its own record, so both clocks coincide; a deterministic refresh carries
 """
 
 import html
+import math
 import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -19,8 +20,22 @@ from zoneinfo import ZoneInfo
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .continuity import interpretation_record
-from .curve import SPREAD_UNIT, bp
-from .evidence import ET, PLACEHOLDER, ROOT, USABLE, evidence_catalog, timestamp
+from .curve import (
+    CHANGE,
+    LEVEL,
+    SPREAD_CHANGE,
+    SPREAD_LEVEL,
+    SPREAD_UNIT,
+    SPREADS,
+    TENORS,
+    UNAVAILABLE,
+    bp,
+    curve_record,
+    prior_entry_date,
+    rates,
+    spread_rows,
+)
+from .evidence import ET, PLACEHOLDER, ROOT, USABLE, evidence_catalog, read_json, timestamp
 from .metrics import rank_by_spread
 from .schedule import CHECKPOINT_KINDS, checkpoint_kind, next_checkpoint, session_relation
 
@@ -69,6 +84,19 @@ SOURCE_STATUS_LABELS = {"AVAILABLE": "Available", "UNAVAILABLE": "Unavailable", 
 SIGNED_METRICS = {"daily return", "premarket return", "intraday return", "distance from 50DMA"}
 MINUS = "\u2212"
 RATE_UNITS = {"% yield", "bp", SPREAD_UNIT}
+RATE_METRICS = {LEVEL, CHANGE, SPREAD_LEVEL, SPREAD_CHANGE}
+# The rates module (R9): Treasury's official daily par curve, its spreads, the named move, and a small inline chart.
+CURVE_TITLE = "U.S. Treasury par curve"
+CURVE_CAPTIONS = {"current": "official daily observation", "older": "latest official daily observation",
+                  "stale": "latest official daily observation"}
+STALE_NOTE = "This curve is more than five days old, so its changes and curve move are not shown."
+# Chart geometry in CSS px. x is log-maturity as a share of the plot width (2Y 0, 5Y .34, 10Y .59, 30Y 1.0); the
+# plot is inset by its container's padding so end dots and labels are never clipped. The y window spans at least
+# 100 bp so a one-day move looks proportionate; no gridlines and no y-axis labels (the table carries the values).
+CHART_HEIGHT, CHART_TOP, CHART_BOTTOM, CHART_LABEL_Y = 120, 10, 94, 114
+CHART_MIN_SPAN = 1.0  # percentage points
+CHART_PADDING = 1.25
+TENOR_YEARS = {"2Y": 2, "5Y": 5, "10Y": 10, "30Y": 30}
 # Absence vocabulary. `no print`: the current observation is missing while useful history exists.
 # `—`: structurally not applicable. `not collected`: the source or input is not automated.
 NO_PRINT = "no print"
@@ -331,28 +359,139 @@ def change_column(rows, allow_daily_today=True, session=None):
 
 
 def treasury_rows(facts):
-    """Maturity, yield, daily change in bp; a change pairs only with a same-dated, same-source yield."""
+    """Maturity, yield, daily change in bp for the four tenors; a change pairs only with a same-dated, same-source
+    yield, and a tenor the curve lacks reads `no print`."""
+    tenor_rows = [r for r in facts if r["metric"] in (LEVEL, CHANGE)]
+    if not tenor_rows:
+        return [], None
     result = []
-    for term in ("2Y", "5Y", "10Y", "30Y"):
+    for term in TENORS:
         topic = f"US {term}"
-        level = next((r for r in facts if r["topic"] == topic and r["metric"] == "daily par yield"), None)
-        change = next((r for r in facts if r["topic"] == topic and r["metric"] == "daily yield change"), None)
-        if not level and not change:
-            continue
+        level = next((r for r in tenor_rows if r["topic"] == topic and r["metric"] == LEVEL), None)
+        change = next((r for r in tenor_rows if r["topic"] == topic and r["metric"] == CHANGE), None)
         paired = bool(level and change and level["observed_at"] == change["observed_at"]
                       and level["source_id"] == change["source_id"])
         anchor = level or change
         result.append(dict(maturity=term, level=cell(level, absent=NO_PRINT), change=cell(change if paired else None),
                            change_note="" if paired or not change else
                            f"change dated {short_date(change['observed_at'])} not paired",
-                           date=short_date(anchor["observed_at"]), observed_at=anchor["observed_at"],
-                           ids=[r["id"] for r in (level, change) if r]))
-    dates = {row["observed_at"] for row in result}
+                           date=short_date(anchor["observed_at"]) if anchor else "",
+                           observed_at=anchor["observed_at"] if anchor else None,
+                           ids=[r["id"] for r in (level, change if paired else None) if r]))
+    dates = {row["observed_at"] for row in result if row["observed_at"]}
     asof = short_date(next(iter(dates))) if len(dates) == 1 else None
     if asof:
         for row in result:
             row["date"] = ""
     return result, asof
+
+
+def spread_lines(spreads, tenors, stale):
+    """`2s10s · 31 bp · 5 bp steeper`: a spread level is a level; its change is steeper or flatter by the signed spread
+    (long minus short), whatever the level's sign, so on an inverted curve steeper means less inverted. A spread the
+    curve cannot form is named as missing; a stale curve shows levels only."""
+    lines, notes = [], []
+    for name, short, long in SPREADS:
+        level, change = spreads.get(f"treasury-{name}"), spreads.get(f"treasury-{name}-change")
+        if not level:
+            missing = [tenor for tenor in (short, long) if not (tenors.get(tenor) or {}).get("level")]
+            notes.append(f"No {name}: the latest curve has no {' or '.join(missing)} yield." if missing else
+                         f"No {name}: its {short} and {long} yields come from different daily entries.")
+            continue
+        value, detail, flip = bp(level["value"]), "", ""
+        if change and not stale:
+            move = bp(change["value"])
+            prior = value - move
+            if move == 0:
+                detail = "unchanged"
+            else:
+                detail = f"{abs(move)} bp {'steeper' if move > 0 else 'flatter'}"
+                if value < 0 and prior < 0:
+                    detail += " (less inverted)" if move > 0 else " (more inverted)"
+            if prior < 0 < value:
+                flip = f"{name} turned positive"
+            elif value < 0 <= prior:
+                flip = f"{name} inverted"
+        lines.append(dict(name=name, level=formatted(level), detail=detail, flip=flip,
+                          ids=[level["id"], *([change["id"]] if change and not stale else [])]))
+    return lines, notes
+
+
+def curve_chart(tenors, curve_date, prior_date, stale):
+    """Server-side geometry for the inline curve: the observed tenors of the latest entry as dots joined by straight
+    segments between adjacent tenors (a missing tenor breaks the line), and the prior entry dashed when it has every
+    tenor the current curve has. None when fewer than two adjacent tenors exist or the curve is stale."""
+    if stale or not curve_date:
+        return None
+    points = {tenor: legs["level"]["value"] for tenor, legs in tenors.items()
+              if legs.get("level") and legs["level"]["observed_at"] == curve_date}
+    pairs = [(a, b) for a, b in zip(TENORS, TENORS[1:]) if a in points and b in points]
+    if not pairs:
+        return None
+    changes = {tenor: tenors[tenor].get("change") for tenor in points}
+    ghost = None
+    if all(changes.values()) and len({row["baseline"] for row in changes.values()}) == 1:
+        ghost = {tenor: points[tenor] - bp(changes[tenor]["value"]) / 100 for tenor in points}
+    values = [*points.values(), *(ghost or {}).values()]
+    low, high = min(values), max(values)
+    span = max((high - low) * CHART_PADDING, CHART_MIN_SPAN)
+    base = (low + high) / 2 - span / 2
+
+    def x(tenor):
+        share = (math.log(TENOR_YEARS[tenor]) - math.log(2)) / (math.log(30) - math.log(2))
+        return f"{100 * share:.1f}%"
+
+    def y(value):
+        return round(CHART_BOTTOM - (value - base) / span * (CHART_BOTTOM - CHART_TOP), 1)
+
+    def series(levels):
+        return dict(points=[dict(x=x(tenor), y=y(levels[tenor]), tenor=tenor) for tenor in TENORS if tenor in levels],
+                    segments=[dict(x1=x(a), y1=y(levels[a]), x2=x(b), y2=y(levels[b])) for a, b in pairs])
+
+    return dict(height=CHART_HEIGHT, label_y=CHART_LABEL_Y, current=series(points),
+                ghost=series(ghost) if ghost else None,
+                labels=[dict(x=x(tenor), text=tenor) for tenor in TENORS],
+                legend=dict(current=short_date(curve_date),
+                            prior=short_date(prior_date) if prior_date else "prior entry") if ghost else None,
+                domain=[round(base, 4), round(base + span, 4)])
+
+
+def rates_module(packet, facts, catalog):
+    """The Macro & rates module (R9): caption, the four-tenor table, spread lines, the named curve move, the chart,
+    and notes, all from this run's deterministic rows and curve record; the analyst's paragraphs follow it."""
+    yields, asof = treasury_rows(facts)
+    if not yields:
+        return dict(yields=[], asof=None, curve=None, proof_ids=[])
+    tenors = rates(packet)
+    spreads = {row["id"]: row for row in facts if row["metric"] in (SPREAD_LEVEL, SPREAD_CHANGE)}
+    record = packet.get("curve")
+    if record is None:
+        # Evidence saved before the curve record existed: the same deterministic derivation, never saved from here.
+        derived = spread_rows(tenors)
+        spreads = spreads or {row["id"]: row for row in derived}
+        record = curve_record(packet, tenors, derived, read_json(ROOT / "config/magnitude.json")["bp"]["SMALL"])
+    freshness = record.get("freshness")
+    stale = freshness == "stale"
+    if stale:
+        for row in yields:
+            row["change"], row["change_note"] = absent_cell(), ""
+            row["ids"] = [row["level"]["id"]] if row["level"]["id"] else []
+    caption = " · ".join(filter(None, (asof, CURVE_CAPTIONS.get(freshness, CURVE_CAPTIONS["current"])
+                                       if asof else "official daily observations, dated per row")))
+    lines, notes = spread_lines(spreads, tenors, stale)
+    if stale:
+        notes.append(STALE_NOTE)
+    if record.get("release_note"):
+        notes.append(record["release_note"])
+    move = None if stale else dict(label=record["label"], sentence=record["sentence"], note=record.get("note", ""),
+                                   unavailable=record["label"] == UNAVAILABLE)
+    prior_date = record.get("prior_observed_at") or prior_entry_date(
+        next((legs["change"] for legs in tenors.values() if legs.get("change")), None))
+    chart = curve_chart(tenors, record.get("observed_at"), prior_date, stale)
+    proof_ids = [ident for row in yields for ident in row["ids"]] + [ident for line in lines for ident in line["ids"]]
+    return dict(yields=yields, asof=asof, proof_ids=[ident for ident in proof_ids if ident in catalog],
+                curve=dict(title=CURVE_TITLE, caption=caption, stale=stale, spreads=lines, move=move, chart=chart,
+                           notes=notes))
 
 
 def next_update_label(info, session_date):
@@ -448,8 +587,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
                       "measure": measure_label(row, session), "observed_label": observed_label(row["observed_at"])})
     history_symbols = {h["symbol"] for h in packet["history"]}
     equity = [r for r in facts if r["topic"] in history_symbols or r["frequency"] == "intraday"]
-    treasuries = [r for r in facts if r["topic"].startswith("US ") and r["metric"] in
-                  {"daily par yield", "daily yield change"}]
+    treasuries = [r for r in facts if r["topic"].startswith("US ") and r["metric"] in RATE_METRICS]
     other_macro = [r for r in facts if r not in equity and r not in treasuries]
 
     def current_or_daily(symbol):
@@ -490,7 +628,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     sector_change, sector_asof = change_column(sector_rows, daily_today, session)
     metal_rows = compact_equity_rows(facts, METALS, daily_today)
     metal_change, metal_asof = change_column(metal_rows, daily_today, session)
-    yields, yields_asof = treasury_rows(treasuries)
+    module = rates_module(packet, treasuries, catalog)
+    yields = module["yields"]
 
     # What matters next: watches with their frozen horizons, carried watches, attention, events.
     watches = []
@@ -680,8 +819,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
                       spread_label="20-session return spread vs QQQ",
                       lookback={s: v for s, v in packet.get("lookback", {}).items() if v["r20"] != "available"}),
         macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]],
-                   yields=yields, yields_asof=yields_asof, facts=other_macro,
-                   yields_proof=refs([i for row in yields for i in row["ids"]], catalog),
+                   yields=yields, yields_asof=module["asof"], curve=module["curve"], facts=other_macro,
+                   yields_proof=refs(module["proof_ids"], catalog),
                    facts_proof=refs([row["id"] for row in other_macro], catalog)),
         sectors=dict(rows=sector_rows, change_label=sector_change, asof=sector_asof, proof=proof(sector_rows),
                      spread_label="20-session return spread vs SPY, strongest to weakest"),
@@ -784,17 +923,31 @@ def markdown(view):
     mac = view["macro"]
     if mac["paragraphs"] or mac["yields"] or mac["facts"]:
         lines += ["## Macro & rates", ""]
+        if mac["yields"]:
+            curve = mac["curve"]
+            dated = not mac["yields_asof"]
+            head = "| Maturity | Yield |" + ("" if curve["stale"] else " Daily change |") + (" Date |" if dated else "")
+            lines += [f"**{curve['title'].upper()}** · {esc(curve['caption'])}", "", head,
+                      "|---|---:|" + ("" if curve["stale"] else "---:|") + ("---|" if dated else "")]
+            for row in mac["yields"]:
+                note = f" ({esc(row['change_note'])})" if row["change_note"] else ""
+                change = "" if curve["stale"] else f" {row['change']['display']}{note} |"
+                lines.append(f"| {row['maturity']} | {row['level']['display']} |{change}"
+                             + (f" {esc(row['date'])} |" if dated else ""))
+            lines.append("")
+            for spread in curve["spreads"]:
+                lines.append(f"- {spread['name']} · " + " · ".join(filter(None, (spread["level"], spread["detail"],
+                                                                                   spread["flip"]))))
+            if curve["move"]:
+                lines += ["", f"**{curve['move']['label']}** — {esc(curve['move']['sentence'])}"
+                          + (f" {esc(curve['move']['note'])}" if curve["move"]["note"] else "")]
+            for note in curve["notes"]:
+                lines += ["", esc(note)]
+            lines.append("")
         for p in mac["paragraphs"]:
             lines += [para(p), ""]
         if mac["yields"]:
-            asof = f" · {esc(mac['yields_asof'])}" if mac["yields_asof"] else ""
-            lines += [f"**TREASURY PAR YIELDS**{asof}", "", "| Maturity | Yield | Daily change | Date |",
-                      "|---|---:|---:|---|"]
-            for row in mac["yields"]:
-                note = f" ({esc(row['change_note'])})" if row["change_note"] else ""
-                lines.append(f"| {row['maturity']} | {row['level']['display']} | {row['change']['display']}{note} | "
-                             f"{esc(row['date'])} |")
-            lines += ["", LEDGER_NOTE, ""]
+            lines += [LEDGER_NOTE, ""]
         if mac["facts"]:
             lines += ["| Measure | Observation | Date / source |", "|---|---:|---|"]
             for row in mac["facts"]:

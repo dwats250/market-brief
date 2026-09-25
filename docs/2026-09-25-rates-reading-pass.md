@@ -676,7 +676,7 @@ Baseline at 14670b0: 474 passed, ruff clean. Tests-first for S1–S2 (new behavi
 - [x] **S6 · R3 typography, R4 palette, R5 § evidence.** CSS sizes/spacing/`--rule-strong`, "What changed" section,
   Metals rename, light palette, no text opacity, first-marker label via template namespace, 32×32 hit area. Raise faint
   floor, assert text-on-notice, re-pin `STYLE_SHA256`.
-- [ ] **S7 · R12 guide.** Collapsed `How to read this brief` details above Sources & coverage; HTML only.
+- [x] **S7 · R12 guide.** Collapsed `How to read this brief` details above Sources & coverage; HTML only.
 - [ ] **S8 · R11 analyst contract.** `ALLOWED_LABELS` + prompt label list; prompt bond/timing/language rules; 30Y and
   spread rows as context anchors plus the compact curve record; measure fixture and archived production contexts
   before/after; decide light headroom; prove the narrative schema byte-identical.

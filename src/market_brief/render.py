@@ -23,6 +23,7 @@ from .continuity import interpretation_record
 from .curve import (
     CHANGE,
     LEVEL,
+    SENTENCES,
     SPREAD_CHANGE,
     SPREAD_LEVEL,
     SPREAD_UNIT,
@@ -97,6 +98,24 @@ CHART_HEIGHT, CHART_TOP, CHART_BOTTOM, CHART_LABEL_Y = 120, 10, 94, 114
 CHART_MIN_SPAN = 1.0  # percentage points
 CHART_PADDING = 1.25
 TENOR_YEARS = {"2Y": 2, "5Y": 5, "10Y": 10, "30Y": 30}
+# "How to read this brief" (R12): static reader copy, collapsed near the bottom, HTML only. The first entry is the
+# latest curve move, when there is one to name; each entry is one or two sentences.
+GUIDE = (
+    ("2s10s", "One of the most widely watched Treasury curve slopes, comparing the policy-sensitive shorter end with "
+              "the longer-duration 10-year yield. Watching it rise and fall shows that part of the curve steepening "
+              "or flattening."),
+    ("5s30s", "The 30-year yield minus the 5-year yield. It shows what the long end is doing on its own."),
+    ("Bull and bear", "In bonds, bull means prices up and yields down, and bear means prices down and yields up. "
+                      "Steepening means the signed spread rose; on an inverted curve, that means less inverted."),
+    ("The par curve", "Treasury's official daily curve, fitted from indicative market quotes taken near 3:30 PM ET. "
+                      "It updates once a business day, not with the hourly price refreshes."),
+    ("Three clocks", "Prices refresh hourly, and the analysis is written before the open and once after it. The curve "
+                     "carries its own date."),
+    ("§ evidence", "Tap § to see the observations behind a line. The full evidence ledger is in Sources & coverage."),
+)
+GUIDE_MOVES = (*SENTENCES.items(),
+               ("Mixed curve move", "2s10s and 5s30s moved in opposite directions; the sentence names each."),
+               (UNAVAILABLE, "A tenor is missing, the curve is stale, or there is no prior entry to compare with."))
 # Absence vocabulary. `no print`: the current observation is missing while useful history exists.
 # `—`: structurally not applicable. `not collected`: the source or input is not automated.
 NO_PRINT = "no print"
@@ -862,6 +881,10 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
                          spread_label="20-session return spread, "
                          + ", ".join(f"{row['symbol']} vs {row['relative_label']}" for row in metal_rows
                                      if row["relative"]["id"])),
+        guide=dict(move=(dict(label=module["curve"]["move"]["label"], text=module["curve"]["move"]["sentence"])
+                         if module["curve"] and module["curve"]["move"] and not module["curve"]["move"]["unavailable"]
+                         else None),
+                   entries=GUIDE, moves=GUIDE_MOVES),
         cuttingboard_section=dict(visible=cuttingboard_visible,
                                   paragraphs=[paragraph(p) for p in narrative["sections"]["cuttingboard"]]),
         sources=sources, unavailable_sources=sum(1 for s in sources if s["unavailable"]),

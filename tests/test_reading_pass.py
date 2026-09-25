@@ -226,3 +226,42 @@ def test_the_marker_hit_area_is_padding_with_a_matching_negative_margin():
     assert 14 + 2 * vertical >= 32 and horizontal - int(margin[1]) == 3
     assert "white-space:nowrap" in rule  # "§ evidence" never breaks between the mark and its label
     assert "details.proof summary{font-size:12px;padding:0;margin:0;" in style()  # the table proof keeps its place
+
+
+# --- R12 how to read this brief -----------------------------------------------------------------------------------
+
+def guide(page):
+    return page.split('<details class="drawer guide">', 1)[1].split("<section>", 1)[0]
+
+
+def test_the_guide_is_collapsed_above_sources_and_leads_with_the_latest_move():
+    from test_rates_module import rates_packet
+    md, page = render(rates_packet(), narrative())
+    assert page.count('<details class="drawer guide">') == 1  # no `open`: collapsed by default
+    assert page.index('<details class="drawer guide">') < page.index("<h2>Sources &amp; coverage</h2>")
+    assert page.index("<h2>Metals</h2>") < page.index('<details class="drawer guide">')
+    body = guide(page)
+    assert body.startswith("<summary>How to read this brief</summary><dl><dt>Bear steepener</dt><dd>The latest "
+                           "curve move. Long-end yields rose more than the front end.</dd><dt>2s10s</dt>")
+    terms = re.findall(r"<dt>([^<]*)</dt>", body.split('<details class="guide-moves">', 1)[0])
+    assert terms == ["Bear steepener", "2s10s", "5s30s", "Bull and bear", "The par curve", "Three clocks",
+                     "§ evidence"]
+    for text in re.findall(r"<dd>([^<]*)</dd>", body):
+        assert 1 <= len(re.findall(r"[.!?](?:\s|$)", text.replace("&amp;", "&"))) <= 2, text  # one or two sentences
+    moves = body.split('<details class="guide-moves"><summary>See all curve moves</summary>', 1)[1]
+    assert len(re.findall(r"<dt>", moves)) == 13 and "<dt>Mixed curve move</dt>" in moves
+    assert "How to read" not in md and "See all curve moves" not in md  # HTML only
+    assert "today" not in body.lower()
+
+
+def test_the_guide_skips_a_move_it_cannot_name():
+    from test_rates_module import NOW, rates_packet
+    stale = render(rates_packet(now=NOW.replace(day=11)), narrative())[1]
+    assert guide(stale).startswith("<summary>How to read this brief</summary><dl><dt>2s10s</dt>")
+    missing = render(rates_packet(levels={"10Y": 5.18}, changes={"10Y": 7}), narrative())[1]
+    assert guide(missing).startswith("<summary>How to read this brief</summary><dl><dt>2s10s</dt>")
+    fixture = fixture_packet()
+    fixture["observations"] = [row for row in fixture["observations"] if not row["topic"].startswith("US ")]
+    fixture["derived"] = [row for row in fixture["derived"] if not row["topic"].startswith("US ")]
+    fixture.pop("curve")
+    assert "<dt>2s10s</dt>" in guide(render(fixture, narrative())[1])

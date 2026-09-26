@@ -99,7 +99,7 @@ def test_module_renders_in_order_with_the_analyst_paragraphs_after_the_record():
     assert "Fri, Sep 4 · latest official daily observation" in section  # Monday was Labor Day, a bond holiday
     assert "close" not in section.split('<div class="para">', 1)[0].lower()  # never "close", never a clock time
     assert not re.search(r"\d:\d\d", section.split('<div class="para">', 1)[0])
-    assert '<dt>2s10s</dt><dd>31 bp · 5 bp steeper</dd><dt>5s30s</dt><dd>44 bp · 3 bp steeper</dd>' in section
+    assert '<dt>2s10s<br><small>10Y minus 2Y</small></dt><dd>31 bp · 5 bp steeper</dd><dt>5s30s<br><small>30Y minus 5Y</small></dt><dd>44 bp · 3 bp steeper</dd>' in section
     assert '<p class="curve-move"><b>Bear steepener</b> — Long-end yields rose more than the front end.</p>' in section
     for text in ("today", "wider", "narrower"):
         assert text not in section.split('<div class="para">', 1)[0].lower()

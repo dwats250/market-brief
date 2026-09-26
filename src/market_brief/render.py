@@ -439,8 +439,8 @@ def spread_lines(spreads, tenors, stale):
                 flip = f"{name} turned positive"
             elif value < 0 <= prior:
                 flip = f"{name} inverted"
-        lines.append(dict(name=name, level=formatted(level), detail=detail, flip=flip,
-                          ids=[level["id"], *([change["id"]] if change and not stale else [])]))
+        lines.append(dict(name=name, definition=f"{long} minus {short}", level=formatted(level), detail=detail,
+                          flip=flip, ids=[level["id"], *([change["id"]] if change and not stale else [])]))
     return lines, notes
 
 

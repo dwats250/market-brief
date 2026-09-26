@@ -14,6 +14,7 @@ from pathlib import Path
 
 import exchange_calendars as xcals
 
+from .curve import SPREAD_CHANGE, SPREAD_LEVEL
 from .evidence import ET, PLACEHOLDER, USABLE, digest, evidence_catalog, model_packet, read_json, timestamp
 from .schedule import CHECKPOINT_TITLES, VANCOUVER, next_session_date, next_synthesis
 
@@ -33,6 +34,7 @@ COMPARISON_STATUSES = ("changed", "unavailable", "no_new_observation", "not_comp
 CLOSING_DATA = ("COMPLETED_SESSION", "PROVISIONAL_NEAR_CLOSE", "EARLIER_HISTORY_ONLY", "NONE")
 ANCHOR_INSTRUMENTS = ("SPY", "QQQ", "GLD", "US 2Y", "US 10Y")
 CARRY_LIMIT = 3
+CURVE_METRICS = {SPREAD_LEVEL, SPREAD_CHANGE}
 SNAPSHOT_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at", "frequency",
                    "status", "magnitude", "identity")
 HORIZON_PHRASES = {"OPENING_HOUR": "Through the opening hour", "SESSION": "Into the close",
@@ -527,7 +529,8 @@ def closing_data(packet):
         latest = max(r["observed_at"] for r in prints)
         return dict(status="PROVISIONAL_NEAR_CLOSE",
                     reason=f"timestamped session prints through {latest}; not an official closing bar")
-    if packet["derived"]:
+    # Price history only: the Treasury curve's derived spreads say nothing about how the equity session ended.
+    if any(row.get("metric") not in CURVE_METRICS for row in packet["derived"]):
         return dict(status="EARLIER_HISTORY_ONLY",
                     reason="only history through an earlier completed session; no observation from this session")
     return dict(status="NONE", reason="no usable price observations")

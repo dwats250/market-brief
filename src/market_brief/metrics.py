@@ -1,10 +1,12 @@
-"""Small deterministic price-return context; never a trading classifier."""
+"""Small deterministic price-return context; never a trading classifier. The Treasury curve's spreads and the
+reader's name for its latest move are derived with it, in `curve.py`."""
 
 from datetime import timedelta
 from statistics import fmean
 
 import exchange_calendars as xcals
 
+from .curve import derive_curve
 from .evidence import finite, timestamp
 
 DEFAULT_MAGNITUDE_THRESHOLDS = {
@@ -167,6 +169,7 @@ def derive(packet, universe, thresholds=None):
                    and r["metric"] == "relative to SPY"]
     sector_rows.sort(key=lambda row: row["value"], reverse=True)
     packet["sector_leadership"] = dict(top=sector_rows[:3], bottom=list(reversed(sector_rows[-3:])))
+    derive_curve(packet, thresholds)
     for row in packet["derived"]:
         if "magnitude" not in row:
             row["magnitude"] = magnitude(row.get("value"), row.get("unit"), thresholds)

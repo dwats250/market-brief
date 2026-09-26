@@ -2,7 +2,7 @@
 
 Order: header → headline / character / short executive read → compact snapshot → what changed →
 what matters next → equity interpretation and support → macro interpretation and rates → sector
-view → cross-asset structure → collapsed sources & coverage. Deterministic rows are the record;
+view → metals → collapsed sources & coverage. Deterministic rows are the record;
 the analyst's interpretation sits above them and is labeled once.
 
 Two clocks. The interpretation (headline, character, read, the take, what changed, watches, section
@@ -12,6 +12,7 @@ freezes its own record, so both clocks coincide; a deterministic refresh carries
 """
 
 import html
+import math
 import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -19,7 +20,23 @@ from zoneinfo import ZoneInfo
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .continuity import interpretation_record
-from .evidence import ET, PLACEHOLDER, ROOT, USABLE, evidence_catalog, timestamp
+from .curve import (
+    CHANGE,
+    LEVEL,
+    SENTENCES,
+    SPREAD_CHANGE,
+    SPREAD_LEVEL,
+    SPREAD_UNIT,
+    SPREADS,
+    TENORS,
+    UNAVAILABLE,
+    bp,
+    curve_record,
+    prior_entry_date,
+    rates,
+    spread_rows,
+)
+from .evidence import ET, PLACEHOLDER, ROOT, USABLE, evidence_catalog, read_json, timestamp
 from .metrics import rank_by_spread
 from .schedule import CHECKPOINT_KINDS, checkpoint_kind, next_checkpoint, session_relation
 
@@ -63,7 +80,44 @@ SOURCE_KIND_LABELS = {"price": "prices", "quote": "current prints", "economic_se
                       "calendar": "release calendar", "news": "releases"}
 SOURCE_STATUS_LABELS = {"AVAILABLE": "Available", "UNAVAILABLE": "Unavailable", "DEGRADED": "Degraded",
                         "STALE": "Stale", "DELAYED": "Delayed"}
-SIGNED_METRICS = {"daily return", "daily yield change", "premarket return", "intraday return", "distance from 50DMA"}
+# Rates rows (yield and spread levels and their daily changes) are never coloured: the sign carries direction and
+# the curve move label carries meaning, and rising yields are neither good nor bad.
+SIGNED_METRICS = {"daily return", "premarket return", "intraday return", "distance from 50DMA"}
+MINUS = "\u2212"
+RATE_UNITS = {"% yield", "bp", SPREAD_UNIT}
+RATE_METRICS = {LEVEL, CHANGE, SPREAD_LEVEL, SPREAD_CHANGE}
+# The rates module (R9): Treasury's official daily par curve, its spreads, the named move, and a small inline chart.
+CURVE_TITLE = "U.S. Treasury par curve"
+CURVE_CAPTIONS = {"current": "official daily observation", "older": "latest official daily observation",
+                  "stale": "latest official daily observation"}
+STALE_NOTE = "This curve is more than five days old, so only its levels are shown here."
+# Evidence normalization admits no daily row more than seven days old, so such a curve has no yields to show.
+OVER_AGE_NOTE = "This curve is more than a week old, so its yields are not shown."
+# Chart geometry in CSS px. x is log-maturity as a share of the plot width (2Y 0, 5Y .34, 10Y .59, 30Y 1.0); the
+# plot is inset by its container's padding so end dots and labels are never clipped. The y window spans at least
+# 100 bp so a one-day move looks proportionate; no gridlines and no y-axis labels (the table carries the values).
+CHART_HEIGHT, CHART_TOP, CHART_BOTTOM, CHART_LABEL_Y = 120, 10, 94, 114
+CHART_MIN_SPAN = 1.0  # percentage points
+CHART_PADDING = 1.25
+TENOR_YEARS = {"2Y": 2, "5Y": 5, "10Y": 10, "30Y": 30}
+# "How to read this brief" (R12): static reader copy, collapsed near the bottom, HTML only. The first entry is the
+# latest curve move, when there is one to name; each entry is one or two sentences.
+GUIDE = (
+    ("2s10s", "One of the most widely watched Treasury curve slopes, comparing the policy-sensitive shorter end with "
+              "the longer-duration 10-year yield. Watching it rise and fall shows that part of the curve steepening "
+              "or flattening."),
+    ("5s30s", "The 30-year yield minus the 5-year yield. It shows what the long end is doing on its own."),
+    ("Bull and bear", "In bonds, bull means prices up and yields down, and bear means prices down and yields up. "
+                      "Steepening means the signed spread rose; on an inverted curve, that means less inverted."),
+    ("The par curve", "Treasury's official daily curve, fitted from indicative market quotes taken near 3:30 PM ET. "
+                      "It updates once a business day, not with the hourly price refreshes."),
+    ("Three clocks", "Prices refresh hourly, and the analysis is written before the open and once after it. The curve "
+                     "carries its own date."),
+    ("§ evidence", "Tap § to see the observations behind a line. The full evidence ledger is in Sources & coverage."),
+)
+GUIDE_MOVES = (*SENTENCES.items(),
+               ("Mixed curve move", "2s10s and 5s30s moved in opposite directions; the sentence names each."),
+               (UNAVAILABLE, "A tenor is missing, the curve is stale, or there is no prior entry to compare with."))
 # Absence vocabulary. `no print`: the current observation is missing while useful history exists.
 # `—`: structurally not applicable. `not collected`: the source or input is not automated.
 NO_PRINT = "no print"
@@ -71,6 +125,12 @@ NOT_APPLICABLE = "—"
 NOT_COLLECTED = "not collected"
 # Rows whose print is this far behind the table's shared clock carry their own clock.
 SHARED_CLOCK_TOLERANCE = timedelta(minutes=5)
+# The header's three clocks. The interpretation is named by the synthesis edition that wrote it.
+EDITION_WORDS = {"PREMARKET": "premarket", "OPEN_30M": "opening structure"}
+NEXT_WORDS = {"synthesis": "analysis update", "close": "close snapshot", "refresh": "price refresh"}
+# A page whose next scheduled update is this late says so in the reader's browser (no server change): publishes land a
+# few minutes after their checkpoint, so only a real miss (a failed run or a legitimate no-publish) crosses it.
+OVERDUE_GRACE = timedelta(minutes=15)
 # Deterministic attention triggers, compressed to a short tag; the analyst's sentence is the body.
 TRIGGER_TAGS = (("Material twenty-session return spread versus ", "20-session spread vs "),
                 ("Daily close crossed up through its moving average", "Crossed above its 50DMA"),
@@ -220,11 +280,25 @@ def direction(row):
     return "positive" if value > 0 else "negative"
 
 
+def rate_display(value, unit):
+    """Rates in desk form: a yield `5.18%`; a move in whole basis points `+7 bp`; a spread level `31 bp`, with a minus
+    sign only when inverted. Basis points are the same integers the curve classifier reads."""
+    if unit == "% yield":
+        return f"{MINUS if value < 0 and round(value, 2) != 0 else ''}{abs(value):.2f}%"
+    whole = bp(value)
+    if whole == 0:
+        return "0 bp"
+    sign = MINUS if whole < 0 else "+" if unit == "bp" else ""
+    return f"{sign}{abs(whole)} bp"
+
+
 def formatted(row):
     if row.get("value") is None:
         return NO_PRINT
     value = row["value"]
-    signed = row["unit"] in {"bp", "pp", "%"}
+    if row["unit"] in RATE_UNITS:
+        return rate_display(value, row["unit"])
+    signed = row["unit"] in {"pp", "%"}
     # A value that rounds to zero is shown as zero: no sign, no colour.
     number = "0.00" if signed and round(value, 2) == 0 else f"{value:+.2f}" if signed else f"{value:.2f}"
     return f"{number} {row['unit']}"
@@ -312,23 +386,26 @@ def change_column(rows, allow_daily_today=True, session=None):
 
 
 def treasury_rows(facts):
-    """Maturity, yield, daily change in bp; a change pairs only with a same-dated, same-source yield."""
+    """Maturity, yield, daily change in bp for the four tenors; a change pairs only with a same-dated, same-source
+    yield, and a tenor the curve lacks reads `no print`."""
+    tenor_rows = [r for r in facts if r["metric"] in (LEVEL, CHANGE)]
+    if not tenor_rows:
+        return [], None
     result = []
-    for term in ("2Y", "5Y", "10Y", "30Y"):
+    for term in TENORS:
         topic = f"US {term}"
-        level = next((r for r in facts if r["topic"] == topic and r["metric"] == "daily par yield"), None)
-        change = next((r for r in facts if r["topic"] == topic and r["metric"] == "daily yield change"), None)
-        if not level and not change:
-            continue
+        level = next((r for r in tenor_rows if r["topic"] == topic and r["metric"] == LEVEL), None)
+        change = next((r for r in tenor_rows if r["topic"] == topic and r["metric"] == CHANGE), None)
         paired = bool(level and change and level["observed_at"] == change["observed_at"]
                       and level["source_id"] == change["source_id"])
         anchor = level or change
         result.append(dict(maturity=term, level=cell(level, absent=NO_PRINT), change=cell(change if paired else None),
                            change_note="" if paired or not change else
                            f"change dated {short_date(change['observed_at'])} not paired",
-                           date=short_date(anchor["observed_at"]), observed_at=anchor["observed_at"],
-                           ids=[r["id"] for r in (level, change) if r]))
-    dates = {row["observed_at"] for row in result}
+                           date=short_date(anchor["observed_at"]) if anchor else "",
+                           observed_at=anchor["observed_at"] if anchor else None,
+                           ids=[r["id"] for r in (level, change if paired else None) if r]))
+    dates = {row["observed_at"] for row in result if row["observed_at"]}
     asof = short_date(next(iter(dates))) if len(dates) == 1 else None
     if asof:
         for row in result:
@@ -336,16 +413,135 @@ def treasury_rows(facts):
     return result, asof
 
 
-def next_update_label(info, session_date):
-    """`Next update · 10:00 AM PT`, naming an interpretation or the close snapshot, or the next session."""
+def spread_lines(spreads, tenors, stale):
+    """`2s10s · 31 bp · 5 bp steeper`: a spread level is a level; its change is steeper or flatter by the signed spread
+    (long minus short), whatever the level's sign, so on an inverted curve steeper means less inverted. A spread the
+    curve cannot form is named as missing; a stale curve shows levels only."""
+    lines, notes = [], []
+    for name, short, long in SPREADS:
+        level, change = spreads.get(f"treasury-{name}"), spreads.get(f"treasury-{name}-change")
+        if not level:
+            missing = [tenor for tenor in (short, long) if not (tenors.get(tenor) or {}).get("level")]
+            notes.append(f"No {name}: the latest curve has no {' or '.join(missing)} yield." if missing else
+                         f"No {name}: its {short} and {long} yields come from different daily entries.")
+            continue
+        value, detail, flip = bp(level["value"]), "", ""
+        if change and not stale:
+            move = bp(change["value"])
+            prior = value - move
+            if move == 0:
+                detail = "unchanged"
+            else:
+                detail = f"{abs(move)} bp {'steeper' if move > 0 else 'flatter'}"
+                if value < 0 and prior < 0:
+                    detail += " (less inverted)" if move > 0 else " (more inverted)"
+            if prior < 0 < value:
+                flip = f"{name} turned positive"
+            elif value < 0 <= prior:
+                flip = f"{name} inverted"
+        lines.append(dict(name=name, level=formatted(level), detail=detail, flip=flip,
+                          ids=[level["id"], *([change["id"]] if change and not stale else [])]))
+    return lines, notes
+
+
+def curve_chart(tenors, curve_date, prior_date, stale):
+    """Server-side geometry for the inline curve: the observed tenors of the latest entry as dots joined by straight
+    segments between adjacent tenors (a missing tenor breaks the line), and the prior entry dashed when it has every
+    tenor the current curve has. None when fewer than two adjacent tenors exist or the curve is stale."""
+    if stale or not curve_date:
+        return None
+    points = {tenor: legs["level"]["value"] for tenor, legs in tenors.items()
+              if legs.get("level") and legs["level"]["observed_at"] == curve_date}
+    pairs = [(a, b) for a, b in zip(TENORS, TENORS[1:]) if a in points and b in points]
+    if not pairs:
+        return None
+    changes = {tenor: tenors[tenor].get("change") for tenor in points}
+    ghost = None
+    if all(changes.values()) and len({row["baseline"] for row in changes.values()}) == 1:
+        ghost = {tenor: points[tenor] - bp(changes[tenor]["value"]) / 100 for tenor in points}
+    values = [*points.values(), *(ghost or {}).values()]
+    low, high = min(values), max(values)
+    span = max((high - low) * CHART_PADDING, CHART_MIN_SPAN)
+    base = (low + high) / 2 - span / 2
+
+    def x(tenor):
+        share = (math.log(TENOR_YEARS[tenor]) - math.log(2)) / (math.log(30) - math.log(2))
+        return f"{100 * share:.1f}%"
+
+    def y(value):
+        return round(CHART_BOTTOM - (value - base) / span * (CHART_BOTTOM - CHART_TOP), 1)
+
+    def series(levels):
+        return dict(points=[dict(x=x(tenor), y=y(levels[tenor]), tenor=tenor) for tenor in TENORS if tenor in levels],
+                    segments=[dict(x1=x(a), y1=y(levels[a]), x2=x(b), y2=y(levels[b])) for a, b in pairs])
+
+    return dict(height=CHART_HEIGHT, label_y=CHART_LABEL_Y, current=series(points),
+                ghost=series(ghost) if ghost else None,
+                labels=[dict(x=x(tenor), text=tenor) for tenor in TENORS],
+                legend=dict(current=short_date(curve_date),
+                            prior=short_date(prior_date) if prior_date else "prior entry") if ghost else None,
+                domain=[round(base, 4), round(base + span, 4)])
+
+
+def rates_module(packet, facts, catalog):
+    """The Macro & rates module (R9): caption, the four-tenor table, spread lines, the named curve move, the chart,
+    and notes, all from this run's deterministic rows and curve record; the analyst's paragraphs follow it."""
+    yields, asof = treasury_rows(facts)
+    if not yields:
+        record = packet.get("curve") or {}
+        if record.get("freshness") == "stale" and record.get("observed_at"):
+            # Rows past the admission window arrive without values; the curve is still dated, and says so.
+            notes = [OVER_AGE_NOTE, *([record["release_note"]] if record.get("release_note") else [])]
+            return dict(yields=[], asof=None, proof_ids=[], curve=dict(
+                title=CURVE_TITLE, caption=f"{short_date(record['observed_at'])} · {CURVE_CAPTIONS['stale']}",
+                stale=True, spreads=[], move=None, chart=None, notes=notes))
+        return dict(yields=[], asof=None, curve=None, proof_ids=[])
+    tenors = rates(packet)
+    spreads = {row["id"]: row for row in facts if row["metric"] in (SPREAD_LEVEL, SPREAD_CHANGE)}
+    record = packet.get("curve")
+    if record is None:
+        # Evidence saved before the curve record existed: the same deterministic derivation, never saved from here.
+        derived = spread_rows(tenors)
+        spreads = spreads or {row["id"]: row for row in derived}
+        record = curve_record(packet, tenors, derived, read_json(ROOT / "config/magnitude.json")["bp"]["SMALL"])
+    freshness = record.get("freshness")
+    stale = freshness == "stale"
+    if stale:
+        for row in yields:
+            row["change"], row["change_note"] = absent_cell(), ""
+            row["ids"] = [row["level"]["id"]] if row["level"]["id"] else []
+    caption = " · ".join(filter(None, (asof, CURVE_CAPTIONS.get(freshness, CURVE_CAPTIONS["current"])
+                                       if asof else "official daily observations, dated per row")))
+    lines, notes = spread_lines(spreads, tenors, stale)
+    if stale:
+        notes.append(STALE_NOTE)
+    if record.get("release_note"):
+        notes.append(record["release_note"])
+    move = None if stale else dict(label=record["label"], sentence=record["sentence"], note=record.get("note", ""),
+                                   unavailable=record["label"] == UNAVAILABLE)
+    prior_date = record.get("prior_observed_at") or prior_entry_date(
+        next((legs["change"] for legs in tenors.values() if legs.get("change")), None))
+    chart = curve_chart(tenors, record.get("observed_at"), prior_date, stale)
+    proof_ids = [ident for row in yields for ident in row["ids"]] + [ident for line in lines for ident in line["ids"]]
+    return dict(yields=yields, asof=asof, proof_ids=[ident for ident in proof_ids if ident in catalog],
+                curve=dict(title=CURVE_TITLE, caption=caption, stale=stale, spreads=lines, move=move, chart=chart,
+                           notes=notes))
+
+
+def next_update(info, session_date):
+    """The scheduler's next checkpoint in reader words, its PT display time, and its absolute scheduled time."""
     clock = pacific_time(info["scheduled_at"])
     if info["session_date"] != session_date:
-        return f"Next update · {short_date(info['session_date'])} · {clock} premarket"
-    if info["kind"] == "synthesis":
-        return f"Next update · {clock} · interpretation"
-    if info["kind"] == "close":
-        return f"Next update · {clock} · close snapshot"
-    return f"Next update · {clock}"
+        when, kind = f"{short_date(info['session_date'])} · {clock}", "premarket analysis"
+    else:
+        when, kind = clock, NEXT_WORDS.get(info["kind"], "price refresh")
+    return dict(text=f"{when} · {kind}", when=when, at=info["scheduled_at"])
+
+
+def next_update_label(info, session_date):
+    """`11:00 AM PT · price refresh`, `7:00 AM PT · analysis update`, `1:01 PM PT · close snapshot`, or
+    `Mon, Sep 28 · 6:00 AM PT · premarket analysis`."""
+    return next_update(info, session_date)["text"]
 
 
 def since_caption(anchors):
@@ -429,8 +625,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
                       "measure": measure_label(row, session), "observed_label": observed_label(row["observed_at"])})
     history_symbols = {h["symbol"] for h in packet["history"]}
     equity = [r for r in facts if r["topic"] in history_symbols or r["frequency"] == "intraday"]
-    treasuries = [r for r in facts if r["topic"].startswith("US ") and r["metric"] in
-                  {"daily par yield", "daily yield change"}]
+    treasuries = [r for r in facts if r["topic"].startswith("US ") and r["metric"] in RATE_METRICS]
     other_macro = [r for r in facts if r not in equity and r not in treasuries]
 
     def current_or_daily(symbol):
@@ -446,9 +641,11 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
 
     current_sectors = sorted((r for r in facts if r["frequency"] == "intraday" and r["topic"] in SECTORS),
                              key=lambda r: abs(r["value"]), reverse=True)
+    # A stale curve's changes are not shown anywhere a figure could put them (R6).
+    curve_stale = (packet.get("curve") or {}).get("freshness") == "stale"
     priority = [current_or_daily("SPY"), current_or_daily("QQQ"),
                 current_sectors[0]["id"] if current_sectors else None, current_or_daily("GLD"),
-                "treasury-2y-change", "treasury-10y-change"]
+                *([] if curve_stale else ["treasury-2y-change", "treasury-10y-change"])]
     chips = [dict(catalog[i], display=formatted(catalog[i]), direction=direction(catalog[i]),
                   metric_label=metric_label(catalog[i], session),
                   observed_label=observed_label(catalog[i]["observed_at"]),
@@ -456,7 +653,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
              for i in dict.fromkeys(priority) if i and i in catalog][:6]
     if not chips:
         chips = [dict(row, metric_label=metric_label(row, session), observed_short=figure_clock(row))
-                 for row in facts[:4]]
+                 for row in facts if not (curve_stale and row["metric"] in (CHANGE, SPREAD_CHANGE))][:4]
     # The page shows three figures: the first three of the same deterministic priority order
     # (SPY, QQQ, then the leading current sector print when one exists, else GLD). No new ranking.
     figures = chips[:3]
@@ -471,7 +668,9 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     sector_change, sector_asof = change_column(sector_rows, daily_today, session)
     metal_rows = compact_equity_rows(facts, METALS, daily_today)
     metal_change, metal_asof = change_column(metal_rows, daily_today, session)
-    yields, yields_asof = treasury_rows(treasuries)
+    module = rates_module(packet, treasuries, catalog)
+    metal_pairs = [f"{row['symbol']} vs {row['relative_label']}" for row in metal_rows if row["relative"]["id"]]
+    yields = module["yields"]
 
     # What matters next: watches with their frozen horizons, carried watches, attention, events.
     watches = []
@@ -549,12 +748,12 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     omitted = []
     if not mega_rows and not narrative["sections"]["equities"] and not equity:
         omitted.append("Equity structure")
-    if not yields and not other_macro and not narrative["sections"]["macro"]:
+    if not yields and not module["curve"] and not other_macro and not narrative["sections"]["macro"]:
         omitted.append("Macro & rates")
     if not sector_rows:
         omitted.append("Sector view")
     if not metal_rows:
-        omitted.append("Cross-asset structure")
+        omitted.append("Metals")
     limitations = [reader_limitation(item) for item in packet["coverage"]["limitations"]]
     if omitted:
         limitations.append("Not in this edition: " + ", ".join(omitted))
@@ -625,9 +824,33 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     take = narrative.get("take") or {}
     take = (dict(text=expand(take["text"].strip()), evidence_ids=take["evidence_ids"],
                  refs=refs(take["evidence_ids"])) if take.get("text", "").strip() else None)
-    next_label = next_update_label(next_checkpoint(target, checkpoint), session_date)
-    clocks = (f"Analysis anchored {interpretation_clock} · Observed record refreshed {data_clock}" if carried
-              else f"As of {data_clock}") + f" · {next_label}"
+    # Three clocks, each saying what it measures. Prices: the latest current equity print across the page's tables
+    # (the latest of their own "as of" clocks), else the prior close they are dated to. Analysis: when the carried
+    # interpretation was made, and by which synthesis edition. Next: the scheduler's next checkpoint. The run's
+    # collection time stays in Technical details.
+    table_rows = [*mega_rows, *sector_rows, *metal_rows]
+    prints = [timestamp(row["intraday"]["observed_at"]) for row in table_rows if row["intraday"]["id"]]
+    closes = [row["daily"]["observed_at"] for row in table_rows if row["daily"]["id"]] if daily_today else []
+    prices = (pacific_time(max(prints).isoformat()) if prints
+              else f"prior close {short_date(max(closes))}" if closes else NO_PRINT)
+    edition_word = EDITION_WORDS.get(interpreted.get("checkpoint")) or EDITION_LABELS.get(
+        interpreted.get("checkpoint"), "analysis").removesuffix(" edition").lower()
+    analysis = f"{interpretation_clock} · {edition_word}"
+    # A commissioning run never claims its phase's scheduled slot, so that checkpoint can still be next.
+    upcoming = next_update(next_checkpoint(target, None if packet["run"].get("commissioning") else checkpoint),
+                           session_date)
+    next_label = upcoming["text"]
+    if not carried and prices == interpretation_clock:
+        # A synthesis edition whose prices and analysis share one clock.
+        clocks = [dict(label="Prices & analysis", text=analysis, anchor=True)]
+    else:
+        clocks = [dict(label="Prices", text=prices, anchor=True), dict(label="Analysis", text=analysis)]
+    clocks.append(dict(label="Next", text=next_label, next_at=upcoming["at"], next_when=upcoming["when"],
+                       grace_minutes=int(OVERDUE_GRACE.total_seconds() // 60)))
+    since_label = since_caption(anchors)
+    if since_label and carried:
+        # A carried page's comparisons end where its analysis was written, not at this refresh.
+        since_label += f" · through the {interpretation_clock} analysis"
     return dict(
         mode=packet["run"]["mode"], status=status, commissioning=commissioning,
         live_commissioning=live_commissioning, checkpoint=checkpoint, kind=kind, carried=carried,
@@ -636,9 +859,11 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
         edition_label=EDITION_LABELS.get(checkpoint, "Market edition"),
         session=packet["run"]["session"], target=packet["run"]["target_time"],
         actual_started_at=actual_started_at,
-        status_line=f"{status} · {EDITION_LABELS.get(checkpoint, 'Market edition')} · "
-                    f"{pacific_time(actual_started_at, True).split(' · ')[0]}",
-        clocks=clocks, data_clock=data_clock, interpretation_clock=interpretation_clock, next_update=next_label,
+        masthead_date=pacific_time(actual_started_at, True).split(" · ")[0],
+        # LIVE is the normal state and says nothing; any other status stays loud, with the edition named once.
+        status_line="" if status == "LIVE" else f"{status} · {EDITION_LABELS.get(checkpoint, 'Market edition')}",
+        clocks=clocks, prices_clock=prices, data_clock=data_clock, interpretation_clock=interpretation_clock,
+        next_update=next_label,
         truth=truth,
         technical=technical, coverage=packet["coverage"], limitations=limitations,
         # The banner's limitation is the analyst's coverage caveat at its own clock. Only the edition that
@@ -652,7 +877,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
         character_refs=refs(narrative["character"]["evidence_ids"]),
         chips=chips, figures=figures,
         summary=[paragraph(p) for p in narrative["summary"]], take=take,
-        since=dict(heading="What changed", label=since_caption(anchors), entries=since_entries, note=since_note,
+        since=dict(heading="What changed", label=since_label, entries=since_entries, note=since_note,
                    status=prior.get("status", "cold_start")),
         next=dict(watches=watches, carried=carried_watches, attention=attention, events=events,
                   paragraphs=[paragraph(p) for key in ("attention", "events") for p in narrative["sections"][key]]),
@@ -661,15 +886,17 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
                       spread_label="20-session return spread vs QQQ",
                       lookback={s: v for s, v in packet.get("lookback", {}).items() if v["r20"] != "available"}),
         macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]],
-                   yields=yields, yields_asof=yields_asof, facts=other_macro,
-                   yields_proof=refs([i for row in yields for i in row["ids"]], catalog),
+                   yields=yields, yields_asof=module["asof"], curve=module["curve"], facts=other_macro,
+                   yields_proof=refs(module["proof_ids"], catalog),
                    facts_proof=refs([row["id"] for row in other_macro], catalog)),
         sectors=dict(rows=sector_rows, change_label=sector_change, asof=sector_asof, proof=proof(sector_rows),
                      spread_label="20-session return spread vs SPY, strongest to weakest"),
         cross_asset=dict(rows=metal_rows, change_label=metal_change, asof=metal_asof, proof=proof(metal_rows),
-                         spread_label="20-session return spread, "
-                         + ", ".join(f"{row['symbol']} vs {row['relative_label']}" for row in metal_rows
-                                     if row["relative"]["id"])),
+                         spread_label=("20-session return spread, " + ", ".join(metal_pairs)) if metal_pairs else ""),
+        guide=dict(move=(dict(label=module["curve"]["move"]["label"], text=module["curve"]["move"]["sentence"])
+                         if module["curve"] and module["curve"]["move"] and not module["curve"]["move"]["unavailable"]
+                         else None),
+                   entries=GUIDE, moves=GUIDE_MOVES),
         cuttingboard_section=dict(visible=cuttingboard_visible,
                                   paragraphs=[paragraph(p) for p in narrative["sections"]["cuttingboard"]]),
         sources=sources, unavailable_sources=sum(1 for s in sources if s["unavailable"]),
@@ -693,9 +920,11 @@ def markdown(view):
             blocks.append(f"Could also be: {esc(p['alternative'])}")
         return "\n\n".join(blocks)
 
-    lines = [f"# {esc(view['banner']['title'])}", "", esc(view["status_line"]), esc(view["clocks"])]
+    header = " · ".join(filter(None, (view["status_line"], view["masthead_date"])))
+    lines = [f"# {esc(view['banner']['title'])}", "", esc(header), ""]
+    lines += [f"- {clock['label']} · {esc(clock['text'])}" for clock in view["clocks"]]  # labels are constants
     if view["truth"]:
-        lines.append(f"> {esc(view['truth'])}")
+        lines += ["", f"> {esc(view['truth'])}"]
     lines += ["", f"**INTERPRETATION — {view['banner']['label']}** · {esc(view['character'])} "
               f"{refs(view['character_ids'])}", ""]
     if view["banner"]["limitation"]:
@@ -763,19 +992,34 @@ def markdown(view):
         if eq["lookback"]:
             lines.append("")
     mac = view["macro"]
-    if mac["paragraphs"] or mac["yields"] or mac["facts"]:
+    if mac["paragraphs"] or mac["curve"] or mac["facts"]:
         lines += ["## Macro & rates", ""]
+        if mac["curve"]:
+            curve = mac["curve"]
+            dated = not mac["yields_asof"]
+            head = "| Maturity | Yield |" + ("" if curve["stale"] else " Daily change |") + (" Date |" if dated else "")
+            lines += [f"**{curve['title'].upper()}** · {esc(curve['caption'])}", ""]
+            if mac["yields"]:
+                lines += [head, "|---|---:|" + ("" if curve["stale"] else "---:|") + ("---|" if dated else "")]
+            for row in mac["yields"]:
+                note = f" ({esc(row['change_note'])})" if row["change_note"] else ""
+                change = "" if curve["stale"] else f" {row['change']['display']}{note} |"
+                lines.append(f"| {row['maturity']} | {row['level']['display']} |{change}"
+                             + (f" {esc(row['date'])} |" if dated else ""))
+            lines.append("")
+            for spread in curve["spreads"]:
+                lines.append(f"- {spread['name']} · " + " · ".join(filter(None, (spread["level"], spread["detail"],
+                                                                                   spread["flip"]))))
+            if curve["move"]:
+                lines += ["", f"**{curve['move']['label']}** — {esc(curve['move']['sentence'])}"
+                          + (f" {esc(curve['move']['note'])}" if curve["move"]["note"] else "")]
+            for note in curve["notes"]:
+                lines += ["", esc(note)]
+            lines.append("")
         for p in mac["paragraphs"]:
             lines += [para(p), ""]
         if mac["yields"]:
-            asof = f" · {esc(mac['yields_asof'])}" if mac["yields_asof"] else ""
-            lines += [f"**TREASURY PAR YIELDS**{asof}", "", "| Maturity | Yield | Daily change | Date |",
-                      "|---|---:|---:|---|"]
-            for row in mac["yields"]:
-                note = f" ({esc(row['change_note'])})" if row["change_note"] else ""
-                lines.append(f"| {row['maturity']} | {row['level']['display']} | {row['change']['display']}{note} | "
-                             f"{esc(row['date'])} |")
-            lines += ["", LEDGER_NOTE, ""]
+            lines += [LEDGER_NOTE, ""]
         if mac["facts"]:
             lines += ["| Measure | Observation | Date / source |", "|---|---:|---|"]
             for row in mac["facts"]:
@@ -795,8 +1039,8 @@ def markdown(view):
     cross = view["cross_asset"]
     if cross["rows"]:
         asof = f" · {esc(cross['asof'])}" if cross["asof"] else ""
-        lines += ["## Cross-asset structure", "",
-                  f"**METALS STRUCTURE** · {esc(cross['spread_label'])} · {esc(cross['change_label'])}{asof}", "",
+        lines += ["## Metals", "", " · ".join(filter(None, (esc(cross["spread_label"]), esc(cross["change_label"]))))
+                  + asof, "",
                   "| Instrument | Change | 20D | Spread | vs 50DMA |",
                   "|---|---:|---:|---:|---:|"]
         for row in cross["rows"]:

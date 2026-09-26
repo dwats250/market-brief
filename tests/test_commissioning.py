@@ -103,7 +103,7 @@ def test_live_commissioning_header_names_the_phase():
     assert "Hourly refresh" in head
     assert "premarket edition" not in head.lower()
     assert 'data-checkpoint="COMMISSIONING"' in head
-    assert "As of 5:45 AM PT" in head and "collected 5:45 AM PT" in head
+    assert "<dt>Analysis</dt><dd>5:45 AM PT" in head and "collected 5:45 AM PT" in head
     assert "Hourly refresh" in md
 
 
@@ -117,6 +117,7 @@ def test_scheduled_header_uses_human_checkpoint_labels():
     _, page = render(packet, value)
     head = page.split("<h1>", 1)[0]
     visible = head.split("<body>", 1)[1]
-    assert "Opening structure edition" in visible
+    # LIVE carries no status line; the analysis clock names the edition in reader words.
+    assert "<dt>Analysis</dt><dd>5:45 AM PT · opening structure</dd>" in visible
     assert "OPEN_30M" not in visible and "OPEN 30M" not in visible
     assert 'data-checkpoint="OPEN_30M"' in head

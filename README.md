@@ -16,7 +16,7 @@ It produces one rich premarket brief, one interpretive update after the open, th
 
 Checkpoint timing is anchored to the NYSE session, including holidays and early closes. Pacific time is presentation only.
 
-After a synthesis is accepted, its interpretation is frozen in continuity. Later deterministic updates can refresh observed values, tables, clocks, flags, and horizon state, but they do not call the analyst or rewrite the accepted prose. A carried page therefore names both clocks in its one clock line, **Analysis anchored** (the interpretation) and **Observed record refreshed** (this run), plus the scheduler's next update; a synthesis page reads **As of**. Each row keeps its own observation clock.
+After a synthesis is accepted, its interpretation is frozen in continuity. Later deterministic updates can refresh observed values, tables, clocks, flags, and horizon state, but they do not call the analyst or rewrite the accepted prose. Every page therefore names three clocks: **Prices** (the latest current equity print in its tables, or `prior close <date>`), **Analysis** (when the interpretation was made, and by which edition: `premarket` or `opening structure`), and **Next** (the scheduler's next update, which reads `Update due … has not published` in the browser once it is overdue). A synthesis whose prices and analysis coincide shows one **Prices & analysis** line. Each row keeps its own observation clock, and Treasury rates carry their own date: they are the official daily par curve from the previous business day, never an intraday quote.
 
 ## Product principles
 

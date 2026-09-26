@@ -1,3 +1,5 @@
+import html
+import re
 from html.parser import HTMLParser
 
 from test_pipeline import fixture_packet, narrative
@@ -36,7 +38,7 @@ class Page(HTMLParser):
 
 def test_markdown_html_same_facts_mode_and_literal_halt():
     md, page = render(fixture_packet(), narrative())
-    for value in ("FICTIONAL SAMPLE", "HALT", "-4.00 bp", "+1.00 bp", "INTERPRETATION",
+    for value in ("FICTIONAL SAMPLE", "HALT", "\u22124 bp", "+1 bp", "INTERPRETATION",
                   "WATCH", "OBSERVED", "current prints unavailable"):
         assert value in md
         assert value.lower() in page.lower()
@@ -48,7 +50,7 @@ def test_markdown_html_same_facts_mode_and_literal_halt():
     assert 'id="theme-choice"' in page
     assert page.index("What matters next") < page.index("Equity structure") < page.index("Macro &amp; rates")
     assert "direction-positive" in page and "direction-negative" in page
-    assert 'class="number primary direction-neutral">3.86 % yield' in page
+    assert 'class="number primary direction-neutral">3.86%' in page
 
 
 def test_model_html_is_escaped_in_both_formats():
@@ -73,13 +75,22 @@ def test_live_header_uses_pacific_time_and_hides_plumbing():
     value["mode"] = "LIVE"
     _, page = render(packet, value)
     header = page.split("<h1>", 1)[0]
-    assert "LIVE · Opening refresh · Tuesday, Sep 8" in header
-    # One clocks line: the data clock, and the scheduler's next update (here today's premarket synthesis).
-    assert "As of 5:45 AM PT · Next update · 6:00 AM PT · interpretation" in header
-    assert header.count("PT") == 2
-    assert "Evidence cutoff" not in header
-    assert "Generated 2026-" not in header
-    assert "+00:00" not in header
+    # LIVE says nothing; the date is the masthead's; each clock says what it measures, in Pacific time.
+    assert '<span>Tuesday, Sep 8</span>' in header and '<div class="status-line">' not in header
+    assert clock_lines(page) == ["Prices · prior close Fri, Sep 4", "Analysis · 5:45 AM PT · opening refresh",
+                                 "Next · 6:00 AM PT · analysis update"]
+    visible = re.sub(r"<[^>]+>", "", header)  # the overdue check's absolute-time data attribute aside
+    assert visible.count("PT") == 2
+    assert "Evidence cutoff" not in visible
+    assert "Generated 2026-" not in visible
+    assert "+00:00" not in visible
+
+
+def clock_lines(page):
+    """The header's clock block as `Label · text` lines."""
+    block = re.search(r'<dl class="clocks">(.*?)</dl>', page, re.S).group(1)
+    return [f"{html.unescape(label)} · {html.unescape(text)}"
+            for label, text in re.findall(r"<dt>(.*?)</dt><dd>(.*?)</dd>", block)]
 
 
 def test_last_good_status_is_explicit():

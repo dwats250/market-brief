@@ -241,7 +241,8 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
 
 WINDOWS = {"daily return": "1s", "twenty-session return": "20s", "fifty-session average": "50s",
            "distance from 50DMA": "50s", "regular close": "1s", "daily par yield": "1d",
-           "daily yield change": "1d", "premarket return": "intraday", "intraday return": "intraday"}
+           "daily yield change": "1d", "curve spread": "1d", "daily spread change": "1d",
+           "premarket return": "intraday", "intraday return": "intraday"}
 
 
 def metric_identity(row):

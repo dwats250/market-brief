@@ -14,6 +14,7 @@ import pytest
 from test_cadence import TUE, Day
 from test_history_admission import packet_at, utc
 from test_pipeline import fixture_packet, narrative
+from test_render import clock_lines
 
 from market_brief import cli
 from market_brief.continuity import interpretation_record
@@ -87,11 +88,12 @@ def surfaces(packet, value=None):
     captions = [view["sectors"]["change_label"], view["cross_asset"]["change_label"]]
     html_figures = re.findall(r'<div class="figure"><span class="eyebrow">[^<]*? · ([^<]*)</span>', page)
     # The two tables that hold current prints here: sectors (XLI) and metals (GLD).
-    html_captions = re.findall(r'<div class="caption">(?:[^<]*strongest to weakest|Metals structure)'
-                               r'<span>([^<]*)</span>', page)
+    html_captions = re.findall(r'<div class="caption">(?:[^<]*strongest to weakest'
+                               r'|20-session return spread, [A-Z]+ vs [^<]*)<span>([^<]*)</span>', page)
     md_chips = [line.split(" | ", 1)[0].split(" · ", 1)[1] for line in md.splitlines()
                 if re.match(r"\| (SPY|QQQ|XLI|GLD) · ", line)]
-    md_captions = [line for line in md.splitlines() if "strongest to weakest" in line or "METALS STRUCTURE" in line]
+    md_captions = [line for line in md.splitlines()
+                   if "strongest to weakest" in line or re.match(r"20-session return spread, [A-Z]+ vs ", line)]
     return dict(marker=marker, proofs=proofs, ledger=ledger, figures=figures, measures=measures,
                 captions=captions, html_figures=html_figures, html_captions=html_captions, md_chips=md_chips,
                 md_captions=md_captions, page=page, md=md, view=view)
@@ -255,7 +257,7 @@ def test_d2_prior_snapshot_refs_are_labeled_by_their_own_clock(day, monkeypatch)
                 (f"SPY · {INTRADAY_LABEL}", "-0.53 %", "6:31 AM PT")]
     for checkpoint in ("OPEN_30M", "HOURLY_1300"):
         page = day.page(checkpoint)
-        since = page.split('<div class="since">', 1)[1].split("</div>", 1)[0]
+        since = page.split('<section class="since">', 1)[1].split("</section>", 1)[0]
         assert markers(since) == expected, checkpoint
         assert "Premarket return" not in page and "premarket return" not in page, checkpoint
 
@@ -545,7 +547,7 @@ def test_i_empty_or_blank_fields_render_no_label(uncertainty, alternative):
     for text in (page, md):
         assert "Caveat:" not in text and "Could also be:" not in text
     assert not re.search(r'<p class="fine">\s*</p>', page)  # no blank, unlabeled note either
-    macro = md.split("## Macro & rates", 1)[1].split("**TREASURY", 1)[0]
+    macro = md.split("## Macro & rates", 1)[1].split("## Sector view", 1)[0]
     assert not re.search(r"\n[ \t]+\n", macro) and not re.search(r"\]\(#evidence-[^)]+\) +\n", macro)
 
 
@@ -553,7 +555,7 @@ def test_i_both_fields_render_caveat_first_each_with_its_own_meaning():
     value = with_macro_paragraph("  These are dated rows, {{treasury-2y-change}} on the 2Y.  ",
                                  "Duration exposure may explain the split. ")
     md, page = render(fixture_packet(), value)
-    expected = [("Caveat", "These are dated rows, -4.00 bp on the 2Y."),
+    expected = [("Caveat", "These are dated rows, \u22124 bp on the 2Y."),
                 ("Could also be", "Duration exposure may explain the split.")]
     assert macro_notes(page, md) == (expected, expected)
     view = presentation(fixture_packet(), value)
@@ -572,26 +574,32 @@ def day(monkeypatch, tmp_path):
     return Day(monkeypatch, tmp_path)
 
 
-def clock_lines(page):
-    return re.findall(r'<div class="clocks">(.*?)</div>', page)
-
-
 def brief_md(day, checkpoint):
     return (day.folder(checkpoint) / "brief.md").read_text()
 
 
-def test_j_a_carried_page_names_the_analysis_clock_and_the_refresh_clock_in_one_line(day):
+def md_clocks(text):
+    return [line[2:] for line in text.splitlines()[4:8] if line.startswith("- ")]
+
+
+def test_j_a_each_header_clock_says_what_it_measures(day):
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
     assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
     structure, refresh = day.page("OPEN_30M"), day.page("HOURLY_1300")
-    assert clock_lines(structure) == ["As of 7:01 AM PT · Next update · 8:00 AM PT"]
-    carried = ("Analysis anchored 7:01 AM PT · Observed record refreshed 10:00 AM PT · Next update · 11:00 AM PT")
-    assert clock_lines(refresh) == [carried]  # exactly one clock element
-    assert brief_md(day, "HOURLY_1300").splitlines()[3] == carried
-    assert brief_md(day, "OPEN_30M").splitlines()[3] == "As of 7:01 AM PT · Next update · 8:00 AM PT"
+    both = ["Prices & analysis · 7:01 AM PT · opening structure", "Next · 8:00 AM PT · price refresh"]
+    carried = ["Prices · 10:00 AM PT", "Analysis · 7:01 AM PT · opening structure",
+               "Next · 11:00 AM PT · price refresh"]
+    assert clock_lines(structure) == both and clock_lines(refresh) == carried
+    assert structure.count('<dl class="clocks">') == refresh.count('<dl class="clocks">') == 1
+    # The Markdown rendition carries the same clock lines under the date.
+    assert brief_md(day, "HOURLY_1300").splitlines()[2] == "Tuesday, Sep 8"
+    assert md_clocks(brief_md(day, "HOURLY_1300")) == carried and md_clocks(brief_md(day, "OPEN_30M")) == both
     for page in (structure, refresh, brief_md(day, "HOURLY_1300"), brief_md(day, "OPEN_30M")):
         assert "Interpretation as of" not in page and "Data as of" not in page
+        assert "Analysis anchored" not in page and "Observed record refreshed" not in page
+    # Only the Prices line is the anchor.
+    assert refresh.count('class="clock anchor"') == 1 and '<div class="clock anchor"><dt>Prices</dt>' in refresh
     # The scheduler's idempotency markers are unchanged.
     assert f'data-session-date="{TUE}" data-checkpoint="HOURLY_1300"' in refresh
     assert f'data-session-date="{TUE}" data-checkpoint="OPEN_30M"' in structure

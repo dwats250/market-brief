@@ -90,7 +90,9 @@ def test_prompt_removes_raw_history_and_unpermitted_facts():
     packet = fixture_packet()
     next(s for s in packet["sources"] if s["id"] == "sample-prices")["llm_allowed"] = False
     projected = model_packet(packet)
-    assert not projected["derived"] and not projected["attention"]
+    # Every price-derived row goes with its source; the curve spreads derive from the still-permitted rates source.
+    assert {row["source_id"] for row in projected["derived"]} == {"sample-rates"}
+    assert {row["topic"] for row in projected["derived"]} == {"US 2s10s"} and not projected["attention"]
     assert "history" not in projected
     system, data = construct_prompt(packet)
     assert "untrusted DATA" in system

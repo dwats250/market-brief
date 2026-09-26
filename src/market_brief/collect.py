@@ -85,19 +85,33 @@ def xml_root(text):
     return ET.fromstring(text)
 
 
-def treasury_rows(text, now, retrieved):
-    rows = []
+def treasury_url(year):
+    return f"{TREASURY}?data=daily_treasury_yield_curve&field_tdr_date_value={year}"
+
+
+def treasury_entries(text, now):
+    """One feed's entries dated before today (ET), as `(date, fields)`."""
+    entries = []
     for entry in xml_root(text).findall("{*}entry"):
         fields = {e.tag.split("}")[-1]: e.text for e in entry.iter()}
         day = (fields.get("NEW_DATE") or "")[:10]
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) and day < now.astimezone(EASTERN).date().isoformat():
-            rows.append((day, fields))
+            entries.append((day, fields))
+    return entries
+
+
+def yield_rows(entries, retrieved):
+    """Level and daily change rows for the latest entry; the change is against the entry immediately before it.
+
+    Entries merge by date (a later list wins a duplicate date). A change is a whole number of basis points,
+    rounded here at derivation, so the reader, the ledger and the curve classifier all read the same integer.
+    """
+    rows = sorted(dict(entries).items())
     if not rows:
         raise SourceError("no prior daily yield observation")
-    rows.sort(key=lambda x: x[0])
     day, fields = rows[-1]
     result = []
-    for term in (2, 5, 10):
+    for term in (2, 5, 10, 30):
         raw = fields.get(f"BC_{term}YEAR")
         value = float(raw) if raw else None
         result.append(dict(id=f"treasury-{term}y", topic=f"US {term}Y", metric="daily par yield",
@@ -107,11 +121,15 @@ def treasury_rows(text, now, retrieved):
         if len(rows) >= 2 and raw and rows[-2][1].get(f"BC_{term}YEAR"):
             prior = float(rows[-2][1][f"BC_{term}YEAR"])
             result.append(dict(id=f"treasury-{term}y-change", topic=f"US {term}Y",
-                metric="daily yield change", value=(value-prior)*100, unit="bp",
+                metric="daily yield change", value=round((value-prior)*100), unit="bp",
                 baseline=f"daily observation {rows[-2][0]}", frequency="daily", observed_at=day,
                 retrieved_at=retrieved.isoformat(), source_id="treasury", status="BACKGROUND",
                 reason=""))
     return result
+
+
+def treasury_rows(text, now, retrieved):
+    return yield_rows(treasury_entries(text, now), retrieved)
 
 
 def calendar_events(text, now, retrieved):
@@ -338,9 +356,9 @@ def alpaca_collect(now, symbols=ALPACA_UNIVERSE, key_id=None, secret_key=None):
 def collect_live(now, include_cuttingboard=False, fetcher=fetch):
     raw = dict(mode="LIVE", sources=[], observations=[], history=[], events=[], context_items=[])
     deadline = time.monotonic() + 120
+    year = now.astimezone(EASTERN).year
     jobs = [
-        ("treasury", "US Treasury", "economic_series", TREASURY,
-         f"{TREASURY}?data=daily_treasury_yield_curve&field_tdr_date_value={now.year}"),
+        ("treasury", "US Treasury", "economic_series", TREASURY, treasury_url(year)),
         ("bls", "BLS calendar", "calendar", BLS, BLS),
         ("fed", "Federal Reserve releases", "news", FED, FED),
     ]
@@ -348,10 +366,19 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
         record = source(ident, name, kind, url, now)
         try:
             body = fetcher(request_url, deadline)
+            if ident == "treasury":
+                entries = treasury_entries(body, now)
+                if len(entries) < 2:
+                    # Early January: this year's feed holds fewer than two entries before today, so the previous
+                    # year's feed supplies the level or its prior entry. This year's entries win a duplicate date.
+                    try:
+                        entries = [*treasury_entries(fetcher(treasury_url(year - 1), deadline), now), *entries]
+                    except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError):
+                        pass
             retrieved = datetime.now(timezone.utc)
             record["retrieved_at"] = retrieved.isoformat()
             if ident == "treasury":
-                raw["observations"].extend(treasury_rows(body, now, retrieved))
+                raw["observations"].extend(yield_rows(entries, retrieved))
             elif ident == "bls":
                 raw["events"].extend(calendar_events(body, now, retrieved))
                 record["coverage_date"] = now.astimezone(EASTERN).date().isoformat()

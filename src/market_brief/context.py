@@ -10,7 +10,10 @@ import re
 from .evidence import ROOT, digest, evidence_catalog, model_packet, read_json
 
 CONTEXT_SCHEMA = "market-brief.analyst-context.v1"
-ANCHOR_TOPICS = ("SPY", "QQQ", "GLD", "US 2Y", "US 5Y", "US 10Y")
+ANCHOR_TOPICS = ("SPY", "QQQ", "GLD", "US 2Y", "US 5Y", "US 10Y", "US 30Y", "US 2s10s", "US 5s30s")
+# The curve record the analyst reads beside the rows it cites: read-only, never evidence (`curve.py`).
+CURVE_FIELDS = ("label", "sentence", "note", "pair", "inputs", "observed_at", "prior_observed_at", "freshness",
+                "reason", "release_note")
 # Metrics that describe the current window; large dated background (20-session returns, 50DMA
 # distances, spreads) is kept only when an anchor, a carried record, a trigger, or leadership cites it.
 CURRENT_METRICS = {"daily return", "premarket return", "intraday return", "daily yield change"}
@@ -101,8 +104,14 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
     groups, baselines = {}, {}
     events, context_items = [], []
     for row in valued.values():
-        baselines.setdefault(row["metric"], row.get("baseline"))
-        groups.setdefault(row["topic"], []).append(compact_fact(row))
+        baselines.setdefault(row["metric"], set()).add(row.get("baseline"))
+    for row in valued.values():
+        fact = compact_fact(row)
+        if len(baselines[row["metric"]]) > 1:
+            # One legend entry would misstate some of these rows (2s10s is 10Y minus 2Y, 5s30s is 30Y minus 5Y).
+            fact["baseline"] = row.get("baseline")
+        groups.setdefault(row["topic"], []).append(fact)
+    baselines = {metric: next(iter(values)) for metric, values in baselines.items() if len(values) == 1}
     for row in projected["events"]:
         events.append({key: row[key] for key in ("id", "title", "scheduled_at", "session_relation", "status")
                        if row.get(key) is not None})
@@ -138,6 +147,15 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
                  for source in projected["sources"]],
         cuttingboard=projected["cuttingboard"],
     )
+    curve = packet.get("curve") or {}
+    permitted = set(evidence_catalog(projected)) | {row["id"] for row in [*projected["events"],
+                                                                        *projected["context_items"]]}
+    if curve and set(curve.get("inputs", [])) <= permitted:
+        # The authority filter holds for the curve record too: it reaches the analyst only when every row it read is
+        # permitted, and its release note only when every release it names is.
+        releases_permitted = {item["id"] for item in curve.get("releases", [])} <= permitted
+        result["curve"] = {key: curve[key] for key in CURVE_FIELDS if curve.get(key) not in (None, "", [])
+                           and (key != "release_note" or releases_permitted)}
     if packet.get("history_lag"):
         result["history_lag"] = packet["history_lag"]
     if packet.get("history_errors"):

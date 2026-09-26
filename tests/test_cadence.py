@@ -11,7 +11,7 @@ import exchange_calendars as xcals
 import pytest
 from test_contract import edition_response
 from test_pipeline import fixture_packet, freeze_clock, narrative
-from test_render import Page
+from test_render import Page, clock_lines
 
 from market_brief import cli
 from market_brief.context import edition_profile, editions_config
@@ -127,7 +127,8 @@ def interpretation_fragments(page):
     what changed, and the watches. Everything else on the page belongs to the data clock. The one
     deterministic annotation a refresh may add to a watch, `horizon passed`, is stripped before comparing."""
     head = page.split("<h1>", 1)[1].split('<div class="figures">', 1)[0]
-    since = page.split('<div class="since">', 1)[1].split("<section", 1)[0] if '<div class="since">' in page else ""
+    since = (page.split('<section class="since">', 1)[1].split("</section>", 1)[0]
+             if '<section class="since">' in page else "")
     watches = page.split('<span class="eyebrow">Watches</span>', 1)[1].split('<span class="eyebrow">Flagged', 1)[0]
     return head, since, watches.replace(PASSED, "")
 
@@ -155,14 +156,14 @@ def test_only_the_two_synthesis_checkpoints_carry_an_edition_profile():
 def test_next_update_label_follows_the_scheduler():
     def label(now, current):
         return next_update_label(next_checkpoint(utc(now), current), TUE)
-    assert label(f"{TUE}T13:00:00+00:00", "PREMARKET") == "Next update · 6:31 AM PT"
-    assert label(f"{TUE}T13:31:00+00:00", "OPEN_1M") == "Next update · 7:00 AM PT · interpretation"
-    assert label(f"{TUE}T14:01:00+00:00", "OPEN_30M") == "Next update · 8:00 AM PT"
-    assert label(f"{TUE}T19:00:00+00:00", "HOURLY_1500") == "Next update · 1:01 PM PT · close snapshot"
-    assert label(f"{TUE}T20:03:00+00:00", "CLOSE_1M") == "Next update · Wed, Sep 9 · 6:00 AM PT premarket"
+    assert label(f"{TUE}T13:00:00+00:00", "PREMARKET") == "6:31 AM PT · price refresh"
+    assert label(f"{TUE}T13:31:00+00:00", "OPEN_1M") == "7:00 AM PT · analysis update"
+    assert label(f"{TUE}T14:01:00+00:00", "OPEN_30M") == "8:00 AM PT · price refresh"
+    assert label(f"{TUE}T19:00:00+00:00", "HOURLY_1500") == "1:01 PM PT · close snapshot"
+    assert label(f"{TUE}T20:03:00+00:00", "CLOSE_1M") == "Wed, Sep 9 · 6:00 AM PT · premarket analysis"
     # Friday's close points at Tuesday: Labor Day is skipped.
     assert next_update_label(next_checkpoint(utc("2026-09-04T20:03:00+00:00"), "CLOSE_1M"), "2026-09-04") \
-        == "Next update · Tue, Sep 8 · 6:00 AM PT premarket"
+        == "Tue, Sep 8 · 6:00 AM PT · premarket analysis"
 
 
 # --- one production day ----------------------------------------------------------------------------
@@ -172,8 +173,11 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
     assert day.calls == ["PREMARKET"]
     premarket = day.page("PREMARKET")
-    assert "LIVE · Premarket edition · Tuesday, Sep 8" in premarket
-    assert "As of 6:00 AM PT · Next update · 6:31 AM PT" in premarket
+    # LIVE says nothing; the masthead carries the date; no current prints yet, so prices are the prior close.
+    assert '<div class="status-line">' not in premarket and "Premarket edition" not in premarket
+    assert '<span>Tuesday, Sep 8</span></div>' in premarket
+    assert clock_lines(premarket) == ["Prices · prior close Fri, Sep 4", "Analysis · 6:00 AM PT · premarket",
+                                      "Next · 6:31 AM PT · price refresh"]
     bundle = day.bundle()
     assert bundle["interpretation"]["origin"]["checkpoint"] == "PREMARKET"
     premarket_interpretation = bundle["interpretation"]["content_hash"]
@@ -183,9 +187,9 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M") == 0
     assert day.calls == ["PREMARKET"]
     opening = day.page("OPEN_1M")
-    assert "LIVE · Opening refresh · Tuesday, Sep 8" in opening
-    assert ("Analysis anchored 6:00 AM PT · Observed record refreshed 6:31 AM PT · Next update · 7:00 AM PT · "
-            "interpretation") in opening
+    assert '<div class="status-line">' not in opening and "Opening refresh" not in opening
+    assert clock_lines(opening) == ["Prices · 6:31 AM PT", "Analysis · 6:00 AM PT · premarket",
+                                    "Next · 7:00 AM PT · analysis update"]
     assert interpretation_fragments(opening)[0] == interpretation_fragments(premarket)[0]
     bundle = day.bundle()
     assert bundle["interpretation"]["content_hash"] == premarket_interpretation  # never rewritten by a refresh
@@ -199,8 +203,10 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]
     structure = day.page("OPEN_30M")
-    assert "LIVE · Opening structure edition · Tuesday, Sep 8" in structure
-    assert "As of 7:01 AM PT · Next update · 8:00 AM PT" in structure
+    assert '<div class="status-line">' not in structure
+    # A synthesis whose prices and analysis share one clock names it once.
+    assert clock_lines(structure) == ["Prices & analysis · 7:01 AM PT · opening structure",
+                                      "Next · 8:00 AM PT · price refresh"]
     # The fixture narrative interprets no change, so the block stays out rather than showing an empty heading;
     # the anchors it would have named are still recorded.
     assert "<h2>What changed</h2>" not in structure
@@ -220,8 +226,10 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.run(f"{TUE}T18:00:00+00:00", "HOURLY_1400") == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]
     ten, eleven = day.page("HOURLY_1300"), day.page("HOURLY_1400")
-    assert "Analysis anchored 7:01 AM PT · Observed record refreshed 10:00 AM PT · Next update · 11:00 AM PT" in ten
-    assert "Analysis anchored 7:01 AM PT · Observed record refreshed 11:00 AM PT · Next update · 12:00 PM PT" in eleven
+    assert clock_lines(ten) == ["Prices · 10:00 AM PT", "Analysis · 7:01 AM PT · opening structure",
+                                "Next · 11:00 AM PT · price refresh"]
+    assert clock_lines(eleven) == ["Prices · 11:00 AM PT", "Analysis · 7:01 AM PT · opening structure",
+                                   "Next · 12:00 PM PT · price refresh"]
     assert interpretation_fragments(ten) == interpretation_fragments(structure)
     assert interpretation_fragments(eleven) == interpretation_fragments(ten)
     assert ten != eleven  # the observed record moved: clocks, tables, ledger
@@ -242,9 +250,10 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.run(f"{TUE}T20:03:00+00:00", "CLOSE_1M", print_at=f"{TUE}T19:59:58+00:00") == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]
     close = day.page("CLOSE_1M")
-    assert "LIVE · Close snapshot · Tuesday, Sep 8" in close
-    assert ("Analysis anchored 7:01 AM PT · Observed record refreshed 1:03 PM PT · Next update · Wed, Sep 9 · "
-            "6:00 AM PT premarket") in close
+    assert '<div class="status-line">' not in close and "Close snapshot" not in close.split("<h1>", 1)[0]
+    # The close's prices are its session-ending prints at their own clock, not the run's 1:03 PM PT.
+    assert clock_lines(close) == ["Prices · 12:59 PM PT", "Analysis · 7:01 AM PT · opening structure",
+                                  "Next · Wed, Sep 9 · 6:00 AM PT · premarket analysis"]
     assert interpretation_fragments(close)[:2] == interpretation_fragments(structure)[:2]
     assert "horizon passed" in close  # the 7:00 watches ran into the close, which has now happened
     assert (day.folder("CLOSE_1M") / "session_handoff.json").exists()
@@ -268,7 +277,8 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.run("2026-09-09T13:00:00+00:00", "PREMARKET", intraday=False, last_history_date=TUE) == 0
     assert day.calls == ["PREMARKET", "OPEN_30M", "PREMARKET"]
     wednesday = day.page("PREMARKET", "2026-09-09")
-    assert "As of 6:00 AM PT · Next update · 6:31 AM PT" in wednesday
+    assert clock_lines(wednesday) == ["Prices · prior close Tue, Sep 8", "Analysis · 6:00 AM PT · premarket",
+                                      "Next · 6:31 AM PT · price refresh"]
     context = json.loads((day.folder("PREMARKET", "2026-09-09") / "analyst_context.json").read_text())
     view = presentation(json.loads((day.folder("PREMARKET", "2026-09-09") / "evidence.json").read_text()),
                         narrative(), context)
@@ -344,8 +354,9 @@ def test_a_replayed_refresh_never_reaches_the_analyst_and_dates_its_sample_inter
     folder = next(p for p in (tmp_path / "runs").glob("*/*") if (p / "evidence.json").exists())
     page = (folder / "brief.html").read_text()
     assert "SAMPLE · Hourly refresh" in page and "FICTIONAL SAMPLE" in page
-    # The fixture is targeted before its premarket slot, so the sample interpretation keeps the data's clock.
-    assert "Analysis anchored 5:45 AM PT · Observed record refreshed 5:45 AM PT" in page
+    # The fixture is targeted before its premarket slot, so the sample interpretation keeps the data's clock. Its one
+    # print is SPY's, which no table carries, so the tables' prices are the prior close.
+    assert clock_lines(page)[:2] == ["Prices · prior close Fri, Sep 4", "Analysis · 5:45 AM PT · premarket"]
     metadata = json.loads((folder / "metadata.json").read_text())
     assert metadata["synthesis"] == dict(kind="refresh", calls=0)
     assert metadata["interpretation"]["run_id"] == "sample-premarket-fixture"
@@ -414,7 +425,7 @@ def test_a_failed_opening_structure_synthesis_leaves_refreshes_on_the_premarket_
     assert day.bundle()["interpretation"]["content_hash"] == premarket  # a rejected synthesis freezes nothing
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
     page = day.page("HOURLY_1300")
-    assert "Analysis anchored 6:00 AM PT · Observed record refreshed 10:00 AM PT" in page
+    assert clock_lines(page)[:2] == ["Prices · 10:00 AM PT", "Analysis · 6:00 AM PT · premarket"]
     assert "Interpretation: PREMARKET" in page.split("Technical details", 1)[1]
     assert day.metadata("HOURLY_1300")["interpretation"]["checkpoint"] == "PREMARKET"
     assert day.calls == ["PREMARKET", "OPEN_30M"]  # the refresh did not retry the analyst
@@ -546,7 +557,9 @@ def test_a_value_that_rounds_to_zero_is_an_unsigned_neutral_zero():
     assert formatted(row) == "0.00 %" and direction(row) == "neutral"
     assert formatted(dict(row, value=0.004)) == "0.00 %" and direction(dict(row, value=0.004)) == "neutral"
     assert formatted(dict(row, value=-0.006)) == "-0.01 %" and direction(dict(row, value=-0.006)) == "negative"
-    assert formatted(dict(row, value=0.0, unit="bp")) == "0.00 bp"
+    # Rates keep the same rule in whole basis points (R6): a change that rounds to zero is an unsigned "0 bp".
+    assert formatted(dict(row, value=0.0, unit="bp")) == "0 bp"
+    assert formatted(dict(row, value=-0.4, unit="bp")) == "0 bp"
 
 
 def contrast(foreground, background):
@@ -568,14 +581,19 @@ def test_secondary_text_keeps_readable_contrast_in_both_themes():
     light, dark = theme_tokens(css, ":root{"), theme_tokens(css, 'html[data-theme="dark"]{')
     system_dark = theme_tokens(css, "html:not([data-theme]){")
     assert dark == system_dark  # the explicit dark choice and the system preference share one palette
-    for tokens, floor in ((light, 3.9), (dark, 4.5)):
+    for tokens in (light, dark):
         paper = tokens["paper"]
         assert contrast(tokens["ink"], paper) >= 7
         assert contrast(tokens["muted"], paper) >= 4.5
-        assert contrast(tokens["faint"], paper) >= floor
+        assert contrast(tokens["faint"], paper) >= 4.5  # the light floor rose from 3.9 with the retuned palette (R4)
         assert contrast(tokens["faint"], paper) < contrast(tokens["muted"], paper)  # still the quieter tone
-        for token in ("teal", "positive", "negative", "amber"):
+        for token in ("teal", "positive", "negative", "amber", "neutral"):
             assert contrast(tokens[token], paper) >= 4.5, token
+    # Light text also sits on the notice ground (notices, a targeted ledger row): every text token clears 4.5:1 there.
+    for token in ("ink", "muted", "faint", "teal", "positive", "negative", "amber", "neutral"):
+        assert contrast(light[token], light["notice"]) >= 4.5, token
+    # The retuned light set (R4) and its muted-teal accent, not the #35 brown.
+    assert light["paper"] == "#e6dfcc" and light["teal"] == "#3f6660"
 
 
 def phone_layout_width(page, tmp_path, width=390):

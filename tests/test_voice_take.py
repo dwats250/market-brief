@@ -53,8 +53,8 @@ TAKE = ("The tension is in the curve and metals, not in growth's 20-session lead
         "{{QQQ-spread20}}.")
 TAKE_IDS = ["treasury-2y-change", "treasury-10y-change", "GDX-spread20", "QQQ-spread20"]
 MISMATCH = "take text and evidence must be both present or both empty"
-# The template's <style> block on main @ ae7ffce (#35 light palette); The Take adds no CSS.
-STYLE_SHA256 = "3d48cbe445f45fa2b300c1545360ae2f797f896fe4797bd84dd1ff4f19574f18"
+# The template's <style> block after the Rates & Reading Pass (R3-R5, R9); The Take adds no CSS of its own.
+STYLE_SHA256 = "c6a309463cf7e507cecd38efa5f43a303f9047de33f460e85cab6e64a1b76443"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):
@@ -496,7 +496,7 @@ def test_a_legacy_v1_interpretation_frozen_before_the_upgrade_still_refreshes(mo
     assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M") == 0
     assert day.calls == ["PREMARKET"]
     page = day.page("OPEN_1M")
-    assert "The take" not in page and "Analysis anchored 6:00 AM PT" in page
+    assert "The take" not in page and "<dt>Analysis</dt><dd>6:00 AM PT · premarket</dd>" in page
     assert day.metadata("OPEN_1M")["validation"] == "PASS"
     # Continuity is not migrated: the frozen record stays exactly as it was written.
     assert day.bundle()["interpretation"] == bundle["interpretation"]
@@ -683,10 +683,11 @@ def test_ugly_voice_is_one_openrouter_call_with_the_narrative_unchanged():
 PROMPT = (ROOT / "prompts/synthesis.md").read_text()
 
 
-def test_prompt_is_v0_3_and_smaller_than_v0_2():
+def test_prompt_is_v0_3_within_its_byte_budget():
     assert PROMPT.splitlines()[0] == "# Market Brief synthesis v0.3"
     size = len(PROMPT.encode())
-    assert size < 9649 and size <= 9300
+    # v0.3 plus the rates rules and curve-slope labels of the Rates & Reading Pass (R11, +868 bytes).
+    assert size < 10200
 
 
 def test_the_voice_leads_the_prompt():

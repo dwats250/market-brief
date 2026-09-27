@@ -326,7 +326,7 @@ def test_openrouter_labels_keep_their_original_truncation_for_the_no_endpoint_cl
     which 404s count as "no endpoints" (and may fall back once) is unchanged."""
     import io
     from urllib.error import HTTPError
-    for message, classified in (("No endpoints found for anthropic/claude-fable-5.1", True),
+    for message, classified in (("No endpoints found for anthropic/claude-opus-5.5", True),
                                 ("No\nendpoints found for x", False), (" " * 400 + "No endpoints found", False)):
         body = json.dumps({"error": {"code": 404, "message": message}}).encode()
         error = synthesize._safe_error(HTTPError("u", 404, "x", {}, io.BytesIO(body)))
@@ -344,7 +344,7 @@ def test_a_rejected_take_is_one_paid_call_and_no_retry():
 
     with pytest.raises(synthesize.NarrativeRejected, match=MISMATCH):
         synthesize_openrouter(fixture_packet(), api_key="secret", requester=requester)
-    assert calls == ["anthropic/claude-fable-5.1"]
+    assert calls == ["anthropic/claude-opus-5.5"]
 
 
 # --- rendering -----------------------------------------------------------------------------------------

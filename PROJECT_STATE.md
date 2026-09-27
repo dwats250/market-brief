@@ -57,7 +57,13 @@ read-only curve record and may write `2s10s`/`5s30s`; the narrative schema is un
 
 ## Next
 
-Rates & Reading Pass: owner review of the branch, then merge; after deploy, watch the first live pages for the
+Market Memory, Week Ahead, market clocks and Opus 5.5 (approved plan, revision 2 with the source-lineage
+amendment: `docs/2026-09-27-market-memory-week-ahead.md`). Slice order D1 → C1 → A1 → one full week of session
+records → B. D1 (branch `feat/opus-5-5-analyst`): the configured primary analyst becomes Opus 5.5 and a workflow
+experiment runs the checkpoint it was dispatched with; merge waits for one owner-charged, non-publishing PREMARKET
+experiment on the branch.
+
+Rates & Reading Pass (merged as PR #36): after deploy, watch the first live pages for the
 curve module, the Prices clock tracking the tables' latest print, and the first analyst use of the curve label.
 First live bond-holiday check: Tue Oct 13, 2026 reads Friday's curve as the latest official observation.
 

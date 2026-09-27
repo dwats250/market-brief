@@ -260,8 +260,8 @@ provided snapshot file; no repository path traversal or callback can write back.
 ## Structured synthesis output budgets
 
 `config/editions.json` sets total generation ceilings of 7,000 rich / 4,500 light
-tokens, hard maximum-exposure limits rather than expected usage, and requests `reasoning={effort: "low", exclude: true}`. Fable 5.1 uses
-adaptive thinking: the old 1,024-token request was not a guaranteed reservation.
+tokens, hard maximum-exposure limits rather than expected usage, and requests `reasoning={effort: "low", exclude: true}`. The configured analyst (Opus 5.5 since 2026-09-27)
+always thinks adaptively: the old 1,024-token request was not a guaranteed reservation.
 [Anthropic's model-specific effort guidance](https://platform.claude.com/docs/en/build-with-claude/effort)
 identifies effort as a behavioral control; only total `max_tokens` is a hard cap.
 Reported reasoning tokens remain billable even when their content is excluded.

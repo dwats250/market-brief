@@ -99,7 +99,8 @@ def test_module_renders_in_order_with_the_analyst_paragraphs_after_the_record():
     assert "Fri, Sep 4 · latest official daily observation" in section  # Monday was Labor Day, a bond holiday
     assert "close" not in section.split('<div class="para">', 1)[0].lower()  # never "close", never a clock time
     assert not re.search(r"\d:\d\d", section.split('<div class="para">', 1)[0])
-    assert '<dt>2s10s<br><small>10Y minus 2Y</small></dt><dd>31 bp · 5 bp steeper</dd><dt>5s30s<br><small>30Y minus 5Y</small></dt><dd>44 bp · 3 bp steeper</dd>' in section
+    assert ('<dt>2s10s<br><small>10Y minus 2Y</small></dt><dd>31 bp · 5 bp steeper</dd>'
+            '<dt>5s30s<br><small>30Y minus 5Y</small></dt><dd>44 bp · 3 bp steeper</dd>') in section
     assert '<p class="curve-move"><b>Bear steepener</b> — Long-end yields rose more than the front end.</p>' in section
     for text in ("today", "wider", "narrower"):
         assert text not in section.split('<div class="para">', 1)[0].lower()
@@ -140,7 +141,7 @@ def test_stale_curve_shows_levels_with_their_date_and_nothing_else():
     assert "Daily change" not in section and "+7 bp" not in section
     assert "5.18%" in section
     assert "curve-move" not in section and "curve-chart" not in section and "steeper" not in section
-    assert '<dt>2s10s</dt><dd>31 bp</dd>' in section
+    assert '<dt>2s10s<br><small>10Y minus 2Y</small></dt><dd>31 bp</dd>' in section
     assert "This curve is more than five days old, so only its levels are shown here." in section
     proof = {line["id"] for line in presentation(packet, narrative())["macro"]["yields_proof"]}
     assert "treasury-10y" in proof and not any(ident.endswith("-change") for ident in proof)

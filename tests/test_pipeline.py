@@ -397,6 +397,35 @@ def test_restore_uses_gh_only_for_listing_run_lookup_and_download(tmp_path, monk
     assert load_bundle(bundle_path(tmp_path))[1] == "no continuity bundle"
 
 
+def manual_run_script():
+    """The shell body of the workflow's manual collect/synthesize step, exactly as Actions runs it."""
+    workflow = (ROOT / ".github/workflows/schedule.yml").read_text()
+    step = workflow.split("- name: Collect, synthesize, validate, and render manually", 1)[1]
+    step = step.split("\n      - name:", 1)[0]
+    body = step.split("run: |\n", 1)[1]
+    return "\n".join(line[10:] for line in body.splitlines())
+
+
+@pytest.mark.parametrize(("experiment", "commissioning", "checkpoint", "argv"), [
+    # An experiment runs the checkpoint it was dispatched with, never the clock's phase.
+    ("true", "false", "PREMARKET", "-m market_brief premarket --checkpoint PREMARKET --experiment"),
+    ("true", "false", "OPEN_30M", "-m market_brief premarket --checkpoint OPEN_30M --experiment"),
+    # Clock-resolved experiments remain available, only when commissioning is requested as well.
+    ("true", "true", "CURRENT", "-m market_brief premarket --commissioning --experiment"),
+    ("false", "true", "CURRENT", "-m market_brief premarket --commissioning"),
+    ("false", "false", "HOURLY_1300", "-m market_brief premarket --checkpoint HOURLY_1300"),
+])
+def test_manual_dispatch_runs_the_requested_checkpoint(tmp_path, experiment, commissioning, checkpoint, argv):
+    shim = tmp_path / "python"
+    shim.write_text('#!/bin/sh\necho "$@" >> "$ARGV_LOG"\n')
+    shim.chmod(0o755)
+    log = tmp_path / "argv.log"
+    env = dict(PATH=f"{tmp_path}:/usr/bin:/bin", ARGV_LOG=str(log), EXPERIMENT=experiment,
+               COMMISSIONING=commissioning, CHECKPOINT=checkpoint)
+    subprocess.run(["bash", "-e", "-c", manual_run_script()], env=env, check=True)
+    assert log.read_text().splitlines() == [argv]
+
+
 def test_pages_payload_is_only_the_human_brief_and_archives_stay_outside():
     workflow = (ROOT / ".github/workflows/schedule.yml").read_text()
     pages_step = workflow.split("Upload Pages artifact", 1)[1].split("uses: actions/deploy-pages", 1)[0]

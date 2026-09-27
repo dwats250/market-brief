@@ -156,13 +156,18 @@ jobs:
         env:
           COMMISSIONING: ${{ inputs.commissioning }}
           EXPERIMENT: ${{ inputs.experiment }}
+          CHECKPOINT: ${{ steps.checkpoint.outputs.checkpoint }}
         run: |
-          if [ "$EXPERIMENT" = "true" ]; then
+          # An experiment runs the checkpoint it was dispatched with; only a commissioning
+          # experiment resolves the market phase from the clock.
+          if [ "$EXPERIMENT" = "true" ] && [ "$COMMISSIONING" = "true" ]; then
             python -m market_brief premarket --commissioning --experiment
+          elif [ "$EXPERIMENT" = "true" ]; then
+            python -m market_brief premarket --checkpoint "$CHECKPOINT" --experiment
           elif [ "$COMMISSIONING" = "true" ]; then
             python -m market_brief premarket --commissioning
           else
-            python -m market_brief premarket --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
+            python -m market_brief premarket --checkpoint "$CHECKPOINT"
           fi
       - name: Collect, synthesize, validate, and render from Cloudflare wake-up
         if: inputs.cloudflare_wakeup == true && steps.checkpoint.outputs.run == 'true'

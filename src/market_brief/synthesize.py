@@ -56,7 +56,7 @@ TRADE_LANGUAGE = re.compile(r"\b(entry|target|sizing|buy|sell|execute|execution|
 # trade-language check runs, so "sell" as an action still rejects there.
 SELL_OFF = re.compile(r"\bsell-?offs?\b", re.I)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "anthropic/claude-fable-5.1"
+OPENROUTER_MODEL = "anthropic/claude-opus-5.5"
 OPENROUTER_FALLBACK_MODEL = "anthropic/claude-fable-5"
 TRANSIENT_OPENROUTER_STATUS = {408, 429, 500, 502, 503, 504}
 # The one 404 routing condition eligible for a bounded model failover: OpenRouter reports the
@@ -711,12 +711,12 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     schema = factored_transport_schema(
         NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile))
     requested_at = datetime.now(timezone.utc).isoformat()
-    # No sampling parameters: Fable endpoints advertise none, and require_parameters would otherwise
-    # leave no eligible provider. Bounds are enforced locally, not by the wire schema. The provider is a
-    # hard allowlist of exactly one approved endpoint: live OpenRouter endpoint data shows Anthropic
-    # direct is the only Fable 5.1 provider that advertises `structured_outputs` (Azure/Bedrock/Google
-    # carry `response_format` but not strict json_schema), and `require_parameters` treats
-    # `response_format` as a soft preference, so it cannot hold a strict request there on its own.
+    # No sampling parameters: the Anthropic endpoints advertise none, and require_parameters would
+    # otherwise leave no eligible provider. Bounds are enforced locally, not by the wire schema. The
+    # provider is a hard allowlist of exactly one approved endpoint, Anthropic direct: it is the endpoint
+    # whose strict-grammar acceptance of this schema is on record, `require_parameters` treats
+    # `response_format` as a soft preference and cannot hold a strict request on a structured-output
+    # endpoint by itself, and a base slug in `order` never selects the `anthropic/fast` service tier.
     # `order:["anthropic"]` with allow_fallbacks disabled cannot silently escape to an unverified
     # provider — the 2026-09-17 "Claude Platform on AWS" 400 was such an escape, on Fable 5, under PR
     # #27's since-removed `models` array. Every attempt shares this payload; only `model` changes

@@ -16,10 +16,11 @@ from market_brief.synthesize import (
     transport_schema,
 )
 
-# Strict json_schema structured output is served, per live OpenRouter endpoint data, only by the
-# Anthropic-direct endpoint for Fable 5.1 (and Fable 5); Azure/Bedrock/Google advertise `response_format`
-# but not `structured_outputs`, and `require_parameters` treats `response_format` as a soft preference,
-# so it cannot hold the request there. The route is a hard allowlist of exactly one approved provider:
+# Strict json_schema structured output is held on the Anthropic-direct endpoint, the one endpoint whose
+# acceptance of this schema is on record; `require_parameters` treats `response_format` as a soft
+# preference, so it cannot hold the request on a structured-output endpoint by itself (Bedrock, for one,
+# carries `response_format` without `structured_outputs`). The route is a hard allowlist of exactly one
+# approved provider:
 # `order:["anthropic"]` with `allow_fallbacks:False` cannot escape to another provider (the 2026-09-17
 # "Claude Platform on AWS" 400 came from such an escape, on Fable 5, under PR #27's `models` array).
 PROVIDER_ROUTE = {"order": ["anthropic"], "allow_fallbacks": False, "require_parameters": True}
@@ -123,6 +124,14 @@ def test_openrouter_rejects_validator_invalid_json_without_second_call():
     else:
         raise AssertionError("validator-invalid response was accepted")
     assert calls == [1]
+
+
+def test_configured_primary_analyst_is_opus_5_5_and_the_fallback_is_unchanged():
+    # Owner ruling 2026-09-27: Opus 5.5 serves both daily syntheses; the bounded fallback stays Fable 5.
+    from market_brief.context import editions_config
+    analyst = editions_config()["analyst"]
+    assert analyst["model"] == OPENROUTER_MODEL == "anthropic/claude-opus-5.5"
+    assert analyst["fallback_model"] == OPENROUTER_FALLBACK_MODEL == "anthropic/claude-fable-5"
 
 
 def test_analyst_identity_and_edition_budget_are_configured_and_recorded(monkeypatch):
@@ -250,7 +259,7 @@ def test_wire_404_maps_to_one_bounded_fallback_http_request(monkeypatch):
     module = importlib.import_module("market_brief.synthesize")
     served = {"id": "r", "model": OPENROUTER_FALLBACK_MODEL, "provider": "Anthropic",
               "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(narrative())}}]}
-    body = json.dumps({"error": {"code": 404, "message": "No endpoints found for anthropic/claude-fable-5.1",
+    body = json.dumps({"error": {"code": 404, "message": "No endpoints found for anthropic/claude-opus-5.5",
                                  "metadata": {"provider_name": "Anthropic", "raw": "PRIVATE_RAW_SENTINEL",
                                               "headers": {"authorization": "PRIVATE_AUTH_SENTINEL"}}},
                        "user_id": "PRIVATE_USER_SENTINEL"}).encode()

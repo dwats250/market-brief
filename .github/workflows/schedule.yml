@@ -55,6 +55,46 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  d1-gate:
+    # OPS BRANCH ONLY (never merged): isolated, non-publishing D1 model gate. No github-pages
+    # environment, read-only contents, no continuity upload; checks out the exact D1 commit.
+    if: inputs.experiment == true && inputs.continuity_check != true && inputs.cloudflare_wakeup != true && inputs.cloudflare_smoke != true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+      APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 89456c94a7911bd1e83cf425901edbf00c91dc66
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Market Brief at the pinned D1 commit
+        run: python -m pip install -e .
+      - name: Restore production continuity read-only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m market_brief continuity-restore --repository "$GITHUB_REPOSITORY" --branch main
+      - name: Run exactly one non-publishing experiment at the dispatched checkpoint
+        env:
+          CHECKPOINT: ${{ inputs.checkpoint }}
+        run: python -m market_brief premarket --checkpoint "$CHECKPOINT" --experiment
+      - name: Upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d1-gate-${{ inputs.checkpoint }}-${{ github.run_id }}
+          path: |
+            runs/
+            !runs/continuity/
+          if-no-files-found: warn
+          retention-days: 7
+
   continuity-check:
     # Isolated: no Pages environment, no collection, no synthesis, no publishing. Proves the
     # runner-boundary restore and re-uploads whatever it restored under a separate artifact name.
@@ -83,7 +123,7 @@ jobs:
           retention-days: 7
 
   brief:
-    if: inputs.continuity_check != true && inputs.cloudflare_smoke != true
+    if: inputs.experiment != true && inputs.continuity_check != true && inputs.cloudflare_smoke != true
     runs-on: ubuntu-latest
     environment:
       name: github-pages

@@ -60,8 +60,8 @@ read-only curve record and may write `2s10s`/`5s30s`; the narrative schema is un
 Market Memory, Week Ahead, market clocks and Opus 5.5 (approved plan, revision 2 with the source-lineage
 amendment: `docs/2026-09-27-market-memory-week-ahead.md`). Slice order D1 → C1 → A1 → one full week of session
 records → B. D1 (branch `feat/opus-5-5-analyst`): the configured primary analyst becomes Opus 5.5 and a workflow
-experiment runs the checkpoint it was dispatched with; merge waits for one owner-charged, non-publishing PREMARKET
-experiment on the branch.
+experiment runs the checkpoint it was dispatched with. Both non-publishing gates passed on 2026-09-27 (PREMARKET rich,
+OPEN_30M light: HTTP 200, PASS, Opus 5.5 via Anthropic, $0.154 / $0.087); the owner merges.
 
 Rates & Reading Pass (merged as PR #36): after deploy, watch the first live pages for the
 curve module, the Prices clock tracking the tables' latest print, and the first analyst use of the curve label.

@@ -586,7 +586,7 @@ Values below are real, from the 09-25 20:01 close (pre-#36 code, so its curve fi
 
 ## Progress
 
-### D1 · Opus 5.5 (branch `feat/opus-5-5-analyst`, base 282726a)
+### D1 · Opus 5.5 (branch `feat/opus-5-5-analyst`, base 020ce8b)
 
 - [x] Tests first: `test_configured_primary_analyst_is_opus_5_5_and_the_fallback_is_unchanged` (config and the
   test constants both pin `anthropic/claude-opus-5.5` with the Fable 5 fallback unchanged); the one-paid-call
@@ -596,10 +596,24 @@ Values below are real, from the 09-25 20:01 close (pre-#36 code, so its curve fi
 - [x] `config/editions.json` primary model; `synthesize.OPENROUTER_MODEL`; the manual step reads the checkpoint
   from `env` (no template expansion inside the script); stale Fable-only capability comments refreshed;
   `DECISIONS.md` ruling bullet; `ARCHITECTURE.md` budget note; `PROJECT_STATE.md` Next.
-- [ ] Gate (owner charge required; one paid call, nothing published): push the branch, then
-  `gh workflow run schedule.yml --ref feat/opus-5-5-analyst -f checkpoint=PREMARKET -f experiment=true` inside a
-  weekday premarket window, and confirm from the run's `metadata.json`: `checkpoint == "PREMARKET"`,
-  `experiment == true`, `validation == "PASS"`, `model.requested_model`/`resolved_model` Opus 5.5,
-  `provider_route` Anthropic, `finish_reason` not `length`, usage and cost recorded.
-- [ ] Light-profile evidence: owner decision 2 (a second OPEN_30M experiment, or the first live OPEN_30M with
-  "revert on `length` or rejection").
+- [x] Gates (owner-charged 2026-09-27; nothing published). The `github-pages` environment admits only `main`, so
+  both ran from a throwaway `ops/d1-gates` branch whose isolated `d1-gate` job has no Pages environment,
+  `contents: read`, no continuity upload, and checks out the exact D1 commit (89456c9); `brief` is skipped.
+
+  | Gate | Run | Context | HTTP / finish | Validation | Served | Tokens (prompt / completion / reasoning) | Cost |
+  |---|---|---|---|---|---|---|---|
+  | PREMARKET rich | 36347011573 | prior state available (Fri 09-25 close); 45,022 / 64,000 B | 200 / stop | PASS | `anthropic/claude-opus-5.5` via Anthropic, no fallback | 27,885 / 2,135 / 0 | $0.154 |
+  | OPEN_30M light | 36347013131 | cold start (Sunday); 19,516 / 40,000 B | 200 / stop | PASS | `anthropic/claude-opus-5.5` via Anthropic, no fallback | 15,769 / 1,198 / 0 | $0.087 |
+
+  - Both runs: `checkpoint` as dispatched, `experiment: true`, `commissioning: false`, `synthesis.calls: 1`,
+    `continuity.advanced: false`.
+  - No production effect: `main` (020ce8b), the latest Pages deployment (6673300676) and the latest continuity
+    artifact (10894313034) are unchanged. The only artifacts are the 7-day `d1-gate-*` evidence bundles.
+  - `metadata.published: true` is the renderer's flag for a rendered page in the runner, not a deployment.
+  - Observations:
+    - Opus 5.5 reported zero reasoning tokens at `low`; Fable 5.1 used 1,300–3,200 on rich.
+    - Output used 30% (rich) and 27% (light) of the ceilings.
+    - The rich call cost ≈ 0.28× Fable's recent $0.51–0.58.
+    - The light gate's context was smaller than a weekday OPEN_30M (cold start, no prints). The byte budget is
+      model-independent, and the first live OPEN_30M is the real-size check (09-24 worst: 37,908 / 40,000 B).
+- [x] Light-profile evidence: owner chose the second (OPEN_30M) experiment above.

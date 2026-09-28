@@ -689,8 +689,10 @@ PROMPT = (ROOT / "prompts/synthesis.md").read_text()
 def test_prompt_is_v0_3_within_its_byte_budget():
     assert PROMPT.splitlines()[0] == "# Market Brief synthesis v0.3"
     size = len(PROMPT.encode())
-    # v0.3 plus the rates rules and curve-slope labels of the Rates & Reading Pass (R11, +868 bytes).
-    assert size < 10200
+    # v0.3 plus the rates rules of the Rates & Reading Pass (R11, +868 bytes) and the editorial compression
+    # pass's role separation and deduplication rules (+829 bytes). 11,000 is a ceiling, not a target (owner
+    # ruling D2, 2026-09-27): it is not raised again to keep redundant editorial prose.
+    assert size < 11000
 
 
 def test_the_voice_leads_the_prompt():

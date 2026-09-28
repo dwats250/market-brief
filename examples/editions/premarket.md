@@ -8,7 +8,7 @@ SAMPLE · Premarket edition · Tuesday, Sep 8
 
 > FICTIONAL SAMPLE / REPLAY — not current market facts.
 
-**INTERPRETATION — MIXED** · A growth-led, mixed fictional map: the benchmark edge sits with QQQ while the curve and metals send conflicting signals. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change)
+**INTERPRETATION** · A growth-led, mixed fictional map: the benchmark edge sits with QQQ while the curve and metals send conflicting signals. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change)
 
 A fictional prior-close map, with no current premarket prices or broad-market breadth.
 
@@ -18,19 +18,10 @@ The useful tension is beneath the headline: front-end yields eased while the lon
 
 **The take:** The tension is in the curve and metals, not in growth&#x27;s 20-session lead over SPY, which stands at +1.87 pp. [evidence](#evidence-treasury-2y-change) [evidence](#evidence-treasury-10y-change) [evidence](#evidence-GDX-spread20) [evidence](#evidence-QQQ-spread20)
 
-**OBSERVED SNAPSHOT**
-
-| Measure | Observation | As of |
-|---|---:|---|
-| SPY · daily return | +0.06 % | Fri, Sep 4 · BACKGROUND [evidence](#evidence-SPY-daily) |
-| QQQ · daily return | +0.15 % | Fri, Sep 4 · BACKGROUND [evidence](#evidence-QQQ-daily) |
-| GLD · daily return | +0.11 % | Fri, Sep 4 · BACKGROUND [evidence](#evidence-GLD-daily) |
-
 Missing: current prints unavailable.
 
 ## What changed · vs the previous close · Fri, Sep 4
 
-- **Unresolved** — Growth leads the broad benchmark on the prior session and the twenty-session window. Repeated prior-close observations; nothing new to test the lead. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-previous_close:SPY-daily)
 No comparable measurement has changed: 17 repeated prior-close observations and no new session prints.
 
 ## What matters next
@@ -40,22 +31,9 @@ The fictional survey is a scheduled observation point. Its result and survey con
 - **WATCH · Through the opening hour** — If growth retains its lead after regular trading begins, check whether participation extends beyond the selected mega-cap. Confirm: More independently observed sectors improve on synchronized comparisons. Changes it: The benchmark lead persists while participation narrows. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily) [evidence](#evidence-NVDA-spread20)
 - **WATCH · Into the close** — Revisit the gold fund and miners on the same return horizon. Confirm: Miners join the metal fund&#x27;s strength. Changes it: Miner weakness persists despite firmness in the gold fund. [evidence](#evidence-GLD-daily) [evidence](#evidence-GDX-daily) [evidence](#evidence-GDX-spread20)
 - **FROM AN EARLIER READ · unresolved · Through the next opening hour** — If growth retains its lead after regular trading begins, check whether participation extends beyond the selected mega-cap. No new session prints since the prior close; the growth-participation question is untested.
-- **FROM AN EARLIER READ · unresolved · Into the next session** — Revisit the gold fund and miners on the same return horizon. The metal fund and miners repeat the prior close&#x27;s observation, so the divergence is untested.
-- **NVDA** — NVDA&#x27;s relative leadership matters because it tests whether growth participation extends beyond the broad benchmark. (20-session spread vs QQQ · Fri, Sep 4) [evidence](#evidence-NVDA-spread20)
+- Earlier watches · 1 ended without a verdict: Revisit the gold fund and miners on the same return horizon. The metal fund and miners repeat the prior close&#x27;s observation, so the divergence is untested.
 - **Industrials · XLI** — XLI&#x27;s moving-average transition matters because cyclical participation can confirm or weaken the growth-led map. (Crossed above its 50DMA · Fri, Sep 4) [evidence](#evidence-XLI-sma50) [evidence](#evidence-XLI-close)
 - **Event** — Fictional manufacturing survey · Tuesday, Sep 8 · 7:00 AM PT · during session [evidence](#evidence-sample-event)
-
-## Equity structure
-
-QQQ&#x27;s prior-session return was +0.15 %, compared with +0.06 % for SPY. The sample suggests a growth preference, while exchange breadth and index weights remain unavailable. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily)
-
-**MEGA-CAP SNAPSHOT** · 20-session return spread vs QQQ · Daily change · Fri, Sep 4
-
-| Symbol | Change | 20D | vs QQQ | vs 50DMA |
-|---|---:|---:|---:|---:|
-| NVDA | +0.43 % | +9.44 % | +6.39 pp | +11.82 % |
-
-Exact values and baselines for every cell are in the evidence ledger.
 
 ## Macro & rates
 
@@ -82,24 +60,34 @@ Could also be: Different duration exposure and company-specific effects may expl
 
 Exact values and baselines for every cell are in the evidence ledger.
 
+**METALS** · 20-session return spread, GDX vs GLD · Daily change · Fri, Sep 4
+
+| Instrument | Change | 20D | Spread | vs 50DMA |
+|---|---:|---:|---:|---:|
+| Gold fund (GLD) | +0.11% | +2.32% | — | +2.85% |
+| Gold miners (GDX) | −0.04% | −0.81% | −3.13 pp vs GLD | −0.99% |
+
+Exact values and baselines for every cell are in the evidence ledger.
+
 ## Sector view
 
 20-session return spread vs SPY, strongest to weakest · Daily change · Fri, Sep 4
 
 | Sector | vs SPY | 20D | Change | vs 50DMA |
 |---|---:|---:|---:|---:|
-| Industrials (XLI) | -0.18 pp | +1.00 % | +2.02 % | +1.00 % |
+| Industrials (XLI) | −0.18 pp | +1.00% | +2.02% | +1.00% |
 
 Exact values and baselines for every cell are in the evidence ledger.
 
-## Metals
+## Equity structure
 
-20-session return spread, GDX vs GLD · Daily change · Fri, Sep 4
+QQQ&#x27;s prior-session return was +0.15%, compared with +0.06% for SPY. The sample suggests a growth preference, while exchange breadth and index weights remain unavailable. [evidence](#evidence-QQQ-daily) [evidence](#evidence-SPY-daily)
 
-| Instrument | Change | 20D | Spread | vs 50DMA |
+**MEGA-CAP SNAPSHOT** · 20-session return spread vs QQQ · Daily change · Fri, Sep 4
+
+| Symbol | Change | 20D | vs QQQ | vs 50DMA |
 |---|---:|---:|---:|---:|
-| Gold fund (GLD) | +0.11 % | +2.32 % | — | +2.85 % |
-| Gold miners (GDX) | -0.04 % | -0.81 % | -3.13 pp vs GLD | -0.99 % |
+| NVDA | +0.43% | +9.44% | +6.39 pp | +11.82% |
 
 Exact values and baselines for every cell are in the evidence ledger.
 
@@ -139,30 +127,30 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 **SPY**
 
 <a id="evidence-SPY-daily"></a>
-**SPY-daily** · SPY · +0.06 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
+**SPY-daily** · SPY · +0.06% · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-SPY-r20"></a>
-**SPY-r20** · SPY · +1.18 % · twenty completed sessions / price return · observed/published 2026-09-04 · source sample-prices
+**SPY-r20** · SPY · +1.18% · twenty completed sessions / price return · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-SPY-sma50"></a>
 **SPY-sma50** · SPY · 101.53 USD · fifty completed regular closes · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-SPY-dma50"></a>
-**SPY-dma50** · SPY · +1.45 % · last completed close versus fifty-session average · observed/published 2026-09-04 · source sample-prices
+**SPY-dma50** · SPY · +1.45% · last completed close versus fifty-session average · observed/published 2026-09-04 · source sample-prices
 
 **QQQ**
 
 <a id="evidence-QQQ-daily"></a>
-**QQQ-daily** · QQQ · +0.15 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
+**QQQ-daily** · QQQ · +0.15% · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-QQQ-r20"></a>
-**QQQ-r20** · QQQ · +3.05 % · twenty completed sessions / price return · observed/published 2026-09-04 · source sample-prices
+**QQQ-r20** · QQQ · +3.05% · twenty completed sessions / price return · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-QQQ-sma50"></a>
 **QQQ-sma50** · QQQ · 104.08 USD · fifty completed regular closes · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-QQQ-dma50"></a>
-**QQQ-dma50** · QQQ · +3.77 % · last completed close versus fifty-session average · observed/published 2026-09-04 · source sample-prices
+**QQQ-dma50** · QQQ · +3.77% · last completed close versus fifty-session average · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-QQQ-spread20"></a>
 **QQQ-spread20** · QQQ · +1.87 pp · twenty-session price return minus SPY · observed/published 2026-09-04 · source sample-prices
@@ -170,16 +158,16 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 **NVDA**
 
 <a id="evidence-NVDA-daily"></a>
-**NVDA-daily** · NVDA · +0.43 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
+**NVDA-daily** · NVDA · +0.43% · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-NVDA-r20"></a>
-**NVDA-r20** · NVDA · +9.44 % · twenty completed sessions / price return · observed/published 2026-09-04 · source sample-prices
+**NVDA-r20** · NVDA · +9.44% · twenty completed sessions / price return · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-NVDA-sma50"></a>
 **NVDA-sma50** · NVDA · 114.03 USD · fifty completed regular closes · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-NVDA-dma50"></a>
-**NVDA-dma50** · NVDA · +11.82 % · last completed close versus fifty-session average · observed/published 2026-09-04 · source sample-prices
+**NVDA-dma50** · NVDA · +11.82% · last completed close versus fifty-session average · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-NVDA-spread20"></a>
 **NVDA-spread20** · NVDA · +6.39 pp · twenty-session price return minus QQQ · observed/published 2026-09-04 · source sample-prices
@@ -187,53 +175,53 @@ A fictional prior-close map, with no current premarket prices or broad-market br
 **GLD**
 
 <a id="evidence-GLD-daily"></a>
-**GLD-daily** · GLD · +0.11 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
+**GLD-daily** · GLD · +0.11% · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-GLD-r20"></a>
-**GLD-r20** · GLD · +2.32 % · twenty completed sessions / price return · observed/published 2026-09-04 · source sample-prices
+**GLD-r20** · GLD · +2.32% · twenty completed sessions / price return · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-GLD-sma50"></a>
 **GLD-sma50** · GLD · 103.06 USD · fifty completed regular closes · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-GLD-dma50"></a>
-**GLD-dma50** · GLD · +2.85 % · last completed close versus fifty-session average · observed/published 2026-09-04 · source sample-prices
+**GLD-dma50** · GLD · +2.85% · last completed close versus fifty-session average · observed/published 2026-09-04 · source sample-prices
 
 **GDX**
 
 <a id="evidence-GDX-daily"></a>
-**GDX-daily** · GDX · -0.04 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
+**GDX-daily** · GDX · −0.04% · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-GDX-r20"></a>
-**GDX-r20** · GDX · -0.81 % · twenty completed sessions / price return · observed/published 2026-09-04 · source sample-prices
+**GDX-r20** · GDX · −0.81% · twenty completed sessions / price return · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-GDX-sma50"></a>
 **GDX-sma50** · GDX · 98.98 USD · fifty completed regular closes · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-GDX-dma50"></a>
-**GDX-dma50** · GDX · -0.99 % · last completed close versus fifty-session average · observed/published 2026-09-04 · source sample-prices
+**GDX-dma50** · GDX · −0.99% · last completed close versus fifty-session average · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-GDX-spread20"></a>
-**GDX-spread20** · GDX · -3.13 pp · twenty-session price return minus GLD · observed/published 2026-09-04 · source sample-prices
+**GDX-spread20** · GDX · −3.13 pp · twenty-session price return minus GLD · observed/published 2026-09-04 · source sample-prices
 
 **XLI**
 
 <a id="evidence-XLI-daily"></a>
-**XLI-daily** · XLI · +2.02 % · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
+**XLI-daily** · XLI · +2.02% · prior regular close / price return · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-XLI-r20"></a>
-**XLI-r20** · XLI · +1.00 % · twenty completed sessions / price return · observed/published 2026-09-04 · source sample-prices
+**XLI-r20** · XLI · +1.00% · twenty completed sessions / price return · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-XLI-sma50"></a>
 **XLI-sma50** · XLI · 100.00 USD · fifty completed regular closes · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-XLI-dma50"></a>
-**XLI-dma50** · XLI · +1.00 % · last completed close versus fifty-session average · observed/published 2026-09-04 · source sample-prices
+**XLI-dma50** · XLI · +1.00% · last completed close versus fifty-session average · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-XLI-close"></a>
 **XLI-close** · XLI · 101.00 USD · last completed session · observed/published 2026-09-04 · source sample-prices
 
 <a id="evidence-XLI-spread20"></a>
-**XLI-spread20** · XLI · -0.18 pp · twenty-session price return minus SPY · observed/published 2026-09-04 · source sample-prices
+**XLI-spread20** · XLI · −0.18 pp · twenty-session price return minus SPY · observed/published 2026-09-04 · source sample-prices
 
 **US 2s10s**
 
@@ -255,7 +243,7 @@ Generated UTC: 2026-09-08T13:00:00+00:00
 Evidence cutoff UTC: 2026-09-08T13:00:00+00:00
 Checkpoint: PREMARKET (synthesis)
 Synthesis: this edition&#x27;s one analyst call
-Interpretation: PREMARKET · evidence cutoff 2026-09-08T13:00:00+00:00 · run sample-premarket-130000-ebaa04c7
+Interpretation: PREMARKET · evidence cutoff 2026-09-08T13:00:00+00:00 · run sample-premarket-130000-f00c767c
 Bootstrap: BASELINE
 Calendar: checked
 Basis: Premarket · prior close · Treasury prior-close/current as available · current prints unavailable · breadth available. Previous-close / dated context only; no timestamped current prints.

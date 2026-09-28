@@ -14,8 +14,8 @@ admitted evidence *and* in the supplied context), render, and deploy to Pages. M
   `edition_state.json` per accepted edition and `session_handoff.json` after a substantiated close,
   a hashed bundle restored from and uploaded to Actions artifacts (thirty-day horizon).
 - `config/editions.json`: one configured analyst, rich/light budgets, per-checkpoint guidance.
-- Presentation: status and clocks, character, what changed, what matters next, ranked sectors,
-  50DMA distance, the Treasury curve module, collapsed sources.
+- Presentation: status and clocks, character, what changed, what matters next, the Treasury curve module
+  with the metals table, ranked sectors, 50DMA distance, collapsed sources.
 
 Measured on the fixture (2026-09-09): rich context 8.6–8.9 KB (~2.2k tokens) and light 8.1 KB before the
 7.2 KB output schema; fixture responses 3.9–4.3 KB. Generation ceilings are 7,000 rich / 4,500 light tokens (hard
@@ -55,7 +55,27 @@ hierarchy, a retuned light palette with no opacity-dimmed text, a labelled `§ e
 collapsed "How to read this brief" guide complete the reading pass. The analyst reads the curve rows and a
 read-only curve record and may write `2s10s`/`5s30s`; the narrative schema is unchanged.
 
+**Editorial compression pass (2026-09-28, branch `feat/editorial-compression`; plan and rulings in the Market
+Brief project: `plan-editorial-compression-2026-09-27`, `monday-review-2026-09-28`).** One idea has one home.
+Render: the figure strip and the label pill are gone (the label is recorded, never displayed); What changed is
+adjudication once (watch verdicts, then relationship verdicts, then changes, with a lower-priority record that
+repeats a verdict's evidence not shown, and "unresolved" never shown); What matters next carries exactly the
+watches continuity carries (new first, then live carried ones not reversed, at most three) as questions with
+horizons, and every other carried watch in one collapsed "Earlier watches" drawer; a flag renders only when
+its instrument is not already in the story; Metals fold into Macro & rates under their own caption and clock;
+sections run Macro & rates → Sector view → Equity structure; numbers share one style (`+0.53%`, `−5.30 pp`)
+and never wrap on phones (checked at 390, 360 and 320 px). Prompt (+829 bytes under an 11,000-byte ceiling):
+the lead roles, the summary as the mechanism now, the take as the stance and its breaker, the macro paragraph
+as why (with gold and miners when they matter), criteria observable by the horizon, a verdict as the change,
+attention only when uncovered. No schema, continuity, context, validator, cadence or data change.
+
 ## Next
+
+Editorial compression: after merge, verify Slice A against the Monday 2026-09-28 PREMARKET and OPEN_30M run
+artifacts (re-render, screenshots at phone width), then judge the prompt from the next normal day's two
+scheduled calls (no paid test call). A live carried watch shows its question without its confirm / changes-it
+criteria because the frozen interpretation record does not hold them; adding two fields to
+`continuity.interpretation_record` would show them and is a continuity change for the owner to rule on.
 
 Market Memory, Week Ahead, market clocks and Opus 5.5 (approved plan, revision 2 with the source-lineage
 amendment: `docs/2026-09-27-market-memory-week-ahead.md`). Slice order D1 → C1 → A1 → one full week of session

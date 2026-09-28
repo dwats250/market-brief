@@ -56,16 +56,26 @@ def test_empty_sections_are_omitted_and_consolidated():
 
 
 def test_populated_sections_still_render_in_reading_order():
-    _, page = render(fixture_packet(), narrative())
-    for heading in ("What matters next", "Equity structure", "Macro &amp; rates", "Sector view",
-                    "Metals", "Cuttingboard context", "Sources &amp; coverage"):
+    """Top-down and fixed: the macro backdrop (with metals), then breadth, then the names."""
+    md, page = render(fixture_packet(), narrative())
+    for heading in ("What matters next", "Macro &amp; rates", "Sector view", "Equity structure",
+                    "Cuttingboard context", "Sources &amp; coverage"):
         assert f"<h2>{heading}</h2>" in page
-    order = [page.index(f"<h2>{h}</h2>") for h in ("What matters next", "Equity structure", "Macro &amp; rates",
-                                                   "Sector view", "Metals", "Sources &amp; coverage")]
+    order = [page.index(f"<h2>{h}</h2>") for h in ("What matters next", "Macro &amp; rates", "Sector view",
+                                                   "Equity structure", "Sources &amp; coverage")]
     assert order == sorted(order)
-    # Attention items and today's event live inside What matters next, not in their own sections.
+    assert "<h2>Metals</h2>" not in page and "\n## Metals\n" not in md
+    macro = page.split("<h2>Macro &amp; rates</h2>", 1)[1].split("</section>", 1)[0]
+    assert '<div class="caption">Metals<span>20-session return spread, GDX vs GLD · ' in macro
+    md_order = [md.index(f"## {h}") for h in ("What matters next", "Macro & rates", "Sector view", "Equity structure",
+                                                "Sources & coverage")]
+    assert md_order == sorted(md_order)
+    assert md.index("**METALS** · 20-session return spread, GDX vs GLD") < md.index("## Sector view")
+    # Attention items and today's event live inside What matters next, not in their own sections. NVDA is
+    # already the summary's and a watch's subject, so only the industrials trigger earns a flag.
     matters = page.split("<h2>What matters next</h2>", 1)[1].split("</section>", 1)[0]
-    assert '<li><b>NVDA</b>' in matters and "Fictional manufacturing survey" in matters
+    assert '<li><b>Industrials · XLI</b>' in matters and '<li><b>NVDA</b>' not in matters
+    assert "Fictional manufacturing survey" in matters
     assert "On the attention list" not in page and "Event risk" not in page
 
 
@@ -120,25 +130,21 @@ def test_divergent_observation_times_stay_on_exception_rows_only():
     quiet = next(row for row in rows if row["symbol"] == "XLK")
     assert label == "Intraday vs prior close" and asof == "as of 12:59 PM PT"
     assert quiet["today"]["display"] == "no print" and quiet["today"]["absent"]
-    assert quiet["r20"]["display"].endswith(" %") and quiet["dma"]["display"].endswith(" %")
+    assert quiet["r20"]["display"].endswith("%") and quiet["dma"]["display"].endswith("%")
 
 
-# 9. Chip priority: current admitted market state outranks dated macro context.
-def test_current_spy_qqq_chips_outrank_dated_treasury_rows():
+# 9. There is no headline figure strip: the tables and their captions are the only current-print surfaces above
+# the ledger, so a stale fallback figure can never sit beside a live one at equal weight.
+def test_no_figure_strip_and_current_prints_keep_their_label_in_the_tables():
     packet = packet_at(utc("2026-09-08T20:03:00+00:00"))
     packet["observations"] += [intraday("QQQ", -0.15, "2026-09-08T20:02:00+00:00"),
-                               intraday("XLI", -0.47, "2026-09-08T19:59:53+00:00"),
-                               intraday("GLD", -1.74, "2026-09-08T19:59:57+00:00")]
-    chips = [chip["id"] for chip in presentation(packet, narrative())["chips"]]
-    assert chips[:3] == ["SPY-intraday", "QQQ-intraday", "XLI-intraday"]
-    assert chips.index("treasury-2y-change") > chips.index("GLD-intraday")
-    assert "SPY-daily" not in chips
-    assert len(chips) <= 6
-
-
-def test_chips_fall_back_to_daily_when_no_current_prints():
-    chips = [chip["id"] for chip in presentation(fixture_packet(), narrative())["chips"]]
-    assert chips[:2] == ["SPY-daily", "QQQ-daily"]
+                               intraday("XLI", -0.47, "2026-09-08T19:59:53+00:00")]
+    view = presentation(packet, narrative())
+    assert "chips" not in view and "figures" not in view
+    md, page = render(packet, narrative())
+    assert 'class="figures"' not in page and "OBSERVED SNAPSHOT" not in md
+    assert view["sectors"]["change_label"] == "Intraday vs prior close"
+    assert "premarket return" not in page.split("<h1>", 1)[1].split("<details>", 1)[0]
 
 
 # 10. The analyst's coverage caveat is the reader-facing line inside Sources & coverage; the generated
@@ -171,26 +177,16 @@ def test_basis_describes_current_prints_without_premarket_wording():
     assert "pre-market available" not in technical
 
 
-def test_chips_use_horizon_neutral_label_for_current_prints():
-    packet = packet_at(utc("2026-09-08T20:03:00+00:00"))
-    chips = presentation(packet, narrative())["chips"]
-    spy = next(chip for chip in chips if chip["id"] == "SPY-intraday")
-    assert spy["metric_label"] == "Intraday vs prior close"  # the print is from 12:59 PM PT, inside the session
-    treasury = next(chip for chip in chips if chip["id"] == "treasury-2y-change")
-    assert treasury["metric_label"] == "daily yield change"
-    _, page = render(packet, narrative())
-    assert "premarket return" not in page.split("<h1>", 1)[1].split("<details>", 1)[0]
-
-
 def test_average_is_shown_as_distance_from_the_50dma_not_a_price():
     packet = packet_at(utc("2026-09-08T20:03:00+00:00"))
     view = presentation(packet, narrative())
     nvda = next(row for row in view["equities"]["rows"] if row["symbol"] == "NVDA")
     history = next(h for h in packet["history"] if h["symbol"] == "NVDA")
     expected = 100 * (history["closes"][-1] / nvda["average"]["value"] - 1)
-    assert nvda["dma"]["display"] == f"{expected:+.2f} %"
+    sign = "+" if expected > 0 else "−"
+    assert nvda["dma"]["display"] == f"{sign}{abs(expected):.2f}%"
     assert nvda["average"]["display"] == "114.03"  # the average itself stays in evidence
-    assert nvda["r20"]["display"].endswith(" %")
+    assert nvda["r20"]["display"].endswith("%")
     _, page = render(packet, narrative())
     assert "114.03" not in page.split("<h2>Sources &amp; coverage</h2>", 1)[0]
 
@@ -295,11 +291,19 @@ def test_carried_watches_and_changes_render_from_the_saved_context():
     assert profile["profile"] == "light"
     md, page = render(packet, value, context)
     assert "<h2>What changed</h2><p class=\"sub\">vs premarket</p>" in page
-    assert "SPY moved from -0.53 % to +0.21 % since the premarket." in page
-    # An active carried watch still exposes its horizon, in sentence case, beside its assessment.
-    assert '<span class="meta">From an earlier read · weakened · into the close</span>' in page
+    # The verdict on the carried watch is the change: it renders once, in What changed, and the generic change
+    # that cites exactly the same rows is the same conclusion said twice, so it is not shown.
+    since = page.split('<section class="since">', 1)[1].split("</section>", 1)[0]
+    assert "<b>Weakened</b> — " in since and "The print turned positive against the premarket read." in since
+    assert "SPY moved from −0.53% to +0.21% since the premarket." not in page
+    # The watch stays live under What matters next as a question with its horizon, never with its verdict.
+    matters = page.split("<h2>What matters next</h2>", 1)[1].split("</section>", 1)[0]
+    assert '<span class="meta">From an earlier read · into the close</span>' in matters
+    assert "weakened" not in matters and "Weakened" not in matters
     assert "CARRIED WATCH" not in page.split("<script>", 1)[0] and "Carried ·" not in page
-    assert "## What changed · vs premarket" in md and "FROM AN EARLIER READ · weakened · Into the close" in md
+    assert "## What changed · vs premarket" in md
+    assert "- **Weakened** — " in md.split("## What changed", 1)[1].split("## What matters next", 1)[0]
+    assert "FROM AN EARLIER READ · Into the close" in md and "FROM AN EARLIER READ · weakened" not in md
     assert "CARRIED WATCH" not in md
 
 
@@ -311,8 +315,9 @@ def test_markdown_tables_keep_shared_clocks_out_of_header_rows():
     for line in md.splitlines():
         if line.startswith("|"):
             assert line.rstrip().endswith("|"), line
-    assert ("\n20-session return spread, GDX vs GLD · Intraday vs prior close · as of 12:59 PM PT\n") in md
-    assert "Cross-asset" not in md and "METALS STRUCTURE" not in md and "\n## Metals\n" in md
+    assert ("\n**METALS** · 20-session return spread, GDX vs GLD · Intraday vs prior close · as of 12:59 PM PT\n") in md
+    assert "Cross-asset" not in md and "METALS STRUCTURE" not in md and "\n## Metals\n" not in md
+    assert md.index("## Macro & rates") < md.index("**METALS** · ") < md.index("## Sector view")
 
 
 def test_provisional_session_ending_prints_are_labeled_in_the_brief():
@@ -330,8 +335,7 @@ def test_provisional_session_ending_prints_are_labeled_in_the_brief():
     finalize_coverage(packet)
     view = presentation(packet, narrative())
     assert view["sectors"]["change_label"] == "Near-close vs prior close · provisional"
-    assert view["chips"][0]["status"] == "PROVISIONAL"
     md, page = render(packet, narrative())
-    figures = page.split('<div class="figures">', 1)[1].split("</div></div>", 1)[0]
-    assert "provisional" in figures and "provisional" in page.split("<h2>Sector view</h2>", 1)[1]
+    assert "· provisional" in page.split("<h2>Sector view</h2>", 1)[1].split("</section>", 1)[0]
+    assert "Near-close vs prior close · provisional" in md
     assert "not official closing bars" in page

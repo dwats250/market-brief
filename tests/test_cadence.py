@@ -124,12 +124,15 @@ PASSED = " · horizon passed"
 
 def interpretation_fragments(page):
     """The parts of the page that belong to the interpretation clock: headline through the read,
-    what changed, and the watches. Everything else on the page belongs to the data clock. The one
-    deterministic annotation a refresh may add to a watch, `horizon passed`, is stripped before comparing."""
-    head = page.split("<h1>", 1)[1].split('<div class="figures">', 1)[0]
+    what changed, and the watches (live, retired and flagged). Everything else on the page belongs to
+    the data clock. The one deterministic annotation a refresh may add to a watch, `horizon passed`,
+    is stripped before comparing."""
+    # The lead runs to the first section; the coverage note between them belongs to the data clock.
+    head = re.sub(r'<p class="notice compact">.*?</p>', "", page.split("<h1>", 1)[1].split("<section", 1)[0]).rstrip()
     since = (page.split('<section class="since">', 1)[1].split("</section>", 1)[0]
              if '<section class="since">' in page else "")
-    watches = page.split('<span class="eyebrow">Watches</span>', 1)[1].split('<span class="eyebrow">Flagged', 1)[0]
+    watches = (page.split('<span class="eyebrow">Watches</span>', 1)[1]
+               .split('<span class="eyebrow">Events', 1)[0].split("</section>", 1)[0])
     return head, since, watches.replace(PASSED, "")
 
 
@@ -452,7 +455,7 @@ def test_a_placeholder_inside_a_watch_survives_synthesis_refreshes_the_close_and
                                          "check whether participation extends beyond the selected mega-cap.")
     assert "SPY-daily" in value["watches"][0]["evidence_ids"]
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False, value=value) == 0
-    assert "holds its +0.06 % daily gain" in day.page("PREMARKET")
+    assert "holds its +0.06% daily gain" in day.page("PREMARKET")
     carried_id = next(w["id"] for w in day.bundle()["latest"]["assessment"]["watches"] if "{{" in w["hypothesis"])
     # The 7:00 synthesis carries the watch without reassessing it; every later page still resolves it.
     assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
@@ -460,11 +463,11 @@ def test_a_placeholder_inside_a_watch_survives_synthesis_refreshes_the_close_and
     assert day.run(f"{TUE}T20:03:00+00:00", "CLOSE_1M", print_at=f"{TUE}T19:59:58+00:00") == 0
     for checkpoint in ("OPEN_30M", "HOURLY_1300", "CLOSE_1M"):
         page = day.page(checkpoint)
-        assert "holds its +0.06 % daily gain" in page and "{{" not in page, checkpoint
+        assert "holds its +0.06% daily gain" in page and "{{" not in page, checkpoint
         assert day.metadata(checkpoint)["validation"] == "PASS"
         # The carried watch's marker labels the quoted row like any other row, at the creation-time value.
-        carried_block = page.split("holds its +0.06 % daily gain", 2)[-1].split("</details>", 1)[0]
-        assert '<a href="#evidence-SPY-daily">SPY · Daily return</a><b>+0.06 %</b>' in carried_block, checkpoint
+        carried_block = page.split("holds its +0.06% daily gain", 2)[-1].split("</details>", 1)[0]
+        assert '<a href="#evidence-SPY-daily">SPY · Daily return</a><b>+0.06%</b>' in carried_block, checkpoint
         assert ">SPY-daily</a>" not in page
     # Wednesday: Tuesday's close moved SPY's daily return well away from the value the watch quoted. The
     # carried criterion still renders the number its author saw; only a new watch quotes the new one.
@@ -478,8 +481,8 @@ def test_a_placeholder_inside_a_watch_survives_synthesis_refreshes_the_close_and
     page = day.page("PREMARKET", "2026-09-09")
     evidence = json.loads((day.folder("PREMARKET", "2026-09-09") / "evidence.json").read_text())
     today = formatted(next(row for row in evidence["derived"] if row["id"] == "SPY-daily"))
-    assert today != "+0.06 %" and today.startswith("+2.")
-    assert "holds its +0.06 % daily gain" in page and "{{" not in page  # the carried criterion did not drift
+    assert today != "+0.06%" and today.startswith("+2.")
+    assert "holds its +0.06% daily gain" in page and "{{" not in page  # the carried criterion did not drift
     assert f"keeps its {today} daily gain" in page  # the newly accepted watch quotes the new value
     assert '<span class="meta">From an earlier read · unresolved' in page
     context = json.loads((day.folder("PREMARKET", "2026-09-09") / "analyst_context.json").read_text())
@@ -507,7 +510,7 @@ def test_a_watch_written_before_criteria_carried_values_is_frozen_at_its_first_c
     assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M") == 0  # a refresh carries and freezes it
     carried = next(w for w in day.bundle()["latest"]["assessment"]["watches"] if "{{" in w["hypothesis"])
     assert carried["values"]["SPY-daily"]["value"] == pytest.approx(0.06, abs=0.005)
-    assert "holds its +0.06 % daily gain" in day.page("OPEN_1M")
+    assert "holds its +0.06% daily gain" in day.page("OPEN_1M")
 
 
 def test_refresh_page_keeps_every_anchor_and_cites_frozen_values_with_their_clock(day):
@@ -554,9 +557,9 @@ def test_absence_vocabulary_is_three_words():
 def test_a_value_that_rounds_to_zero_is_an_unsigned_neutral_zero():
     row = dict(id="XLY-intraday", topic="XLY", metric="intraday return", value=-0.001, unit="%",
                frequency="intraday", status="AVAILABLE", observed_at="2026-09-08T19:00:00+00:00")
-    assert formatted(row) == "0.00 %" and direction(row) == "neutral"
-    assert formatted(dict(row, value=0.004)) == "0.00 %" and direction(dict(row, value=0.004)) == "neutral"
-    assert formatted(dict(row, value=-0.006)) == "-0.01 %" and direction(dict(row, value=-0.006)) == "negative"
+    assert formatted(row) == "0.00%" and direction(row) == "neutral"
+    assert formatted(dict(row, value=0.004)) == "0.00%" and direction(dict(row, value=0.004)) == "neutral"
+    assert formatted(dict(row, value=-0.006)) == "−0.01%" and direction(dict(row, value=-0.006)) == "negative"
     # Rates keep the same rule in whole basis points (R6): a change that rounds to zero is an unsigned "0 bp".
     assert formatted(dict(row, value=0.0, unit="bp")) == "0 bp"
     assert formatted(dict(row, value=-0.4, unit="bp")) == "0 bp"

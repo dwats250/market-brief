@@ -39,7 +39,7 @@ class Page(HTMLParser):
 def test_markdown_html_same_facts_mode_and_literal_halt():
     md, page = render(fixture_packet(), narrative())
     for value in ("FICTIONAL SAMPLE", "HALT", "\u22124 bp", "+1 bp", "INTERPRETATION",
-                  "WATCH", "OBSERVED", "current prints unavailable"):
+                  "WATCH", "current prints unavailable"):
         assert value in md
         assert value.lower() in page.lower()
     parsed = Page()
@@ -48,7 +48,7 @@ def test_markdown_html_same_facts_mode_and_literal_halt():
     assert set(parsed.refs) <= parsed.ids
     assert "Content-Security-Policy" in page
     assert 'id="theme-choice"' in page
-    assert page.index("What matters next") < page.index("Equity structure") < page.index("Macro &amp; rates")
+    assert page.index("What matters next") < page.index("Macro &amp; rates") < page.index("Equity structure")
     assert "direction-positive" in page and "direction-negative" in page
     assert 'class="number primary direction-neutral">3.86%' in page
 
@@ -129,7 +129,7 @@ def test_compact_equity_rows_use_current_observation_and_human_labels():
     ]
     row = compact_equity_rows(rows, ["XLE"])[0]
     assert row["label"] == "Energy"
-    assert row["today"]["display"] == "+0.55 %"
+    assert row["today"]["display"] == "+0.55%"
     assert row["today"]["observed"] == "Tuesday, Sep 8 · 10:30 AM PT"
     session = dict(open="2026-09-08T13:30:00+00:00", close="2026-09-08T20:00:00+00:00")
     assert measure_label(rows[0], session) == "XLE · Intraday vs prior close"
@@ -173,8 +173,10 @@ def test_top_of_page_and_continuity_copy_read_as_product():
     packet, value = fixture_packet(), narrative()
     _, page = render(packet, value)
     top = page.split("<h1>", 1)[1].split("<section", 1)[0]
-    assert '<span class="pill">' in top and value["character"]["text"][:30] in top
+    # The lead is headline, tape, read and take: no label pill and no figure strip compete with them.
+    assert '<div class="dek">' + value["character"]["text"][:30] in top
+    assert 'class="pill"' not in page and value["banner"]["label"] not in top
     assert value["banner"]["limitation"][:30] not in top  # ordinary caveat lives with the basis line
-    assert page.count('<div class="figure">') == 3
+    assert page.count('<div class="figure">') == 0 and 'class="figures"' not in page
     assert "premarket: absent" not in page.split('<details class="drawer"', 1)[0]
     assert "baseline read" in page

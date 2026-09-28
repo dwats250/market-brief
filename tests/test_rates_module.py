@@ -45,8 +45,8 @@ def test_rates_display_in_desk_form():
              (-35, "bp spread", "−35 bp"), (0, "bp spread", "0 bp")]
     for value, unit, text in cases:
         assert formatted(dict(value=value, unit=unit)) == text, (value, unit)
-    # Equities are unchanged.
-    assert formatted(dict(value=-0.53, unit="%")) == "-0.53 %"
+    # Equities now share the rates style: a true minus sign and no space before %.
+    assert formatted(dict(value=-0.53, unit="%")) == "−0.53%"
 
 
 def test_rates_render_the_same_everywhere_in_neutral_colour():
@@ -69,7 +69,8 @@ def test_rates_render_the_same_everywhere_in_neutral_colour():
             if row["topic"].startswith("US "):
                 assert direction(row) == "neutral", row["id"]
     md, page = render(falling, value)
-    rates = page.split("<h2>Macro &amp; rates</h2>", 1)[1].split("</section>", 1)[0]
+    # The rates half of the section: the curve module and its proof, before the Metals table that shares it.
+    rates = page.split("<h2>Macro &amp; rates</h2>", 1)[1].split('<div class="caption">Metals', 1)[0]
     assert "direction-positive" not in rates and "direction-negative" not in rates
     assert re.search(r"−9 bp", rates) and "5.18%" in md
 
@@ -262,12 +263,13 @@ def test_a_curve_past_the_admission_window_keeps_a_dated_module():
     assert "Macro & rates" not in "".join(presentation(packet, narrative())["limitations"])
 
 
-def test_a_stale_curve_puts_no_change_in_the_headline_figures():
-    fresh = {chip["id"] for chip in presentation(rates_packet(), narrative())["chips"]}
-    assert {"treasury-2y-change", "treasury-10y-change"} <= fresh
-    for day in (11, 10):  # without equity figures the chips fall back to the first facts; still no stale change
-        stale = {chip["id"] for chip in presentation(rates_packet(now=NOW.replace(day=day)), narrative())["chips"]}
-        assert not any(ident.startswith("treasury-") and ident.endswith("-change") for ident in stale), day
+def test_a_stale_curve_shows_no_change_anywhere_on_the_reading_surface():
+    """R6 without a figure strip: a stale curve's changes are absent from the module, the proofs and the prose."""
+    for day in (11, 10):
+        view = presentation(rates_packet(now=NOW.replace(day=day)), narrative())
+        assert view["macro"]["curve"]["stale"]
+        assert all(row["change"]["absent"] for row in view["macro"]["yields"])
+        assert not any(line["id"].endswith("-change") for line in view["macro"]["yields_proof"]), day
 
 
 def test_the_metals_caption_never_dangles():
@@ -275,9 +277,9 @@ def test_the_metals_caption_never_dangles():
     packet["derived"] = [row for row in packet["derived"] if row["id"] not in ("SLV-spread20", "GDX-spread20")]
     md, page = render(packet, narrative())
     assert presentation(packet, narrative())["cross_asset"]["spread_label"] == ""
-    assert '<h2>Metals</h2><div class="caption"><span>' in page and "spread, <" not in page
-    metals = md.split("## Metals", 1)[1].split("\n\n", 2)[1]
-    assert not metals.startswith(" ·") and "spread, " not in metals
+    assert '<div class="caption">Metals<span>Daily change' in page and "spread, <" not in page
+    metals = md.split("**METALS** · ", 1)[1].split("\n", 1)[0]
+    assert not metals.startswith("·") and "spread, " not in metals
 
 
 def test_the_rates_page_fits_a_phone(tmp_path):

@@ -78,6 +78,17 @@ state); an interpretation frozen earlier renders its carried watches as question
 runs on pushes to `main`, except a push whose only change is `publish/index.html`, the scheduler's whole
 publication write surface (its pushes use the workflow token and start no workflow in any case).
 
+**Accepted continuity survives a failed publication (R1, 2026-09-29).** Restore took only artifacts of runs
+that concluded `success`, but the continuity upload comes before the push and the Pages deployment, so a push
+rejected after a concurrent merge, or a failed deployment, made an accepted bundle ineligible and the next
+runner rolled back to an older bundle or cold-started. `select_artifact` now also admits a run that concluded
+`failure` and checks the artifact's own name: the upload runs only when every earlier step succeeded, so the
+artifact proves acceptance (a workflow test pins that gate). A rejected synthesis still uploads nothing;
+cancelled and unfinished runs stay ineligible; admission and the publication, cadence and model-call rules
+are unchanged. One consequence follows from the bundle's completion proof: a queue-delayed wake of the same
+checkpoint after such a failure now skips where it used to run the checkpoint again (for a synthesis, a
+second paid call), so a page that failed to push waits for the next checkpoint's publish.
+
 ## Next
 
 Editorial compression: after merge, verify Slice A against the Monday 2026-09-28 PREMARKET and OPEN_30M run
@@ -87,6 +98,10 @@ scheduled calls (no paid test call).
 Carried-watch criteria and push CI: after merge, the next synthesis freezes the criteria (a page carried under
 an interpretation frozen before the merge shows questions alone until then); confirm the merge push starts a
 `push` Tests run on `main` and the next `Publish … brief` commit starts none.
+
+Accepted continuity survives a failed publication (R1): after merge, the next red scheduler run whose failure
+is in publication (a push rejected by a merge, a Pages failure) should be followed by a run whose log reads
+`Continuity: restored artifact … from run <that run>`.
 
 Market Memory, Week Ahead, market clocks and Opus 5.5 (approved plan, revision 2 with the source-lineage
 amendment: `docs/2026-09-27-market-memory-week-ahead.md`). Slice order D1 → C1 → A1 → one full week of session

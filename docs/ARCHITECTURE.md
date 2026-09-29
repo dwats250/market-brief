@@ -237,9 +237,24 @@ open +1M (10:31 ET or 8:31 ET here) resolves to SKIP and can never become a seco
 the opening-structure update; refreshes and the close keep a forty-five-minute window because a late
 deterministic run costs nothing. The restored continuity bundle is also a completion proof: a wake
 whose checkout predates an earlier run's publish still skips a checkpoint the bundle already records.
-Held as a bounded follow-up: two fresh runners both starting inside one synthesis window after a
-failed first attempt (an unusual queue delay) could still attempt twice; closing it needs a durable
-attempt record across runners. A `NEXT_BRIEF` watch horizon resolves to the next synthesis checkpoint,
+It proves only acceptance, so a paid attempt has its own record: a production synthesis writes
+`runs/attempts/<session>-<checkpoint>.json` immediately before its provider request is sent (no record,
+no request), and the workflow's last, `always()` steps upload it as `market-brief-attempt-<session>-<checkpoint>`
+whatever the synthesis then did. Before a synthesis checkpoint pays, `scheduled()` looks for this
+workspace's record and lists that artifact name (a `schedule.yml` run on `main`, whatever it concluded);
+either one means SKIP, and a listing it cannot read means no request and a failed run. The workflow's one
+concurrency group starts no run before the previous one has finished, uploads included, so a later runner
+inside the window sees the record whenever the attempting runner lived to upload it (a lost runner cannot,
+and is the residual). The record is attempt accounting, never
+continuity: nothing admits, restores or renders it. It is keyed by the run's own exchange-calendar date, like
+every acceptance record, so a weekend or holiday run never consumes the next session's checkpoint, and only
+this repository's own runs count (a fork's pull_request run can execute its own edit of the workflow). An
+attempt that bills nothing once the record is written (authentication, rate limit, 5xx, timeout) still
+consumes the checkpoint. Experiment and commissioning runs pay under the owner's hand and are never recorded;
+a manual production dispatch is recorded but not gated, so inside the window it pays a second time: that is
+the owner's override and the recovery after a failed or unanswered check.
+A rejected generation's metadata records the call it was: `synthesis.calls`, the route, the requested model
+and, when a response arrived, its usage and cost. A `NEXT_BRIEF` watch horizon resolves to the next synthesis checkpoint,
 the next time an analyst can judge it; refreshes in between only carry it. A watch's criteria carry
 the rows they quote at the values their author saw (`values` on the watch record), so a carried
 criterion never drifts with newer data; a later synthesis may reassess or replace it.

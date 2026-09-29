@@ -92,7 +92,8 @@ only inside the three continuity records above.
 | `narrative.json` | `market-brief.narrative.v2` | Model output, validated |
 | `edition_state.json` | `market-brief.continuity.v1`, kind `edition_state` | `observed` (deterministic) + `assessment` (interpretation), content-hashed |
 | `session_handoff.json` | `market-brief.continuity.v1`, kind `session_handoff` | Close-designated state, only after COMPLETED_SESSION or PROVISIONAL_NEAR_CLOSE |
-| `metadata.json` | — | Hashes (prompt provenance is the prompt hash), model identity/route/profile/usage, validation, continuity outcome; on synthesis editions, `editorial` overshoots and advisory `style` telemetry, never a gate |
+| `metadata.json` | — | Hashes (prompt provenance is the prompt hash), model identity/route/profile/usage, validation, continuity outcome; on synthesis editions, `editorial` overshoots and advisory `style` telemetry, never a gate; a rejected generation keeps its call, route and (when a response arrived) usage and cost |
+| `runs/attempts/<session>-<checkpoint>.json` | `market-brief.synthesis-attempt.v1` | Attempt accounting, never continuity: written before a production synthesis sends its provider request, uploaded as `market-brief-attempt-<session>-<checkpoint>`; the scheduler never pays twice for a checkpoint that has one |
 
 Absent source evidence cannot be recovered through model confidence. "No major
 news" is forbidden when collection only checked Fed releases. "No matching

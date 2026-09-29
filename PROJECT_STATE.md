@@ -89,6 +89,18 @@ are unchanged. One consequence follows from the bundle's completion proof: a que
 checkpoint after such a failure now skips where it used to run the checkpoint again (for a synthesis, a
 second paid call), so a page that failed to push waits for the next checkpoint's publish.
 
+**One paid synthesis per checkpoint, across runners (R2, 2026-09-29).** Duplicate suppression proved only
+acceptance (marker, checked-out page, restored bundle), so a rejected paid generation left nothing a fresh
+runner could see, and a second runner inside the same twenty-minute window paid again; the rejected run's
+metadata also said `calls: 0` / `model_route: none`. A production synthesis now writes
+`runs/attempts/<session>-<checkpoint>.json` immediately before its provider request (no record, no request);
+the workflow's last, `always()` steps upload it as `market-brief-attempt-<session>-<checkpoint>`; `scheduled()`
+skips a synthesis checkpoint with a local record or that artifact from a `schedule.yml` run on `main`, and
+fails closed (no request) when it cannot list them. The concurrency group makes that upload finish before
+another run starts. Attempt records are accounting only; continuity, validation, publication, cadence, the
+fallback and deterministic refreshes are unchanged. A rejected generation now records `calls: 1`, its route,
+requested model and, when a response arrived, usage and cost.
+
 ## Next
 
 Editorial compression: after merge, verify Slice A against the Monday 2026-09-28 PREMARKET and OPEN_30M run
@@ -102,6 +114,10 @@ an interpretation frozen before the merge shows questions alone until then); con
 Accepted continuity survives a failed publication (R1): after merge, the next red scheduler run whose failure
 is in publication (a push rejected by a merge, a Pages failure) should be followed by a run whose log reads
 `Continuity: restored artifact … from run <that run>`.
+
+One paid synthesis per checkpoint (R2): after merge, each PREMARKET and OPEN_30M run's artifacts should include
+`market-brief-attempt-<session>-<checkpoint>`, and any second wake of the same checkpoint should log
+`SKIP / <checkpoint> / paid synthesis already attempted` (or `already completed`) with no provider request.
 
 Market Memory, Week Ahead, market clocks and Opus 5.5 (approved plan, revision 2 with the source-lineage
 amendment: `docs/2026-09-27-market-memory-week-ahead.md`). Slice order D1 → C1 → A1 → one full week of session
@@ -119,9 +135,6 @@ the opening-structure analysis clock, and the close snapshot handing off (PROVIS
 near-close prints; an extended-hours-only print means no session print, no page, and a cold-start close
 continuity the next morning, which is the honest outcome). Then decide on the watch-resolution question the
 deterministic close leaves open: the opening-structure watches are judged only by the next premarket.
-Bounded follow-up, held: a failed first synthesis could still be attempted again if two fresh runners both
-start inside one twenty-minute synthesis window after an unusual queue delay; a durable attempt record
-across runners would close it.
 
 ## Direction after v0.1
 

@@ -16,6 +16,7 @@ from .context import analyst_context, edition_profile
 from .continuity import (
     ARTIFACT_NAME,
     SLOTS,
+    WORKFLOW_PATH,
     admit_interpretation,
     admit_prior_state,
     advance_bundle,
@@ -56,6 +57,10 @@ from .synthesize import (
 RUN_ROOT = ROOT
 SAMPLE_CONTINUITY = ROOT / "tests/fixtures/continuity.sample.json"
 CLOSING_DATA_FOR_HANDOFF = {"COMPLETED_SESSION", "PROVISIONAL_NEAR_CLOSE"}
+# Attempt accounting, not continuity: one record per synthesis checkpoint per exchange session, written before a
+# production provider request is sent and uploaded by the workflow as `market-brief-attempt-<session>-<checkpoint>`.
+ATTEMPT_SCHEMA = "market-brief.synthesis-attempt.v1"
+ATTEMPT_ARTIFACT = "market-brief-attempt"
 
 
 def output_directory(root, mode, target, checkpoint="PREMARKET"):
@@ -150,6 +155,69 @@ def mark_checkpoint(root, session_date, checkpoint, actual_started_at):
                             actual_started_at=actual_started_at))
 
 
+def attempt_key(session_date, checkpoint):
+    return f"{session_date}-{checkpoint}"
+
+
+def attempt_path(root, session_date, checkpoint):
+    return Path(root) / "runs" / "attempts" / f"{attempt_key(session_date, checkpoint)}.json"
+
+
+def record_attempt(root, session_date, checkpoint, run_id, attempt):
+    """Record that this checkpoint's paid synthesis was attempted, before its provider request is sent.
+
+    Written whatever the synthesis then does and read only by `scheduled()`; never admitted, restored or rendered.
+    A crash between this write and the request over-counts, never under-counts. A failed write is a ValueError,
+    so nothing is sent."""
+    path = attempt_path(root, session_date, checkpoint)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_symlink():
+            raise ValueError("attempt record cannot be a symlink")
+        temporary = path.parent / f"attempt-{uuid.uuid4().hex}.tmp"
+        write_json(temporary, dict(schema_version=ATTEMPT_SCHEMA, session_date=session_date, checkpoint=checkpoint,
+                                   run_id=run_id, route=attempt.get("route"),
+                                   requested_model=attempt.get("requested_model"),
+                                   requested_at=attempt.get("requested_at")))
+        temporary.replace(path)
+    except OSError:
+        raise ValueError("the paid synthesis attempt could not be recorded; no provider request was sent") from None
+    return path
+
+
+def earlier_attempt(args, session_date, checkpoint):
+    """Where this session's paid synthesis of `checkpoint` was already attempted, or None.
+
+    This workspace's own record first; then, on Actions, a record uploaded by this repository's own run of the
+    schedule workflow on the expected branch, whatever that run concluded (the upload proves the attempt, not its
+    acceptance). The workflow's
+    one concurrency group starts no run before the previous one has finished uploading. Raises when the uploaded
+    records cannot be listed, so the caller never pays on an unanswered question."""
+    local = attempt_path(RUN_ROOT, session_date, checkpoint)
+    if local.is_file():
+        return f"record {local.name}"
+    repository = getattr(args, "repository", None) or os.environ.get("GITHUB_REPOSITORY")
+    if not repository:
+        return None  # not on Actions: no other runner shares this checkpoint
+    name = f"{ATTEMPT_ARTIFACT}-{attempt_key(session_date, checkpoint)}"
+    listing = _gh_json([f"repos/{repository}/actions/artifacts?name={name}&per_page=100"])
+    artifacts = listing.get("artifacts") if isinstance(listing, dict) else None
+    if not isinstance(artifacts, list):
+        raise ValueError("attempt records could not be listed")
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or artifact.get("name") != name:
+            continue
+        run = artifact.get("workflow_run")
+        if not isinstance(run, dict) or run.get("head_branch") != getattr(args, "branch", "main"):
+            continue
+        if run.get("head_repository_id") != run.get("repository_id"):
+            continue  # a fork's pull_request run can run its own edit of schedule.yml; only this repository's count
+        details = _gh_json([f"repos/{repository}/actions/runs/{run['id']}"])
+        if isinstance(details, dict) and details.get("path") == WORKFLOW_PATH:
+            return f"artifact {artifact.get('id')} from run {run['id']}"
+    return None
+
+
 def merge_input(collected, supplied):
     if supplied.get("mode") != "LIVE":
         raise ValueError("sample input cannot be relabeled as a live run")
@@ -180,6 +248,7 @@ def run(args):
     mode = "SAMPLE" if args.replay else "LIVE"
     commissioning = bool(getattr(args, "commissioning", False))
     experiment = bool(getattr(args, "experiment", False))
+    production = mode == "LIVE" and not experiment and not commissioning
     full = bool(getattr(args, "full_packet", False))
     if args.replay:
         raw = read_json(args.input or ROOT / "tests/fixtures/evidence.sample.json")
@@ -272,7 +341,21 @@ def run(args):
                              evidence_hash=evidence_hash)
             else:
                 print("Evidence collected; requesting one isolated structured synthesis.", flush=True)
-                narrative, model = synthesize(packet, full=full, context=context)
+
+                def requesting(attempt):
+                    # The paid-attempt boundary, immediately before the provider request is sent. A production
+                    # attempt is recorded first, so no later runner pays for this checkpoint again whatever the
+                    # response turns out to be; if the record cannot be written, nothing is sent.
+                    if production:
+                        # Keyed like every acceptance record (page, bundle origin): the run's own exchange-calendar
+                        # date. On a trading day that is the session `scheduled()` asks about; a run on a weekend or
+                        # holiday never stands for the next session's checkpoint.
+                        record = record_attempt(RUN_ROOT, packet["run"]["session"]["date"], checkpoint, folder.name,
+                                                attempt)
+                        metadata["attempt_record"] = str(record.relative_to(RUN_ROOT))
+                    metadata["synthesis"]["calls"] = 1
+                    metadata.update(model_route=attempt["route"], model=attempt)
+                narrative, model = synthesize(packet, full=full, context=context, on_request=requesting)
                 metadata["synthesis"]["calls"] = 1
             notes = editorial_notes(narrative, NARRATIVE_SCHEMA if full else narrative_schema(context["edition"]))
             metadata["editorial"] = notes
@@ -330,7 +413,6 @@ def run(args):
         metadata["continuity"].update(data_status=state["observed"]["data_status"],
                                       handoff="written" if handoff else handoff_reason,
                                       watches=[w["id"] for w in state["assessment"]["watches"]])
-        production = mode == "LIVE" and not experiment and not commissioning
         if production and packet["coverage"]["status"] in {"READY", "PARTIAL"}:
             pointer = RUN_ROOT / "runs/latest-success.json"
             if pointer.is_symlink():
@@ -346,6 +428,10 @@ def run(args):
             metadata["continuity"]["advanced"] = True
     except ValueError as exc:
         metadata.update(validation="FAILED", error=str(exc))
+        attempt = getattr(exc, "attempt", None)
+        if isinstance(attempt, dict):
+            # A request was sent: the rejection is recorded as the paid call it was, at what it cost when known.
+            metadata.update(model_route=attempt.get("route", metadata["model_route"]), model=attempt)
         rejected = getattr(exc, "narrative", None)
         if rejected is not None:
             # The generated output is the diagnostic; keep it beside the evidence it failed against.
@@ -440,6 +526,19 @@ def scheduled(args):
     if marker.is_file() or already_published or completed_in_bundle(RUN_ROOT, info["session_date"], args.checkpoint):
         print(f"SKIP / {args.checkpoint} / already completed for {info['session_date']}")
         return 0
+    if checkpoint_kind(args.checkpoint) == "synthesis":
+        # One paid generation per synthesis checkpoint and session: the authority is that a provider request was
+        # attempted, never that its analysis was accepted (accepted state stays the continuity bundle's).
+        try:
+            earlier = earlier_attempt(args, info["session_date"], args.checkpoint)
+        except (ValueError, OSError, KeyError, TypeError, subprocess.TimeoutExpired):
+            print(f"NOT RUN / {args.checkpoint} / earlier paid attempts for {info['session_date']} could not be "
+                  "checked; no provider request was made", file=sys.stderr)
+            return 2
+        if earlier:
+            print(f"SKIP / {args.checkpoint} / paid synthesis already attempted for {info['session_date']} "
+                  f"({earlier})")
+            return 0
     args.replay = False
     result = run(args)
     if result == 0:

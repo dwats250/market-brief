@@ -263,7 +263,8 @@ def cell_spill(page, tmp_path, width):
     return int(found.group(1))
 
 
-@pytest.mark.parametrize("width", [390, 360, 320])
+# 601-721 px is where fixed-layout tables let no-wrap numbers spill (F1); 768 px is the desktop control.
+@pytest.mark.parametrize("width", [390, 360, 320, 601, 640, 680, 720, 721, 768])
 def test_the_phone_layout_keeps_every_number_inside_its_cell(tmp_path, width):
     """No unit wraps under its number and no numeric text spills past its column."""
     _, page = render(fixture_packet(), narrative())

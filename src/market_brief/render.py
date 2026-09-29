@@ -985,10 +985,13 @@ def markdown(view):
     for c in nxt["carried"]:
         passed = " · horizon passed" if c["expired"] else ""
         status = f" · {c['assessment']}" if c["assessment"] else ""
-        confirm = f" Confirm: {esc(c['confirmation'])}" if c["confirmation"] else ""
-        changes_it = f" Changes it: {esc(c['contradiction'])}" if c["contradiction"] else ""
-        lines.append(f"- **FROM AN EARLIER READ{status} · {esc(c['phrase'])}{passed}** — "
-                     f"{esc(c['hypothesis'])}{confirm}{changes_it} {esc(c['reason'])}")
+        # The reason stays beside the question; the labeled criteria follow it, so neither reads as the other.
+        text = f"{esc(c['hypothesis'])} {esc(c['reason'])}"
+        if c["confirmation"]:
+            text = f"{text.rstrip()} Confirm: {esc(c['confirmation'])}"
+        if c["contradiction"]:
+            text = f"{text.rstrip()} Changes it: {esc(c['contradiction'])}"
+        lines.append(f"- **FROM AN EARLIER READ{status} · {esc(c['phrase'])}{passed}** — {text}")
     if nxt["retired"]:
         count = len(nxt["retired"])
         lines.append(f"- Earlier watches · {count} ended without a verdict: "

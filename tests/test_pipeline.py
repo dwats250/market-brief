@@ -344,8 +344,8 @@ def test_fresh_workspace_restores_a_valid_bundle_and_rejects_foreign_state(tmp_p
     assert not bundle_path(third).exists()
 
 
-def test_artifact_selection_requires_main_branch_successful_expected_workflow():
-    from market_brief.continuity import select_artifact
+def test_artifact_selection_requires_main_branch_expected_workflow():
+    from market_brief.continuity import ARTIFACT_NAME, select_artifact
     runs = {
         1: {"conclusion": "success", "path": ".github/workflows/schedule.yml"},
         2: {"conclusion": "failure", "path": ".github/workflows/schedule.yml"},
@@ -353,17 +353,18 @@ def test_artifact_selection_requires_main_branch_successful_expected_workflow():
         4: {"conclusion": "success", "path": ".github/workflows/schedule.yml"},
     }
     def artifact(ident, run, branch, created, expired=False):
-        return {"id": ident, "expired": expired, "created_at": created,
+        return {"id": ident, "name": ARTIFACT_NAME, "expired": expired, "created_at": created,
                 "workflow_run": {"id": run, "head_branch": branch}}
     artifacts = [
-        artifact(10, 2, "main", "2026-09-08T20:10:00Z"),       # failed run
+        artifact(10, 2, "main", "2026-09-08T20:10:00Z"),       # accepted, then its publication failed (R1)
         artifact(11, 3, "main", "2026-09-08T19:10:00Z"),       # other workflow
         artifact(12, 4, "feature", "2026-09-08T18:10:00Z"),    # wrong branch
         artifact(13, 1, "main", "2026-09-08T17:10:00Z", True),  # expired
         artifact(14, 1, "main", "2026-09-08T13:10:00Z"),       # acceptable
     ]
-    assert select_artifact(artifacts, runs.get)["id"] == 14
-    assert select_artifact(artifacts[:4], runs.get) is None
+    assert select_artifact(artifacts, runs.get)["id"] == 10
+    assert select_artifact(artifacts[1:], runs.get)["id"] == 14
+    assert select_artifact(artifacts[1:4], runs.get) is None
     assert select_artifact([], runs.get) is None
 
 
@@ -378,7 +379,7 @@ def test_restore_uses_gh_only_for_listing_run_lookup_and_download(tmp_path, monk
         calls.append(argv)
         if argv[:2] == ["gh", "api"] and "artifacts" in argv[2]:
             return SimpleNamespace(returncode=0, stdout=json.dumps({"artifacts": [
-                {"id": 7, "expired": False, "created_at": "2026-09-04T20:10:00Z",
+                {"id": 7, "name": "market-brief-continuity", "expired": False, "created_at": "2026-09-04T20:10:00Z",
                  "workflow_run": {"id": 99, "head_branch": "main"}}]}))
         if argv[:2] == ["gh", "api"]:
             return SimpleNamespace(returncode=0, stdout=json.dumps(

@@ -11,6 +11,8 @@ _real_which = shutil.which
 def no_live_synthesis(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("MARKET_BRIEF_MODEL", raising=False)
+    # Actions sets this for the test job too; without it the scheduler never lists real attempt records.
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
 
     def forbidden(*args, **kwargs):
         raise AssertionError("tests must never open a connection to OpenRouter")

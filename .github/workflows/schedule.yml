@@ -172,9 +172,14 @@ jobs:
           fi
       - name: Collect, synthesize, validate, and render from Cloudflare wake-up
         if: inputs.cloudflare_wakeup == true && steps.checkpoint.outputs.run == 'true'
+        env:
+          # Lists earlier runs' paid-attempt records before a synthesis checkpoint may pay (actions: read).
+          GH_TOKEN: ${{ github.token }}
         run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
       - name: Collect, synthesize, validate, and render on GitHub schedule
         if: github.event_name != 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
       - name: Archive this run's evidence, context, narrative, and metadata
         # Outside the Pages payload and Git history; thirty-day retention, not a historical store.
@@ -223,6 +228,25 @@ jobs:
         if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Name this run's paid synthesis attempt
+        # A production synthesis writes runs/attempts/<session>-<checkpoint>.json before its provider request is
+        # sent, whatever it then does. These two steps come last and run always(), so they record a rejected or
+        # cancelled attempt too and can never gate continuity or publication; this workflow's concurrency group
+        # starts no other run until they have finished.
+        id: attempt
+        if: always() && steps.checkpoint.outputs.run == 'true'
+        run: |
+          for record in runs/attempts/*.json; do
+            if [ -f "$record" ]; then echo "key=$(basename "$record" .json)" >> "$GITHUB_OUTPUT"; fi
+          done
+      - name: Upload the paid synthesis attempt record
+        if: always() && steps.attempt.outputs.key != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-brief-attempt-${{ steps.attempt.outputs.key }}
+          path: runs/attempts/${{ steps.attempt.outputs.key }}.json
+          if-no-files-found: error
+          retention-days: 30
 
   cloudflare-smoke:
     if: inputs.cloudflare_smoke == true && inputs.cloudflare_wakeup == true

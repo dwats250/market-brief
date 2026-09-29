@@ -36,6 +36,7 @@ from market_brief.render import (
     source_rows,
 )
 from market_brief.schedule import CHECKPOINT_KINDS, CHECKPOINTS, SYNTHESIS_CHECKPOINTS, next_checkpoint
+from market_brief.synthesize import synthesize as wire_synthesize
 from market_brief.synthesize import validate_narrative
 
 TUE = "2026-09-08"
@@ -54,7 +55,7 @@ class Day:
 
     def run(self, now, checkpoint, *, intraday=True, value=None, mutate=None, last_history_date="2026-09-04",
             print_at=None, fail_synthesis=False, command="premarket", scale_last_close=None,
-            prints=(("SPY", -0.53), ("QQQ", -0.61), ("XLI", 0.4))):
+            prints=(("SPY", -0.53), ("QQQ", -0.61), ("XLI", 0.4)), wire=False):
         freeze_clock(self.monkeypatch, now)
         raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
         raw["mode"] = "LIVE"
@@ -92,7 +93,8 @@ class Day:
             validate_narrative(live, packet, context)
             self.narratives[checkpoint] = live
             return live, {"route": "test"}
-        self.monkeypatch.setattr(cli, "synthesize", synthesize)
+        # wire=True: the real analyst path, over whatever OpenRouter transport the caller has faked.
+        self.monkeypatch.setattr(cli, "synthesize", wire_synthesize if wire else synthesize)
         self.monkeypatch.setattr(cli, "RUN_ROOT", self.root)
         self.monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
         self.monkeypatch.setattr(cli, "publish_latest", lambda root: self.published.append(checkpoint))

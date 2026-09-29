@@ -699,7 +699,23 @@ def _openrouter_narrative(response):
 
 
 def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, sleeper=None, full=False,
-                          context=None):
+                          context=None, on_request=None):
+    """One structured synthesis through OpenRouter.
+
+    `on_request(attempt)` runs once, immediately before the first provider request is sent; if it raises, nothing
+    is sent. A failure after a request was sent carries `attempt` on the exception: what was requested and, when a
+    response arrived, its usage and cost, so a paid rejection is accounted as truthfully as an acceptance.
+    """
+    attempt = {}
+    try:
+        return _synthesize_openrouter(packet, api_key, requester, full, context, on_request, attempt)
+    except ValueError as exc:
+        if attempt.get("attempts"):
+            exc.attempt = attempt
+        raise
+
+
+def _synthesize_openrouter(packet, api_key, requester, full, context, on_request, attempt):
     api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise ValueError("OpenRouter credentials are not configured")
@@ -738,24 +754,44 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     # rejection downstream all fail closed with no second call —
     # a billable generation is never retried automatically, so `sleeper` stays unused. Model failover
     # is kept semantically separate from that transient handling and admits at most one narrative.
+    attempt.update(route="openrouter", provider="OpenRouter", model=analyst["model"], model_source=analyst["source"],
+                   fallback_model=fallback_model, requested_model=analyst["model"], profile=profile["profile"],
+                   requested_at=requested_at, attempts=0, input_bytes=len(user.encode()), schema_hash=digest(schema),
+                   prompt_hash=digest(dict(system=system, user=user)), evidence_hash=digest(packet))
+
+    def send(model):
+        attempt.update(requested_model=model, attempts=attempt["attempts"] + 1)
+        return requester(dict(base_payload, model=model), api_key)
+
+    if on_request is not None:
+        on_request(dict(attempt))  # the paid-attempt boundary: before the first request is sent
     primary_failure = None
     requested_model = analyst["model"]
     try:
-        response = requester(dict(base_payload, model=requested_model), api_key)
+        response = send(requested_model)
     except _TransientOpenRouterError as exc:
         raise ValueError(f"OpenRouter transport failure; no automatic paid retry; cause={exc}") from None
     except _ModelUnavailableError as exc:
         if not fallback_model:
             raise ValueError(str(exc)) from None
         primary_failure = dict(model=requested_model, status=exc.status, error=exc.error)
+        attempt.update(primary_failure=primary_failure)
         requested_model = fallback_model
         try:
-            response = requester(dict(base_payload, model=requested_model), api_key)
+            response = send(requested_model)
         except _TransientOpenRouterError as exc2:
             raise ValueError(f"OpenRouter transport failure; no automatic paid retry; cause={exc2}") from None
         except _ModelUnavailableError as exc2:
             raise ValueError(str(exc2)) from None
     fallback_used = primary_failure is not None
+    if isinstance(response, dict):
+        # A generation came back: what it cost is known whatever the local validation says about it.
+        choices = response.get("choices")
+        served = choices[0] if isinstance(choices, list) and choices else {}
+        attempt.update(fallback_used=fallback_used, resolved_model=response.get("model", requested_model),
+                       provider_route=response.get("provider", "unknown"), response_id=response.get("id"),
+                       finish_reason=served.get("finish_reason", "unknown") if isinstance(served, dict) else "unknown",
+                       usage=_safe_usage(response))
     narrative = _openrouter_narrative(response)
     try:
         narrative = validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)
@@ -790,9 +826,10 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
                            prompt_hash=digest(dict(system=system, user=user)), evidence_hash=digest(packet))
 
 
-def synthesize(packet, runner=subprocess.run, full=False, context=None):
+def synthesize(packet, runner=subprocess.run, full=False, context=None, on_request=None):
+    """One synthesis from the configured analyst; `on_request` as in `synthesize_openrouter`."""
     if os.environ.get("OPENROUTER_API_KEY"):
-        return synthesize_openrouter(packet, full=full, context=context)
+        return synthesize_openrouter(packet, full=full, context=context, on_request=on_request)
     executable = shutil.which("claude")
     if not executable:
         raise ValueError("Claude CLI is not installed")
@@ -809,6 +846,9 @@ def synthesize(packet, runner=subprocess.run, full=False, context=None):
     env = {k: v for k, v in os.environ.items() if k in
            {"HOME", "PATH", "LANG", "USER", "SHELL", "XDG_CONFIG_HOME", "SSL_CERT_FILE"}}
     with tempfile.TemporaryDirectory(prefix="market-brief-model-") as isolated:
+        if on_request is not None:
+            on_request(dict(route="claude-cli", requested_model=analyst["cli_model"], profile=profile["profile"],
+                            attempts=1))
         try:
             result = runner(argv, input=user, text=True, capture_output=True,
                             timeout=180, cwd=isolated, env=env, check=False)

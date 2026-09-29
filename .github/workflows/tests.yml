@@ -2,6 +2,12 @@ name: Tests
 
 on:
   pull_request:
+  push:
+    branches: [main]
+    # The scheduler's publication commits change only this generated page (schedule.yml stages nothing
+    # else); a push touching anything more runs the suite.
+    paths-ignore:
+      - "publish/index.html"
   workflow_dispatch:
 
 permissions:

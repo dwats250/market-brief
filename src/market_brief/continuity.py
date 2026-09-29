@@ -766,8 +766,11 @@ def interpretation_record(packet, narrative, context=None, app_version="", conte
         narrative=narrative, evidence=evidence,
         prior_state=dict(status=prior.get("status", "cold_start"), reason=prior.get("reason", ""),
                          anchors=prior.get("anchors", {}),
+                         # A carried watch keeps its question and the criteria that test it; a record frozen
+                         # before the criteria were kept renders the question alone.
                          watches=[{key: watch[key] for key in ("id", "lifecycle", "evaluability", "hypothesis",
-                                                               "horizon", "evidence_refs", "values") if key in watch}
+                                                               "confirmation", "contradiction", "horizon",
+                                                               "evidence_refs", "values") if key in watch}
                                   for watch in prior.get("watches", [])]),
         continuity=dict(comparisons=sum(counts.values()), changed=counts.get("changed", 0),
                         repeated=counts.get("no_new_observation", 0)),

@@ -69,13 +69,24 @@ the lead roles, the summary as the mechanism now, the take as the stance and its
 as why (with gold and miners when they matter), criteria observable by the horizon, a verdict as the change,
 attention only when uncovered. No schema, continuity, context, validator, cadence or data change.
 
+**Carried-watch criteria and push CI (2026-09-29, follow-up to PR #38).** F2: the frozen interpretation record
+keeps each carried watch's confirm / changes-it criteria beside its question, so a live carried watch renders
+them, at the values its author saw, on the synthesis page and every refresh under it. Additive under
+`market-brief.continuity.v1`: no new state, identity or lifecycle; the live set, ordering, verdicts and horizons
+are unchanged; the analyst context is byte for byte unchanged (it already read the criteria from the carried
+state); an interpretation frozen earlier renders its carried watches as questions alone. CI: `tests.yml` also
+runs on pushes to `main`, except a push whose only change is `publish/index.html`, the scheduler's whole
+publication write surface (its pushes use the workflow token and start no workflow in any case).
+
 ## Next
 
 Editorial compression: after merge, verify Slice A against the Monday 2026-09-28 PREMARKET and OPEN_30M run
 artifacts (re-render, screenshots at phone width), then judge the prompt from the next normal day's two
-scheduled calls (no paid test call). A live carried watch shows its question without its confirm / changes-it
-criteria because the frozen interpretation record does not hold them; adding two fields to
-`continuity.interpretation_record` would show them and is a continuity change for the owner to rule on.
+scheduled calls (no paid test call).
+
+Carried-watch criteria and push CI: after merge, the next synthesis freezes the criteria (a page carried under
+an interpretation frozen before the merge shows questions alone until then); confirm the merge push starts a
+`push` Tests run on `main` and the next `Publish … brief` commit starts none.
 
 Market Memory, Week Ahead, market clocks and Opus 5.5 (approved plan, revision 2 with the source-lineage
 amendment: `docs/2026-09-27-market-memory-week-ahead.md`). Slice order D1 → C1 → A1 → one full week of session

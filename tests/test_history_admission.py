@@ -71,7 +71,7 @@ def test_today_cell_comes_from_intraday_not_lagged_daily_return():
     facts = [row for row in [*packet["observations"], *packet["derived"]] if row["value"] is not None]
     row = compact_equity_rows(facts, ["SPY"])[0]
     assert row["today"]["id"] == "SPY-intraday"
-    assert row["today"]["display"] == "-0.53 %"
+    assert row["today"]["display"] == "−0.53%"
     assert row["r20"]["display"] != "n/a"
 
 
@@ -109,7 +109,7 @@ def test_lagged_daily_return_never_fills_today_without_current_prints():
     facts = [row for row in [*packet["observations"], *packet["derived"]] if row["value"] is not None]
     row = compact_equity_rows(facts, ["SPY"], allow_daily_today=False)[0]
     assert row["today"]["display"] == "no print"
-    assert row["r20"]["display"].endswith(" %")
+    assert row["r20"]["display"].endswith("%")
     view = presentation(packet, narrative())
     assert all(r["today"]["display"] == "no print" for r in view["equities"]["rows"] + view["sectors"]["rows"])
 

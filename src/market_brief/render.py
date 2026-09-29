@@ -1,14 +1,15 @@
 """One presentation model, two local formats. Model prose cannot replace fact rows.
 
-Order: header → headline / character / short executive read → compact snapshot → what changed →
-what matters next → equity interpretation and support → macro interpretation and rates → sector
-view → metals → collapsed sources & coverage. Deterministic rows are the record;
-the analyst's interpretation sits above them and is labeled once.
+Order: header → headline / character / short executive read → what changed → what matters next →
+macro interpretation, rates and metals → sector view → equity interpretation and support → collapsed
+sources & coverage. Deterministic rows are the record; the analyst's interpretation sits above them and
+is labeled once. One idea has one home: the lead claims it, a section proves it, one watch tests it, and
+What changed carries every verdict on an earlier hypothesis exactly once.
 
 Two clocks. The interpretation (headline, character, read, the take, what changed, watches, section
 paragraphs, flagged reasons) is rendered from a frozen interpretation record at the values the analyst
-saw; the observed record (figures, tables, events, sources, ledger) is this run's. A synthesis edition
-freezes its own record, so both clocks coincide; a deterministic refresh carries the record forward.
+saw; the observed record (tables, events, sources, ledger) is this run's. A synthesis edition freezes
+its own record, so both clocks coincide; a deterministic refresh carries the record forward.
 """
 
 import html
@@ -19,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from .continuity import interpretation_record
+from .continuity import CARRY_LIMIT, interpretation_record
 from .curve import (
     CHANGE,
     LEVEL,
@@ -131,6 +132,8 @@ NEXT_WORDS = {"synthesis": "analysis update", "close": "close snapshot", "refres
 # A page whose next scheduled update is this late says so in the reader's browser (no server change): publishes land a
 # few minutes after their checkpoint, so only a real miss (a failed run or a legitimate no-publish) crosses it.
 OVERDUE_GRACE = timedelta(minutes=15)
+# A carried watch's verdict. "unresolved" is not one: nothing was adjudicated.
+VERDICTS = ("strengthened", "weakened", "reversed")
 # Deterministic attention triggers, compressed to a short tag; the analyst's sentence is the body.
 TRIGGER_TAGS = (("Material twenty-session return spread versus ", "20-session spread vs "),
                 ("Daily close crossed up through its moving average", "Crossed above its 50DMA"),
@@ -293,15 +296,21 @@ def rate_display(value, unit):
 
 
 def formatted(row):
+    """One number style everywhere: `+0.53%`, `−5.30 pp`, `−6 bp`, `90.02 USD`. A percentage keeps no space
+    before its sign; a unit word keeps one. Negatives carry a true minus, as rates always have."""
     if row.get("value") is None:
         return NO_PRINT
-    value = row["value"]
-    if row["unit"] in RATE_UNITS:
-        return rate_display(value, row["unit"])
-    signed = row["unit"] in {"pp", "%"}
+    value, unit = row["value"], row["unit"]
+    if unit in RATE_UNITS:
+        return rate_display(value, unit)
+    signed = unit in {"pp", "%"}
     # A value that rounds to zero is shown as zero: no sign, no colour.
-    number = "0.00" if signed and round(value, 2) == 0 else f"{value:+.2f}" if signed else f"{value:.2f}"
-    return f"{number} {row['unit']}"
+    if signed and round(value, 2) == 0:
+        number = "0.00"
+    else:
+        sign = MINUS if value < 0 else "+" if signed else ""
+        number = f"{sign}{abs(value):.2f}"
+    return f"{number}{unit}" if unit == "%" else f"{number} {unit}"
 
 
 def absent_cell(text=NOT_APPLICABLE):
@@ -627,36 +636,6 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     equity = [r for r in facts if r["topic"] in history_symbols or r["frequency"] == "intraday"]
     treasuries = [r for r in facts if r["topic"].startswith("US ") and r["metric"] in RATE_METRICS]
     other_macro = [r for r in facts if r not in equity and r not in treasuries]
-
-    def current_or_daily(symbol):
-        return next((i for i in (f"{symbol}-intraday", f"{symbol}-daily") if i in catalog), None)
-
-    def figure_clock(row):
-        """A figure carries its own clock only when it is dated or trails the page's data clock."""
-        observed = row["observed_at"]
-        if "T" not in observed:
-            return compact_clock(observed)
-        behind = timestamp(actual_started_at) - timestamp(observed)
-        return compact_clock(observed) if behind > SHARED_CLOCK_TOLERANCE else ""
-
-    current_sectors = sorted((r for r in facts if r["frequency"] == "intraday" and r["topic"] in SECTORS),
-                             key=lambda r: abs(r["value"]), reverse=True)
-    # A stale curve's changes are not shown anywhere a figure could put them (R6).
-    curve_stale = (packet.get("curve") or {}).get("freshness") == "stale"
-    priority = [current_or_daily("SPY"), current_or_daily("QQQ"),
-                current_sectors[0]["id"] if current_sectors else None, current_or_daily("GLD"),
-                *([] if curve_stale else ["treasury-2y-change", "treasury-10y-change"])]
-    chips = [dict(catalog[i], display=formatted(catalog[i]), direction=direction(catalog[i]),
-                  metric_label=metric_label(catalog[i], session),
-                  observed_label=observed_label(catalog[i]["observed_at"]),
-                  observed_short=figure_clock(catalog[i]))
-             for i in dict.fromkeys(priority) if i and i in catalog][:6]
-    if not chips:
-        chips = [dict(row, metric_label=metric_label(row, session), observed_short=figure_clock(row))
-                 for row in facts if not (curve_stale and row["metric"] in (CHANGE, SPREAD_CHANGE))][:4]
-    # The page shows three figures: the first three of the same deterministic priority order
-    # (SPY, QQQ, then the leading current sector print when one exists, else GLD). No new ranking.
-    figures = chips[:3]
     # After a close whose daily bar is not yet published, the retained daily return is two
     # sessions old relative to the completed session and must not pose as today.
     daily_today = not packet.get("history_lag")
@@ -672,7 +651,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     metal_pairs = [f"{row['symbol']} vs {row['relative_label']}" for row in metal_rows if row["relative"]["id"]]
     yields = module["yields"]
 
-    # What matters next: watches with their frozen horizons, carried watches, attention, events.
+    # What matters next: new watches with their frozen horizons, then the carried watches continuity will keep.
     watches = []
     for w, horizon in zip(narrative["watches"], interpretation["horizons"]):
         expires = horizon.get("expires_at")
@@ -686,8 +665,6 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     carried_watches = []
     for watch in prior.get("watches", []) if available else []:
         update = updates.get(watch["id"])
-        if update is None and watch["lifecycle"] != "active":
-            continue  # a horizon that passed without reassessment is history, not a live item
         expires = watch["horizon"].get("expires_at")
         # A carried criterion renders at the values its author saw; only a reassessment adds new text.
         # Each creation-time value keeps the row's identity so its marker is labeled like any other, but
@@ -700,32 +677,76 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
             phrase=watch["horizon"].get("phrase", ""), lifecycle=watch["lifecycle"],
             expired=watch["lifecycle"] == "expired" or (bool(expires) and timestamp(expires) <= target),
             evaluability=watch["evaluability"],
-            assessment=update["assessment"] if update else "not reassessed",
+            assessment=update["assessment"] if update else "",
             reason=expand(update["reason"]) if update else "",
             evidence_ids=update["evidence_ids"] if update else watch["evidence_refs"],
             refs=(refs(update["evidence_ids"]) if update
                   else refs(watch["evidence_refs"], {**frozen, **creation}))))
+    # The live set is exactly what `continuity.edition_state` carries forward: new watches first, then the
+    # carried ones still active and not reversed, at most CARRY_LIMIT. The frozen prior list is already
+    # newest-first, so no ranking of our own. A verdict (strengthened, weakened, reversed) is adjudication and
+    # renders once, in What changed; a live carried watch shows only its question and horizon here. Everything
+    # else carried, expired or set aside without a verdict, is one collapsed count: audit, not attention.
+    live_carried = [c for c in carried_watches if c["lifecycle"] == "active" and c["assessment"] != "reversed"]
+    live_carried = live_carried[:max(0, CARRY_LIMIT - len(watches))]
+    verdicts = [c for c in carried_watches if c["assessment"] in VERDICTS]
+    retired_watches = [c for c in carried_watches if c not in live_carried and c not in verdicts]
+    # A live watch that was also adjudicated keeps its question here and its verdict in What changed.
+    live_carried = [dict(c, assessment="", reason="") if c["assessment"] in VERDICTS else c for c in live_carried]
+    events = [{**event, "scheduled_label": pacific_time(event["scheduled_at"], True),
+               "relation_label": event.get("session_relation", "").lower(), "refs": refs([event["id"]], catalog)}
+              for event in packet["events"][:4]]
+
+    # What changed: adjudication of the prior accepted state, frozen with the interpretation. Watch verdicts
+    # first, then carried relationships with a verdict, then deterministic changes the analyst interpreted. A
+    # lower-priority record that cites no current evidence beyond what a higher-priority bullet already
+    # cited is the same conclusion from the same measurements and is not shown again; a record that cites
+    # anything of its own stays. "Unresolved" is not a change and never renders here.
+    anchors = prior.get("anchors", {}) if available else {}
+    continuity = interpretation["continuity"]
+
+    def current(ids):
+        return {i for i in ids if ":" not in i}
+
+    ranked = [[dict(kind="watch", text=c["hypothesis"], assessment=c["assessment"], reason=c["reason"],
+                    evidence_ids=c["evidence_ids"], refs=c["refs"]) for c in verdicts],
+              [dict(kind="relationship", text=expand(r["statement"]), assessment=r["assessment"],
+                    reason=expand(r["reason"]), evidence_ids=r["evidence_ids"], refs=refs(r["evidence_ids"]))
+               for r in narrative.get("relationships", [])
+               if r["carried_id"] is not None and r["assessment"] in VERDICTS],
+              [dict(kind="change", text=expand(c["text"]), evidence_ids=c["evidence_ids"],
+                    refs=refs(c["evidence_ids"])) for c in narrative.get("changes", [])]]
+    since_entries, cited = [], set()
+    for tier in ranked:
+        kept = [entry for entry in tier if not (current(entry["evidence_ids"]) and
+                                                current(entry["evidence_ids"]) <= cited)]
+        since_entries += kept
+        cited |= {i for entry in kept for i in current(entry["evidence_ids"])}
+
+    # Flagged: a selected trigger earns its place only when its instrument is not already in the lead, in
+    # What changed, or in a live watch, by cited row or by name. The frozen selection is unchanged; a
+    # refresh reads the same frozen records, so the same flags show all day.
+    lead_records = [narrative["banner"], narrative["character"], *narrative["summary"], *since_entries,
+                    *watches, *live_carried]
+    if narrative.get("take"):
+        lead_records.append(narrative["take"])
+    covered_ids = {i for record in lead_records for i in record.get("evidence_ids", [])}
+    covered_topics = {row["topic"] for ident in covered_ids
+                      for row in [frozen.get(ident) or catalog.get(ident)] if row and row.get("topic")}
+    story = " ".join(str(record.get(key, "")) for record in lead_records
+                     for key in ("title", "text", "hypothesis", "condition", "confirmation", "contradiction"))
+
+    def covered(symbol):
+        names = [symbol, SECTOR_LABELS.get(symbol, ""), INSTRUMENT_LABELS.get(symbol, "")]
+        return symbol in covered_topics or any(
+            re.search(rf"\b{re.escape(name)}\b", story, re.IGNORECASE) for name in names if name)
+
     attention_why = {item["id"]: item["why"] for item in narrative.get("attention", [])}
     attention = [{**a, "why": attention_why.get(a["id"], ""), "trigger": trigger_tag(a["reason"]),
                   "display_symbol": (f"{SECTOR_LABELS[a['symbol']]} · {a['symbol']}"
                                      if a["symbol"] in SECTOR_LABELS else a["symbol"]),
                   "date_label": short_date(a.get("date")), "refs": refs(a["evidence_ids"])}
-                 for a in interpretation["attention"]]
-    events = [{**event, "scheduled_label": pacific_time(event["scheduled_at"], True),
-               "relation_label": event.get("session_relation", "").lower(), "refs": refs([event["id"]], catalog)}
-              for event in packet["events"][:4]]
-
-    # What changed: the analyst's interpretation of deterministic changed comparisons, frozen with it.
-    anchors = prior.get("anchors", {}) if available else {}
-    continuity = interpretation["continuity"]
-    since_entries = [dict(kind="change", text=expand(c["text"]), evidence_ids=c["evidence_ids"],
-                          refs=refs(c["evidence_ids"]))
-                     for c in narrative.get("changes", [])]
-    for r in narrative.get("relationships", []):
-        if r["carried_id"] is not None:
-            since_entries.append(dict(kind="relationship", text=expand(r["statement"]), assessment=r["assessment"],
-                                    reason=expand(r["reason"]), evidence_ids=r["evidence_ids"],
-                                    refs=refs(r["evidence_ids"])))
+                 for a in interpretation["attention"] if not covered(a["symbol"])]
     since_note = ""
     if available and not continuity["changed"]:
         # The note describes the interpretation's comparison, so on a refresh it is dated to that clock.
@@ -746,14 +767,16 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     # Market sections this edition could not fill. Cuttingboard is optional context, not market coverage,
     # so its absence is stated in Technical details rather than listed here.
     omitted = []
-    if not mega_rows and not narrative["sections"]["equities"] and not equity:
-        omitted.append("Equity structure")
-    if not yields and not module["curve"] and not other_macro and not narrative["sections"]["macro"]:
-        omitted.append("Macro & rates")
-    if not sector_rows:
-        omitted.append("Sector view")
+    rates_present = bool(yields or module["curve"] or other_macro or narrative["sections"]["macro"])
+    if not rates_present:
+        # Metals share the section; when they still render, only the rates half is missing.
+        omitted.append("Treasury rates" if metal_rows else "Macro & rates")
     if not metal_rows:
         omitted.append("Metals")
+    if not sector_rows:
+        omitted.append("Sector view")
+    if not mega_rows and not narrative["sections"]["equities"] and not equity:
+        omitted.append("Equity structure")
     limitations = [reader_limitation(item) for item in packet["coverage"]["limitations"]]
     if omitted:
         limitations.append("Not in this edition: " + ", ".join(omitted))
@@ -875,11 +898,11 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
         character=expand(narrative["character"]["text"]),
         character_ids=narrative["character"]["evidence_ids"],
         character_refs=refs(narrative["character"]["evidence_ids"]),
-        chips=chips, figures=figures,
         summary=[paragraph(p) for p in narrative["summary"]], take=take,
         since=dict(heading="What changed", label=since_label, entries=since_entries, note=since_note,
                    status=prior.get("status", "cold_start")),
-        next=dict(watches=watches, carried=carried_watches, attention=attention, events=events,
+        next=dict(watches=watches, carried=live_carried, retired=retired_watches, attention=attention,
+                  events=events,
                   paragraphs=[paragraph(p) for key in ("attention", "events") for p in narrative["sections"][key]]),
         equities=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["equities"]],
                       rows=mega_rows, change_label=mega_change, asof=mega_asof, proof=proof(mega_rows),
@@ -925,20 +948,13 @@ def markdown(view):
     lines += [f"- {clock['label']} · {esc(clock['text'])}" for clock in view["clocks"]]  # labels are constants
     if view["truth"]:
         lines += ["", f"> {esc(view['truth'])}"]
-    lines += ["", f"**INTERPRETATION — {view['banner']['label']}** · {esc(view['character'])} "
-              f"{refs(view['character_ids'])}", ""]
+    lines += ["", f"**INTERPRETATION** · {esc(view['character'])} {refs(view['character_ids'])}", ""]
     if view["banner"]["limitation"]:
         lines += [esc(view["banner"]["limitation"]), ""]
     for p in view["summary"]:
         lines += [para(p), ""]
     if view["take"]:
         lines += [f"**The take:** {esc(view['take']['text'])} {refs(view['take']['evidence_ids'])}", ""]
-    if view["figures"]:
-        lines += ["**OBSERVED SNAPSHOT**", "", "| Measure | Observation | As of |", "|---|---:|---|"]
-        for chip in view["figures"]:
-            lines.append(f"| {esc(chip['topic'])} · {esc(chip['metric_label'])} | {chip['display']} | "
-                         f"{esc(chip['observed_label'])} · {chip['status']} {refs([chip['id']])} |")
-        lines.append("")
     if view["coverage"]["missing_domains"]:
         lines += [f"Missing: {esc(' · '.join(view['coverage']['missing_domains']))}.", ""]
     since = view["since"]
@@ -947,7 +963,7 @@ def markdown(view):
         for item in since["entries"]:
             if item["kind"] == "change":
                 lines.append(f"- {esc(item['text'])} {refs(item['evidence_ids'])}")
-            else:
+            else:  # a verdict on a carried watch or relationship
                 lines.append(f"- **{item['assessment'].capitalize()}** — {esc(item['text'])} {esc(item['reason'])} "
                              f"{refs(item['evidence_ids'])}")
         if since["note"]:
@@ -964,8 +980,13 @@ def markdown(view):
                      f"{esc(w['confirmation'])}{changes_it} {refs(w['evidence_ids'])}")
     for c in nxt["carried"]:
         passed = " · horizon passed" if c["expired"] else ""
-        lines.append(f"- **FROM AN EARLIER READ · {c['assessment']} · {esc(c['phrase'])}{passed}** — "
+        status = f" · {c['assessment']}" if c["assessment"] else ""
+        lines.append(f"- **FROM AN EARLIER READ{status} · {esc(c['phrase'])}{passed}** — "
                      f"{esc(c['hypothesis'])} {esc(c['reason'])}")
+    if nxt["retired"]:
+        count = len(nxt["retired"])
+        lines.append(f"- Earlier watches · {count} ended without a verdict: "
+                     + " · ".join(f"{esc(c['hypothesis'])} {esc(c['reason'])}".strip() for c in nxt["retired"]))
     for a in nxt["attention"]:
         lines.append(f"- **{esc(a['display_symbol'])}** — {esc(a['why'] or a['reason'])} "
                      f"({esc(a['trigger'])} · {esc(a['date_label'])}) {refs(a['evidence_ids'])}")
@@ -973,26 +994,9 @@ def markdown(view):
         lines.append(f"- **Event** — {esc(e['title'])} · {esc(e['scheduled_label'])} · {esc(e['relation_label'])} "
                      f"{refs([e['id']])}")
     lines.append("")
-    eq = view["equities"]
-    if eq["paragraphs"] or eq["rows"]:
-        lines += ["## Equity structure", ""]
-        for p in eq["paragraphs"]:
-            lines += [para(p), ""]
-        if eq["rows"]:
-            asof = f" · {esc(eq['asof'])}" if eq["asof"] else ""
-            lines += [f"**MEGA-CAP SNAPSHOT** · {esc(eq['spread_label'])} · {esc(eq['change_label'])}{asof}", "",
-                      "| Symbol | Change | 20D | vs QQQ | vs 50DMA |",
-                      "|---|---:|---:|---:|---:|"]
-            for row in eq["rows"]:
-                lines.append(f"| {row['symbol']} | {row['today']['display']} | {row['r20']['display']} | "
-                             f"{row['relative']['display']} | {row['dma']['display']} |")
-            lines += ["", LEDGER_NOTE, ""]
-        for symbol, state in eq["lookback"].items():
-            lines.append(f"{esc(symbol)} 20-session return unavailable: {state['sessions']} sessions of history")
-        if eq["lookback"]:
-            lines.append("")
     mac = view["macro"]
-    if mac["paragraphs"] or mac["curve"] or mac["facts"]:
+    cross = view["cross_asset"]
+    if mac["paragraphs"] or mac["curve"] or mac["facts"] or cross["rows"]:
         lines += ["## Macro & rates", ""]
         if mac["curve"]:
             curve = mac["curve"]
@@ -1026,6 +1030,18 @@ def markdown(view):
                 lines.append(f"| {esc(row['measure'])} | {row['display']} | "
                              f"{row['observed_label']} · {row['status']} |")
             lines += ["", LEDGER_NOTE, ""]
+        if cross["rows"]:
+            asof = f" · {esc(cross['asof'])}" if cross["asof"] else ""
+            caption = " · ".join(filter(None, (esc(cross["spread_label"]), esc(cross["change_label"]))))
+            lines += [f"**METALS** · {caption}{asof}", "",
+                      "| Instrument | Change | 20D | Spread | vs 50DMA |",
+                      "|---|---:|---:|---:|---:|"]
+            for row in cross["rows"]:
+                spread = (f"{row['relative']['display']} vs {row['relative_label']}" if row["relative"]["id"]
+                          else row["relative"]["display"])
+                lines.append(f"| {esc(row['label'])} ({row['symbol']}) | {row['today']['display']} | "
+                             f"{row['r20']['display']} | {spread} | {row['dma']['display']} |")
+            lines += ["", LEDGER_NOTE, ""]
     sec = view["sectors"]
     if sec["rows"]:
         asof = f" · {esc(sec['asof'])}" if sec["asof"] else ""
@@ -1036,19 +1052,24 @@ def markdown(view):
             lines.append(f"| {esc(row['label'])} ({row['symbol']}) | {row['relative']['display']} | "
                          f"{row['r20']['display']} | {row['today']['display']} | {row['dma']['display']} |")
         lines += ["", LEDGER_NOTE, ""]
-    cross = view["cross_asset"]
-    if cross["rows"]:
-        asof = f" · {esc(cross['asof'])}" if cross["asof"] else ""
-        lines += ["## Metals", "", " · ".join(filter(None, (esc(cross["spread_label"]), esc(cross["change_label"]))))
-                  + asof, "",
-                  "| Instrument | Change | 20D | Spread | vs 50DMA |",
-                  "|---|---:|---:|---:|---:|"]
-        for row in cross["rows"]:
-            spread = (f"{row['relative']['display']} vs {row['relative_label']}" if row["relative"]["id"]
-                      else row["relative"]["display"])
-            lines.append(f"| {esc(row['label'])} ({row['symbol']}) | {row['today']['display']} | "
-                         f"{row['r20']['display']} | {spread} | {row['dma']['display']} |")
-        lines += ["", LEDGER_NOTE, ""]
+    eq = view["equities"]
+    if eq["paragraphs"] or eq["rows"]:
+        lines += ["## Equity structure", ""]
+        for p in eq["paragraphs"]:
+            lines += [para(p), ""]
+        if eq["rows"]:
+            asof = f" · {esc(eq['asof'])}" if eq["asof"] else ""
+            lines += [f"**MEGA-CAP SNAPSHOT** · {esc(eq['spread_label'])} · {esc(eq['change_label'])}{asof}", "",
+                      "| Symbol | Change | 20D | vs QQQ | vs 50DMA |",
+                      "|---|---:|---:|---:|---:|"]
+            for row in eq["rows"]:
+                lines.append(f"| {row['symbol']} | {row['today']['display']} | {row['r20']['display']} | "
+                             f"{row['relative']['display']} | {row['dma']['display']} |")
+            lines += ["", LEDGER_NOTE, ""]
+        for symbol, state in eq["lookback"].items():
+            lines.append(f"{esc(symbol)} 20-session return unavailable: {state['sessions']} sessions of history")
+        if eq["lookback"]:
+            lines.append("")
     cb = view["cuttingboard"]
     if view["cuttingboard_section"]["visible"]:
         lines += ["## Cuttingboard context", ""]

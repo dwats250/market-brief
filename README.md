@@ -68,7 +68,7 @@ The latest rendered brief is written to `output/latest.html`. `python -m market_
 
 Each run under `runs/<session>/<mode>-<checkpoint>-<time>-<id>/` records the evidence and metadata needed to explain what happened. Synthesis runs additionally contain `analyst_context.json` and `narrative.json`; deterministic updates record the carried interpretation instead of generating another one. Accepted production continuity lives in `runs/continuity/bundle.json` and is restored from/uploaded to GitHub Actions artifacts.
 
-Rendered fictional examples live in `examples/editions/`.
+Rendered fictional examples live in `examples/editions/`. They are replays of the fixture at each checkpoint's clock (13:00, 13:31, 14:01, 17:01 and 20:03 UTC on 2026-09-08), each in a fresh run root, with SPY −0.53%, QQQ −0.61%, XLI +0.40% and GLD −0.20% prints injected at the checkpoint's clock (19:59:58 for the close) on every edition but the premarket, and `--full-packet` for the opening structure; the run-id suffix is the only thing that changes between regenerations.
 
 ## Documentation
 

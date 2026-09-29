@@ -73,7 +73,7 @@ def section(page, heading):
 
 def surfaces(packet, value=None):
     """Every reader-facing label a current print receives, by path: § markers, table proofs, evidence
-    ledger, snapshot figures (HTML) and chips (Markdown), the measure column, and the table captions."""
+    ledger, the measure column, and the table captions (HTML and Markdown)."""
     value = citing_prints(value)
     view = presentation(packet, value)
     md, page = render(packet, value)
@@ -83,32 +83,26 @@ def surfaces(packet, value=None):
     proofs = [r["label"] for key in ("sectors", "cross_asset") for r in view[key]["proof"]
               if r["id"].endswith("-intraday")]
     ledger = [r["metric_label"] for r in view["evidence"] if r["id"].endswith("-intraday")]
-    figures = [f["metric_label"] for f in view["chips"] if f["id"].endswith("-intraday")]
     measures = [measure_label(row, session) for row in prints]
     captions = [view["sectors"]["change_label"], view["cross_asset"]["change_label"]]
-    html_figures = re.findall(r'<div class="figure"><span class="eyebrow">[^<]*? · ([^<]*)</span>', page)
-    # The two tables that hold current prints here: sectors (XLI) and metals (GLD).
+    # The two tables that hold current prints here: sectors (XLI) and metals (GLD, inside Macro & rates).
     html_captions = re.findall(r'<div class="caption">(?:[^<]*strongest to weakest'
-                               r'|20-session return spread, [A-Z]+ vs [^<]*)<span>([^<]*)</span>', page)
-    md_chips = [line.split(" | ", 1)[0].split(" · ", 1)[1] for line in md.splitlines()
-                if re.match(r"\| (SPY|QQQ|XLI|GLD) · ", line)]
+                               r'|Metals)<span>([^<]*)</span>', page)
     md_captions = [line for line in md.splitlines()
-                   if "strongest to weakest" in line or re.match(r"20-session return spread, [A-Z]+ vs ", line)]
-    return dict(marker=marker, proofs=proofs, ledger=ledger, figures=figures, measures=measures,
-                captions=captions, html_figures=html_figures, html_captions=html_captions, md_chips=md_chips,
-                md_captions=md_captions, page=page, md=md, view=view)
+                   if "strongest to weakest" in line or line.startswith("**METALS** · ")]
+    return dict(marker=marker, proofs=proofs, ledger=ledger, measures=measures, captions=captions,
+                html_captions=html_captions, md_captions=md_captions, page=page, md=md, view=view)
 
 
 def assert_every_path_reads(found, label):
-    for path in ("marker", "proofs", "ledger", "figures", "measures", "html_figures", "md_chips"):
+    for path in ("marker", "proofs", "ledger", "measures"):
         assert found[path], path
         assert all(item.endswith(label) for item in found[path]), (path, found[path])
     for path in ("captions", "html_captions", "md_captions"):
         assert found[path] and all(label in item for item in found[path]), (path, found[path])
     for other in PHASE_LABELS:
         if other != label:
-            for path in ("marker", "proofs", "ledger", "figures", "measures", "captions", "html_figures",
-                         "html_captions", "md_chips", "md_captions"):
+            for path in ("marker", "proofs", "ledger", "measures", "captions", "html_captions", "md_captions"):
                 assert not any(other in item for item in found[path]), (path, other)
             assert other not in found["page"] and other not in found["md"], other
     for retired in RETIRED:
@@ -143,10 +137,9 @@ def test_c_a_provisional_session_ending_print_reads_near_close():
     assert {r["status"] for r in packet["observations"] if r["frequency"] == "intraday"} == {"PROVISIONAL"}
     found = surfaces(packet)
     assert_every_path_reads(found, NEAR_CLOSE_LABEL)
-    # The separate small provisional note stays where it was already used.
-    figures = found["page"].split('<div class="figures">', 1)[1].split("</div></div>", 1)[0]
-    assert "<small>provisional</small>" in figures or "· provisional</small>" in figures
+    # The provisional note lives in the table captions, the one place a current print's status is named.
     assert found["view"]["sectors"]["change_label"] == f"{NEAR_CLOSE_LABEL} · provisional"
+    assert all("· provisional" in caption for caption in found["html_captions"])
     assert "not official closing bars" in found["page"]
 
 
@@ -251,10 +244,10 @@ def test_d2_prior_snapshot_refs_are_labeled_by_their_own_clock(day, monkeypatch)
     assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M") == 0    # prints at 6:31 AM PT, inside the session
     assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", mutate=cite_anchors) == 0
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
-    expected = [(f"SPY · {INTRADAY_LABEL}", "+0.21 %", "7:01 AM PT"),
-                (f"SPY · {PREMARKET_LABEL}", "-0.53 %", "6:00 AM PT"),
-                (f"SPY · {INTRADAY_LABEL}", "+0.21 %", "7:01 AM PT"),
-                (f"SPY · {INTRADAY_LABEL}", "-0.53 %", "6:31 AM PT")]
+    expected = [(f"SPY · {INTRADAY_LABEL}", "+0.21%", "7:01 AM PT"),
+                (f"SPY · {PREMARKET_LABEL}", "−0.53%", "6:00 AM PT"),
+                (f"SPY · {INTRADAY_LABEL}", "+0.21%", "7:01 AM PT"),
+                (f"SPY · {INTRADAY_LABEL}", "−0.53%", "6:31 AM PT")]
     for checkpoint in ("OPEN_30M", "HOURLY_1300"):
         page = day.page(checkpoint)
         since = page.split('<section class="since">', 1)[1].split("</section>", 1)[0]
@@ -317,8 +310,8 @@ def test_d2_carried_watch_values_keep_their_own_phase_through_a_provisional_clos
     assert evidence_catalog(close)["QQQ-intraday"]["status"] == "PROVISIONAL"
     for checkpoint in ("HOURLY_1300", "CLOSE_1M"):
         page = day.page(checkpoint)
-        watch = page.split("QQQ holds its -0.61 % premarket move", 1)[1].split("</details>", 1)[0]
-        assert markers(watch) == [(f"QQQ · {PREMARKET_LABEL}", "-0.61 %", "6:00 AM PT")], checkpoint
+        watch = page.split("QQQ holds its −0.61% premarket move", 1)[1].split("</details>", 1)[0]
+        assert markers(watch) == [(f"QQQ · {PREMARKET_LABEL}", "−0.61%", "6:00 AM PT")], checkpoint
 
 
 def test_d3_a_table_whose_prints_span_phases_reads_latest_trade():
@@ -657,9 +650,9 @@ def test_n_a_frozen_availability_claim_never_outlives_its_edition(day, monkeypat
     evidence = json.loads((day.folder("HOURLY_1300") / "evidence.json").read_text())
     qqq = evidence_catalog(evidence)["QQQ-intraday"]
     assert qqq["status"] == "AVAILABLE"
-    assert '<span class="eyebrow">QQQ · Intraday vs prior close</span><strong class="direction-negative">-0.61 %' \
-        in refresh
-    assert "| QQQ · Intraday vs prior close | -0.61 % |" in refresh_md
+    assert ('<div class="ledger" id="evidence-QQQ-intraday"><span>Intraday vs prior close</span>'
+            '<span class="value">−0.61%</span>') in refresh
+    assert "**QQQ-intraday** · QQQ · −0.61% ·" in refresh_md
     # No renderer-owned current surface says QQQ (or current prints) is unavailable.
     assert "current prints unavailable" not in refresh.split('<details class="drawer"', 1)[0]
     assert not any("QQQ" in item for item in coverage_items(refresh))

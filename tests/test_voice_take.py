@@ -53,8 +53,9 @@ TAKE = ("The tension is in the curve and metals, not in growth's 20-session lead
         "{{QQQ-spread20}}.")
 TAKE_IDS = ["treasury-2y-change", "treasury-10y-change", "GDX-spread20", "QQQ-spread20"]
 MISMATCH = "take text and evidence must be both present or both empty"
-# The template's <style> block after the Rates & Reading Pass (R3-R5, R9); The Take adds no CSS of its own.
-STYLE_SHA256 = "c6a309463cf7e507cecd38efa5f43a303f9047de33f460e85cab6e64a1b76443"
+# The template's <style> block after the editorial compression pass (no pill, no figure strip, no-wrap numbers,
+# flexible tables up to 767 px, the retired-watch drawer); The Take adds no CSS of its own.
+STYLE_SHA256 = "94d9548b11edce997715683b047d5c7d5747ded2c1585ac0c2a6d10e1b39ec06"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):
@@ -350,10 +351,10 @@ def test_a_rejected_take_is_one_paid_call_and_no_retry():
 # --- rendering -----------------------------------------------------------------------------------------
 
 def read_block(page):
-    return page.split('<div class="read">', 1)[1].split('<div class="figures">', 1)[0]
+    return page.split('<div class="read">', 1)[1].split("</div>\n", 1)[0] + "</div>"
 
 
-def test_the_take_renders_after_the_read_and_before_the_figures():
+def test_the_take_renders_last_in_the_read():
     packet, value = fixture_packet(), with_take()
     view = presentation(packet, value)
     assert view["take"]["text"] == ("The tension is in the curve and metals, not in growth's 20-session lead over "
@@ -376,7 +377,9 @@ def test_the_take_renders_after_the_read_and_before_the_figures():
                             "lead over SPY, which stands at +1.87 pp. [evidence](#evidence-treasury-2y-change) "
                             "[evidence](#evidence-treasury-10y-change) [evidence](#evidence-GDX-spread20) "
                             "[evidence](#evidence-QQQ-spread20)")
-    assert lines[index - 1] == "" and lines[index + 1] == "" and lines[index + 2] == "**OBSERVED SNAPSHOT**"
+    # The fixture has no current prints, so the coverage note is the next block; nothing interpretive follows.
+    assert lines[index - 1] == "" and lines[index + 1] == ""
+    assert lines[index + 2] == "Missing: current prints unavailable."
     assert lines[index - 2].startswith(view["summary"][-1]["text"][:40])
 
 
@@ -391,7 +394,7 @@ def test_an_empty_or_missing_take_emits_nothing(empty):
     assert "The take" not in md and "The take" not in page
     # Byte-identical to a page whose narrative never had a take: no element, label, or stray blank line.
     assert (md, page) == render(packet, legacy_v1())
-    assert "\n\n\n" not in md.split("**OBSERVED SNAPSHOT**", 1)[0]
+    assert "\n\n\n" not in md.split("\n## ", 1)[0]  # the lead, before the first section
 
 
 def test_the_template_adds_no_css():
@@ -471,12 +474,12 @@ def test_a_carried_take_keeps_the_values_and_clock_its_analyst_saw(monkeypatch, 
     structure, refresh = day.page("OPEN_30M"), day.page("HOURLY_1300")
     for page in (structure, refresh):
         line = take_line(page)
-        assert "SPY at -0.53 % is a rates story until tech confirms it." in line
-        assert "+0.80 %" not in line
+        assert "SPY at −0.53% is a rates story until tech confirms it." in line
+        assert "+0.80%" not in line
         marker = re.search(r'href="#evidence-SPY-intraday">([^<]*)</a><b>([^<]*)</b><small>([^<]*)</small>', line)
-        assert marker.groups() == ("SPY · Intraday vs prior close", "-0.53 %", "7:01 AM PT")
+        assert marker.groups() == ("SPY · Intraday vs prior close", "−0.53%", "7:01 AM PT")
     ledger = refresh.split('id="evidence-SPY-intraday"', 1)[1].split("</div>", 1)[0]
-    assert '<span class="value">+0.80 %</span>' in ledger
+    assert '<span class="value">+0.80%</span>' in ledger
     assert interpretation_fragments(refresh) == interpretation_fragments(structure)
     assert "<b>The take:</b>" in interpretation_fragments(refresh)[0]
     frozen = day.bundle()["interpretation"]
@@ -686,8 +689,10 @@ PROMPT = (ROOT / "prompts/synthesis.md").read_text()
 def test_prompt_is_v0_3_within_its_byte_budget():
     assert PROMPT.splitlines()[0] == "# Market Brief synthesis v0.3"
     size = len(PROMPT.encode())
-    # v0.3 plus the rates rules and curve-slope labels of the Rates & Reading Pass (R11, +868 bytes).
-    assert size < 10200
+    # v0.3 plus the rates rules of the Rates & Reading Pass (R11, +868 bytes) and the editorial compression
+    # pass's role separation and deduplication rules (+829 bytes). 11,000 is a ceiling, not a target (owner
+    # ruling D2, 2026-09-27): it is not raised again to keep redundant editorial prose.
+    assert size < 11000
 
 
 def test_the_voice_leads_the_prompt():

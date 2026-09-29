@@ -178,9 +178,11 @@ def test_what_changed_is_a_real_section_and_metals_is_named_plainly(tmp_path, mo
     assert page.index('<section class="since">') < page.index('<section class="next">')
     assert ".since h2" not in style()  # the standard heading, no override
     md, page = render(fixture_packet(), narrative())
-    assert "<h2>Metals</h2>" in page and "<h2>Cross-asset structure</h2>" not in page
-    assert "Metals structure" not in page and "METALS STRUCTURE" not in md and "\n## Metals\n" in md
-    assert '<h2>Metals</h2><div class="caption">20-session return spread, ' in page
+    # Metals are a captioned table inside Macro & rates, named plainly, never a section of their own.
+    assert "<h2>Metals</h2>" not in page and "<h2>Cross-asset structure</h2>" not in page
+    assert "Metals structure" not in page and "METALS STRUCTURE" not in md and "\n## Metals\n" not in md
+    macro = page.split("<h2>Macro &amp; rates</h2>", 1)[1].split("</section>", 1)[0]
+    assert '<div class="caption">Metals<span>20-session return spread, ' in macro
     assert "Energy" not in re.findall(r"<h2>([^<]*)</h2>", page)
 
 
@@ -240,7 +242,7 @@ def test_the_guide_is_collapsed_above_sources_and_leads_with_the_latest_move():
     md, page = render(rates_packet(), narrative())
     assert page.count('<details class="drawer guide">') == 1  # no `open`: collapsed by default
     assert page.index('<details class="drawer guide">') < page.index("<h2>Sources &amp; coverage</h2>")
-    assert page.index("<h2>Metals</h2>") < page.index('<details class="drawer guide">')
+    assert page.index("<h2>Equity structure</h2>") < page.index('<details class="drawer guide">')
     body = guide(page)
     assert body.startswith("<summary>How to read this brief</summary><dl><dt>Bear steepener</dt><dd>The latest "
                            "curve move. Long-end yields rose more than the front end.</dd><dt>2s10s</dt>")

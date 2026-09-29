@@ -17,15 +17,13 @@ not filler. Avoid repeated summaries of the same moves in multiple sections.
 | Order | Section | Content and limits |
 |---|---|---|
 | A | Header | Masthead with the date; a status line only when not LIVE (`SAMPLE · Premarket edition`); three clocks: `Prices` (latest table print or `prior close <date>`), `Analysis` (`<time> · premarket` / `opening structure`), `Next` (`<time> · price refresh` / `analysis update` / `close snapshot`, or `<date> · <time> · premarket analysis`), or one `Prices & analysis` line when a synthesis's two clocks coincide; sample or commissioning truth stated once |
-| B | Headline, character, executive read | One headline claim; INTERPRETATION label with the qualitative state and the session character; one or two short paragraphs; then "The take:" in one line when the analyst committed to one |
-| C | Compact snapshot | Up to six exact fact chips with their clocks; missing domains in plain language |
-| D | What changed | A section captioned by its anchors ("vs the previous close · date", "vs premarket and the 6:31 AM PT refresh"), ending on a carried page at its analysis ("· through the 7:01 AM PT analysis"): analyst-interpreted `changed` comparisons and carried relationship assessments; a plain note when nothing comparable changed or continuity is unavailable |
-| E | What matters next | Watches with natural horizons ("Into the close…", "At the next update…"), carried watches with their latest assessment, up to three attention items, today's and next-session events |
-| F | Equity structure | Interpretation first, then the mega-cap table (dated change, 20D, vs QQQ · 20s, vs 50DMA) |
-| G | Macro & rates | The rates module first: "U.S. Treasury par curve · <date> · official daily observation" (or "latest official daily observation"), 2Y/5Y/10Y/30Y with yield (`5.18%`) and paired daily change (whole bp, neutral colour), 2s10s and 5s30s lines ("31 bp · 5 bp steeper"), the named curve move in bold with its sentence, an inline chart of the observed tenors with the prior entry dashed, notes (release-after-curve, stale, missing spread); then the analyst's paragraphs; then the proof |
-| H | Sector view | Sector names first, tickers muted, ranked by the labeled 20-session spread vs SPY strongest to weakest; a separate dated change column; missing ranks last |
-| I | Metals | One row per metal instrument with its named benchmark |
-| J | Cuttingboard context | Optional literal quotation; omitted when absent |
+| B | Headline, character, executive read | One headline claim (the condition); the session character (the latest tape) with no visible label — the qualitative state is recorded, not displayed; one or two short paragraphs (the mechanism); then "The take:" in one line (the stance and what would break it) when the analyst committed to one; missing domains in plain language. No figure strip: the tables and their captions are the current-print surfaces |
+| C | What changed | A section captioned by its anchors ("vs the previous close · date", "vs premarket and the 6:31 AM PT refresh"), ending on a carried page at its analysis ("· through the 7:01 AM PT analysis"). Adjudication of the prior accepted state, once: verdicts on carried watches (strengthened / weakened / reversed), then verdicts on carried relationships, then analyst-interpreted `changed` comparisons; a lower-priority record that cites no current evidence beyond what an earlier bullet cited is the same conclusion twice and is not shown; "unresolved" never renders here; a plain note when nothing comparable changed or continuity is unavailable |
+| D | What matters next | The watches continuity will carry forward, at most three: new watches with natural horizons ("Into the close…", "By the 7:00 AM PT update") and their confirm / changes-it criteria, then still-active carried watches as questions with their horizon (never their verdict, which What changed holds); every other carried watch (expired or set aside without a verdict, reassessed or not) in one collapsed "Earlier watches" drawer; attention items only for instruments the lead, What changed and the live watches do not already cover (empty is normal); today's and next-session events |
+| E | Macro & rates | The rates module first: "U.S. Treasury par curve · <date> · official daily observation" (or "latest official daily observation"), 2Y/5Y/10Y/30Y with yield (`5.18%`) and paired daily change (whole bp, neutral colour), 2s10s and 5s30s lines ("31 bp · 5 bp steeper"), the named curve move in bold with its sentence, an inline chart of the observed tenors with the prior entry dashed, notes (release-after-curve, stale, missing spread); then the analyst's paragraph (why the move matters; gold and miners when they move the story); then the proof; then the Metals table under its own caption and its own clock (one row per metal instrument with its named benchmark, spread emphasised) |
+| F | Sector view | Sector names first, tickers muted, ranked by the labeled 20-session spread vs SPY strongest to weakest; a separate dated change column; missing ranks last |
+| G | Equity structure | Interpretation first, then the mega-cap table (dated change, 20D, vs QQQ · 20s, vs 50DMA) |
+| H | Cuttingboard context | Optional literal quotation; omitted when absent |
 | Guide | How to read this brief (collapsed, HTML only) | The latest curve move, 2s10s, 5s30s, bull and bear, the par curve, the three clocks, § evidence, all curve moves |
 | Footer | Sources & coverage (collapsed) | Basis, limitations, source ledger, evidence ledger, technical details including continuity status |
 
@@ -40,6 +38,13 @@ what it measures: "Prices" (the latest table print), "Analysis" (the interpretat
 overdue in the reader's browser). Each row keeps its own observation clock. The "What changed" heading
 carries a sub-caption naming the anchors and, on a carried page, the analysis it runs through.
 
+One idea has one home. The lead claims it (headline: condition; character: latest tape; summary: mechanism;
+take: stance and breaker), one evidence section proves it, one watch tests it, and What changed carries every
+verdict on an earlier hypothesis exactly once. The order is fixed and top-down: the macro backdrop with metals,
+then breadth, then the names. Numbers share one style everywhere: `+0.53%`, `−5.30 pp`, `−6 bp`, `90.02 USD`
+(no space before a percent sign, a true minus for every negative); on phones numeric cells never wrap and the
+tables flex to the width.
+
 ## Narrative record
 
 Schema name: `market-brief.narrative.v2` (v1 plus `take`). Besides `schema_version` and `mode`, the narrative
@@ -47,8 +52,9 @@ holds only analyst content; run identity, evidence hash, model identity and rout
 are caller-owned provenance in `metadata.json`. Fields:
 
 - `banner`: `label`, `class=INTERPRETATION`, `evidence_ids`, `limitation`.
-  Allowed qualitative labels: RISK-ON, RISK-OFF, MIXED, INDETERMINATE. Optional
-  improving/deteriorating modifier only with comparable prior evidence.
+  Allowed qualitative labels: RISK-ON, RISK-OFF, MIXED, INDETERMINATE, recorded in every
+  continuity record and never displayed on the page. Optional improving/deteriorating
+  modifier only with comparable prior evidence.
 - `summary`: up to two paragraph records.
 - `take`: the one interpretation the analyst could turn out to be wrong about: `text` (one short sentence,
   160-character target), class INTERPRETATION, up to four current evidence IDs. Empty (no text, no evidence)
@@ -62,13 +68,15 @@ are caller-owned provenance in `metadata.json`. Fields:
 - `attention`: up to three items, each an admitted attention trigger `id` with a short `why`;
   the selected IDs are derived from these items, and no invented triggers.
 - `watches`: condition, observable confirmation, contradiction, horizon,
-  evidence IDs. Class is always WATCH.
+  evidence IDs. Class is always WATCH. The criteria must be observable by the horizon (from
+  premarket, NEXT_BRIEF is the opening-structure update thirty minutes after the open).
 - `character`: one short paragraph on the session's character with current evidence IDs;
   after a substantiated close it becomes the closing character.
 - `relationships`: up to three; `carried_id` null with assessment `new`, or an exact carried
   ID with strengthened / weakened / reversed / unresolved.
 - `watch_updates`: assessments of carried watches by exact ID; only `unresolved` is allowed
-  when the watch is not `assessable` on current comparisons.
+  when the watch is not `assessable` on current comparisons. A verdict is the change: the same
+  move is not written again as a `changes` or `relationships` record.
 - `changes`: up to three, each naming a deterministic `changed` comparison ID.
 
 Prior facts are cited as `anchor:evidence-id` (`previous_close:`, `premarket:`, `latest:`) and
@@ -107,8 +115,8 @@ links should sit near claims with fuller detail in a compact end section.
 
 In the first implementation, HTML uses inline CSS, system fonts, no external
 assets or JavaScript, semantic headings/tables, print styling, and labels that do
-not rely on color. Check desktop and 390px width for clipped numbers and wide
-tables. The seed's Markdown example demonstrates tone and hierarchy; no HTML
+not rely on color. Check desktop and 390, 360 and 320 px widths for clipped or wrapped numbers and
+wide tables. The seed's Markdown example demonstrates tone and hierarchy; no HTML
 renderer or visual implementation is included tonight.
 
 ## Sharing later

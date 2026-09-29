@@ -228,6 +228,20 @@ def test_the_next_session_is_not_suppressed_by_this_sessions_attempt(actions):
     assert attempt(WED, "PREMARKET") in actions.names(wednesday)
 
 
+def test_a_weekend_manual_run_never_consumes_the_next_sessions_checkpoint(actions):
+    """A manual production dispatch on a non-trading day (the workflow's default inputs) is keyed by its own calendar
+    date, as its page and bundle are, never by the session the exchange calendar would move it to."""
+    saturday, monday = "2026-09-12", "2026-09-14"
+    weekend = actions.run(f"{saturday}T13:01:00+00:00", "PREMARKET", intraday=False, command="premarket",
+                          last_history_date="2026-09-11")
+    record = actions.metadata(weekend, "PREMARKET", saturday)["attempt_record"]
+    assert record == f"runs/attempts/{saturday}-PREMARKET.json"
+    assert attempt(saturday, "PREMARKET") in actions.names(weekend)
+    actions.run(f"{monday}T13:01:00+00:00", "PREMARKET", intraday=False, last_history_date="2026-09-11")
+    assert actions.requests == ["PREMARKET", "PREMARKET"]  # Monday's premarket still pays, once
+    assert attempt(monday, "PREMARKET") in [a["name"] for a in actions.artifacts]
+
+
 # --- a rejected generation is accounted as the paid call it was ---------------------------------------------
 
 @pytest.mark.parametrize("verdict", ["reject", "timeout"])
@@ -330,7 +344,8 @@ def test_the_attempt_hook_runs_once_immediately_before_the_first_request():
         return served(narrative())
     synthesize_openrouter(fixture_packet(), api_key="k", requester=requester,
                           on_request=lambda a: events.append(("hook", a["requested_model"], a["attempts"])))
-    assert events == [("hook", OPENROUTER_MODEL, 0), ("request", OPENROUTER_MODEL)]
+    # The hook describes the request about to be sent, so metadata taken from it never says zero requests.
+    assert events == [("hook", OPENROUTER_MODEL, 1), ("request", OPENROUTER_MODEL)]
 
 
 def test_no_hook_and_no_attempt_when_nothing_is_sent(monkeypatch):
@@ -395,10 +410,14 @@ def test_only_a_record_uploaded_by_this_workflow_on_the_branch_counts(monkeypatc
             return {"artifacts": artifacts}
         monkeypatch.setattr(cli, "_gh_json", gh_json)
 
-    def artifact(ident, run, branch="main", named=name, expired=False):
-        return dict(id=ident, name=named, expired=expired, workflow_run=dict(id=run, head_branch=branch))
+    def artifact(ident, run, branch="main", named=name, expired=False, head_repository=1):
+        return dict(id=ident, name=named, expired=expired, workflow_run=dict(
+            id=run, head_branch=branch, repository_id=1, head_repository_id=head_repository))
     args = SimpleNamespace(repository=None, branch="main")
-    serve([artifact(1, 7, branch="feature"), artifact(2, 8), artifact(3, 7, named=name + "-X"), "junk"])
+    # Another branch, another workflow, another name, and a fork's pull_request run of its own edit of
+    # schedule.yml from a branch it named main: none of them is this repository's attempt.
+    serve([artifact(1, 7, branch="feature"), artifact(2, 8), artifact(3, 7, named=name + "-X"), "junk",
+           artifact(5, 7, head_repository=2)])
     assert cli.earlier_attempt(args, TUE, "PREMARKET") is None
     assert listed == [f"repos/{REPOSITORY}/actions/artifacts?name={name}&per_page=100"]
     # A cancelled run's record and an expired record still prove the attempt: the upload is the proof.

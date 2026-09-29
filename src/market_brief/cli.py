@@ -188,8 +188,9 @@ def record_attempt(root, session_date, checkpoint, run_id, attempt):
 def earlier_attempt(args, session_date, checkpoint):
     """Where this session's paid synthesis of `checkpoint` was already attempted, or None.
 
-    This workspace's own record first; then, on Actions, a record uploaded by a run of the schedule workflow on the
-    expected branch, whatever that run concluded (the upload proves the attempt, not its acceptance). The workflow's
+    This workspace's own record first; then, on Actions, a record uploaded by this repository's own run of the
+    schedule workflow on the expected branch, whatever that run concluded (the upload proves the attempt, not its
+    acceptance). The workflow's
     one concurrency group starts no run before the previous one has finished uploading. Raises when the uploaded
     records cannot be listed, so the caller never pays on an unanswered question."""
     local = attempt_path(RUN_ROOT, session_date, checkpoint)
@@ -209,6 +210,8 @@ def earlier_attempt(args, session_date, checkpoint):
         run = artifact.get("workflow_run")
         if not isinstance(run, dict) or run.get("head_branch") != getattr(args, "branch", "main"):
             continue
+        if run.get("head_repository_id") != run.get("repository_id"):
+            continue  # a fork's pull_request run can run its own edit of schedule.yml; only this repository's count
         details = _gh_json([f"repos/{repository}/actions/runs/{run['id']}"])
         if isinstance(details, dict) and details.get("path") == WORKFLOW_PATH:
             return f"artifact {artifact.get('id')} from run {run['id']}"
@@ -344,7 +347,10 @@ def run(args):
                     # attempt is recorded first, so no later runner pays for this checkpoint again whatever the
                     # response turns out to be; if the record cannot be written, nothing is sent.
                     if production:
-                        record = record_attempt(RUN_ROOT, checkpoint_data["session_date"], checkpoint, folder.name,
+                        # Keyed like every acceptance record (page, bundle origin): the run's own exchange-calendar
+                        # date. On a trading day that is the session `scheduled()` asks about; a run on a weekend or
+                        # holiday never stands for the next session's checkpoint.
+                        record = record_attempt(RUN_ROOT, packet["run"]["session"]["date"], checkpoint, folder.name,
                                                 attempt)
                         metadata["attempt_record"] = str(record.relative_to(RUN_ROOT))
                     metadata["synthesis"]["calls"] = 1

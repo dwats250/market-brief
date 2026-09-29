@@ -246,8 +246,13 @@ either one means SKIP, and a listing it cannot read means no request and a faile
 concurrency group starts no run before the previous one has finished, uploads included, so a later runner
 inside the window sees the record whenever the attempting runner lived to upload it (a lost runner cannot,
 and is the residual). The record is attempt accounting, never
-continuity: nothing admits, restores or renders it. Experiment and commissioning runs pay under the owner's
-hand and are never recorded; a manual production dispatch is recorded but not gated (the owner's override).
+continuity: nothing admits, restores or renders it. It is keyed by the run's own exchange-calendar date, like
+every acceptance record, so a weekend or holiday run never consumes the next session's checkpoint, and only
+this repository's own runs count (a fork's pull_request run can execute its own edit of the workflow). An
+attempt that bills nothing once the record is written (authentication, rate limit, 5xx, timeout) still
+consumes the checkpoint. Experiment and commissioning runs pay under the owner's hand and are never recorded;
+a manual production dispatch is recorded but not gated, so inside the window it pays a second time: that is
+the owner's override and the recovery after a failed or unanswered check.
 A rejected generation's metadata records the call it was: `synthesis.calls`, the route, the requested model
 and, when a response arrived, its usage and cost. A `NEXT_BRIEF` watch horizon resolves to the next synthesis checkpoint,
 the next time an analyst can judge it; refreshes in between only carry it. A watch's criteria carry

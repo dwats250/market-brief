@@ -764,7 +764,8 @@ def _synthesize_openrouter(packet, api_key, requester, full, context, on_request
         return requester(dict(base_payload, model=model), api_key)
 
     if on_request is not None:
-        on_request(dict(attempt))  # the paid-attempt boundary: before the first request is sent
+        # The paid-attempt boundary: before the first request is sent, described as that request.
+        on_request(dict(attempt, attempts=1))
     primary_failure = None
     requested_model = analyst["model"]
     try:

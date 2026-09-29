@@ -674,6 +674,10 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
                     for ident, row in (watch.get("values") or {}).items()}
         carried_watches.append(dict(
             id=watch["id"], hypothesis=expand(watch["hypothesis"], creation),
+            # Its criteria, like its question, at the values its author saw; an interpretation frozen before
+            # the record kept them has none, and the watch renders its question alone.
+            confirmation=expand(watch.get("confirmation") or "", creation),
+            contradiction=expand(watch.get("contradiction") or "", creation),
             phrase=watch["horizon"].get("phrase", ""), lifecycle=watch["lifecycle"],
             expired=watch["lifecycle"] == "expired" or (bool(expires) and timestamp(expires) <= target),
             evaluability=watch["evaluability"],
@@ -685,7 +689,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     # The live set is exactly what `continuity.edition_state` carries forward: new watches first, then the
     # carried ones still active and not reversed, at most CARRY_LIMIT. The frozen prior list is already
     # newest-first, so no ranking of our own. A verdict (strengthened, weakened, reversed) is adjudication and
-    # renders once, in What changed; a live carried watch shows only its question and horizon here. Everything
+    # renders once, in What changed; a live carried watch shows its question, horizon and criteria here. Everything
     # else carried, expired or set aside without a verdict, is one collapsed count: audit, not attention.
     live_carried = [c for c in carried_watches if c["lifecycle"] == "active" and c["assessment"] != "reversed"]
     live_carried = live_carried[:max(0, CARRY_LIMIT - len(watches))]
@@ -981,8 +985,10 @@ def markdown(view):
     for c in nxt["carried"]:
         passed = " · horizon passed" if c["expired"] else ""
         status = f" · {c['assessment']}" if c["assessment"] else ""
+        confirm = f" Confirm: {esc(c['confirmation'])}" if c["confirmation"] else ""
+        changes_it = f" Changes it: {esc(c['contradiction'])}" if c["contradiction"] else ""
         lines.append(f"- **FROM AN EARLIER READ{status} · {esc(c['phrase'])}{passed}** — "
-                     f"{esc(c['hypothesis'])} {esc(c['reason'])}")
+                     f"{esc(c['hypothesis'])}{confirm}{changes_it} {esc(c['reason'])}")
     if nxt["retired"]:
         count = len(nxt["retired"])
         lines.append(f"- Earlier watches · {count} ended without a verdict: "

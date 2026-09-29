@@ -246,10 +246,13 @@ criterion never drifts with newer data; a later synthesis may reassess or replac
 
 The bundle (`runs/continuity/bundle.json`, schema `market-brief.continuity-bundle.v1`, every
 record content-hashed) is written only by accepted LIVE, non-experiment, non-commissioning runs.
-On Actions it is restored before collection from the newest unexpired artifact of a successful
-main-branch run of the schedule workflow and uploaded after acceptance; each run's evidence,
-context, narrative, and metadata are archived for thirty days outside Pages and Git. Missing,
-stale, corrupt, or foreign state is an explicit cold start with its reason in the brief.
+On Actions it is restored before collection from the newest unexpired artifact of a main-branch run of
+the schedule workflow and uploaded after acceptance, before the push and the Pages deployment. The upload
+step runs only when every earlier step succeeded, so the artifact itself proves acceptance: a run that
+failed only in publication stays eligible, a run that failed earlier uploaded nothing, and a cancelled or
+unfinished run is not eligible. Each run's evidence, context, narrative, and metadata are archived for
+thirty days outside Pages and Git. Missing, stale, corrupt, or foreign state is an explicit cold start
+with its reason in the brief.
 
 No shared storage or writable mount with Cuttingboard. New report writes must
 resolve under this project's local run root, with symlink escapes rejected. The

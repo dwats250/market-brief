@@ -139,8 +139,9 @@ jobs:
           echo "label=$label" >> "$GITHUB_OUTPUT"
           echo "run=$run" >> "$GITHUB_OUTPUT"
       - name: Restore continuity bundle from the last accepted production run
-        # Short-horizon operational continuity: the newest unexpired bundle uploaded by a
-        # successful main-branch run of this workflow. Anything else is an explicit cold start.
+        # Short-horizon operational continuity: the newest unexpired bundle uploaded by a main-branch run
+        # of this workflow. The upload proves acceptance, so a push or Pages failure after it does not
+        # disqualify the bundle; a cancelled run does. Anything else is an explicit cold start.
         if: steps.checkpoint.outputs.run == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -188,7 +189,9 @@ jobs:
           retention-days: 30
       - name: Upload accepted continuity bundle
         # Only after local acceptance: the bundle is written solely by accepted LIVE, non-experiment,
-        # non-commissioning runs. A failed run reaches this step only if the pipeline succeeded.
+        # non-commissioning runs. This step inherits success() (no status function here, no
+        # continue-on-error before it), so it runs only when the pipeline succeeded, and it precedes the
+        # push and Pages: its artifact proves acceptance whatever publication does next.
         if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true && inputs.commissioning != true
         uses: actions/upload-artifact@v4
         with:

@@ -171,19 +171,25 @@ def advance_bundle(bundle, state, handoff, now, interpretation=None):
 
 ARTIFACT_NAME = "market-brief-continuity"
 WORKFLOW_PATH = ".github/workflows/schedule.yml"
+# A run's conclusion speaks for the whole job, publication included; the continuity artifact speaks for
+# acceptance. The workflow uploads it only when every earlier step, the pipeline among them, succeeded, and
+# before it pushes or deploys Pages, so a run that failed after its upload still holds accepted state. A run
+# that failed earlier uploaded none; a cancelled or unfinished run stays ineligible.
+RESTORABLE_CONCLUSIONS = ("success", "failure")
 
 
-def select_artifact(artifacts, run_lookup, branch="main", workflow_path=WORKFLOW_PATH):
-    """Pick the newest unexpired bundle artifact from a successful run of the expected workflow.
+def select_artifact(artifacts, run_lookup, branch="main", workflow_path=WORKFLOW_PATH, name=ARTIFACT_NAME):
+    """Pick the newest unexpired continuity artifact of an expected-workflow run that concluded success or failure.
 
-    The artifact name alone proves nothing; branch, workflow, and conclusion are checked.
+    The artifact name alone proves nothing; branch, workflow, and conclusion are checked. A push or Pages
+    failure after the upload does not disqualify accepted state (see RESTORABLE_CONCLUSIONS).
     """
-    candidates = [a for a in artifacts if isinstance(a, dict) and not a.get("expired")
+    candidates = [a for a in artifacts if isinstance(a, dict) and a.get("name") == name and not a.get("expired")
                   and isinstance(a.get("workflow_run"), dict)
                   and a["workflow_run"].get("head_branch") == branch and a.get("created_at")]
     for artifact in sorted(candidates, key=lambda a: a["created_at"], reverse=True):
         run = run_lookup(artifact["workflow_run"]["id"]) or {}
-        if run.get("conclusion") == "success" and run.get("path") == workflow_path:
+        if run.get("conclusion") in RESTORABLE_CONCLUSIONS and run.get("path") == workflow_path:
             return artifact
     return None
 

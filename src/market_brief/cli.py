@@ -386,7 +386,7 @@ def restore_continuity(args, runner=subprocess.run):
                                        lambda run_id: _gh_json([f"repos/{repository}/actions/runs/{run_id}"], runner),
                                        branch=args.branch)
             if artifact is None:
-                print("Continuity: cold start; no accepted bundle from a successful main-branch run.")
+                print("Continuity: cold start; no accepted bundle from a main-branch run.")
                 return 0
             download = RUN_ROOT / "runs" / "continuity" / "restore"
             download.mkdir(parents=True, exist_ok=True)

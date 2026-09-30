@@ -121,6 +121,18 @@ Dated levels stay citable; every row stays in the evidence record. (2) A `change
 could cite any admitted evidence; it now cites only that comparison's `current_ref` and `prior_ref`. The prompt's
 comparison sentence says so and shrinks (10,997 → 10,990 bytes under the 11,000 ceiling).
 
+**Pre-freeze cleanup (2026-09-29).** Four fixes from the final sign-off, nothing else. (F1) The run archive is
+diagnostic and now follows the continuity upload and publication (still `always()`), so its own failure gates
+neither. (F2) A comparison is `changed` only for a later entry whose value moved: the same value at a later entry
+is `no_new_observation`, an entry dated before the prior state is `not_comparable`, and `validate_state` re-derives
+the move before it accepts a change. When nothing moved, the page's "What changed" note now says so where the old
+rule counted a re-stamped value as a change. (F3) A body cut off mid-read or an unparseable status line takes the
+transport path (no automatic paid retry), and a 200 whose response, choice or message is not an object is a
+diagnosed rejection that keeps the paid attempt's accounting, never a traceback. (F4) Only the absence of an
+eligible continuity bundle is a cold start; a restore that cannot finish (the GitHub API, a run lookup, the
+download, a timeout, installing the bundle) exits non-zero, so the run stops before collection and uploads no cold
+bundle over accepted state.
+
 ## Next
 
 Editorial compression: after merge, verify Slice A against the Monday 2026-09-28 PREMARKET and OPEN_30M run
@@ -144,6 +156,10 @@ rejection reading `change cites evidence outside its comparison` names the stray
 
 Continuity restores only this repository's own runs (S1): after merge, the next scheduled run should still log
 `Continuity: restored artifact … from run <the previous run>`.
+
+Pre-freeze cleanup: after merge, each run's `market-brief-run-*` archive is uploaded after Pages; a red run whose
+log reads `Continuity: restore failed (…); stopping before collection.` has no continuity artifact, and the run
+after it restores the one before it.
 
 Market Memory, Week Ahead, market clocks and Opus 5.5 (approved plan, revision 2 with the source-lineage
 amendment: `docs/2026-09-27-market-memory-week-ahead.md`). Slice order D1 → C1 → A1 → one full week of session

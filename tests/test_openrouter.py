@@ -637,3 +637,25 @@ def test_unreadable_http_error_body_is_unknown_not_invented(monkeypatch):
     with pytest.raises(ValueError, match="OpenRouter HTTP 400") as exc:
         synthesize_openrouter(fixture_packet(), api_key="fake")
     assert '"error": "unknown"' in str(exc.value) and "html" not in str(exc.value)
+
+
+@pytest.mark.parametrize(("status", "expected"), [
+    (502, "OpenRouter transport failure; no automatic paid retry; cause=OpenRouter transient HTTP 502; "
+          'diagnostic={"error": "unknown", "http_status": 502}'),
+    (404, 'OpenRouter HTTP 404; diagnostic={"error": "unknown", "http_status": 404}'),  # bare: no fallback
+    (400, 'OpenRouter HTTP 400; diagnostic={"error": "unknown", "http_status": 400}'),
+])
+def test_an_error_body_cut_off_mid_read_is_unknown_and_the_status_decides(monkeypatch, status, expected):
+    """The error body is read inside the HTTPError handler; a chunked body that stops short raises IncompleteRead
+    there, which must leave the status to classify the failure rather than escape untyped."""
+    import io
+    from urllib.error import HTTPError
+
+    class Cut(io.BytesIO):
+        def read(self, *args):
+            raise http.client.IncompleteRead(b'{"error": {"mess', 400)
+
+    requests, hooks, error = send_through_transport(
+        monkeypatch, lambda request: raise_(HTTPError(request.full_url, status, "error", {}, Cut())))
+    assert str(error) == expected
+    assert len(requests) == 1 and len(hooks) == 1 and error.attempt["attempts"] == 1

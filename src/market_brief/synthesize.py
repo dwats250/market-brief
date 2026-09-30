@@ -576,7 +576,9 @@ def _safe_error(exc, limit=20_000):
         body = json.loads(exc.read(limit).decode("utf-8"))
         error = body["error"]
         code, message, metadata = error.get("code"), error.get("message"), error.get("metadata")
-    except (AttributeError, OSError, UnicodeError, ValueError, KeyError, TypeError, RecursionError):
+    except (AttributeError, OSError, UnicodeError, ValueError, KeyError, TypeError, RecursionError,
+            http.client.HTTPException):
+        # An error body cut off mid-read is unreadable, not a crash: the status alone classifies the failure.
         return "unknown"
     result = {}
     if type(code) in (int, float):

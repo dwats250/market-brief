@@ -101,6 +101,15 @@ another run starts. Attempt records are accounting only; continuity, validation,
 fallback and deterministic refreshes are unchanged. A rejected generation now records `calls: 1`, its route,
 requested model and, when a response arrived, usage and cost.
 
+**Continuity restores only this repository's own runs (S1, 2026-09-29).** `select_artifact` checked the artifact
+name, branch name, workflow path and conclusion, all of which a fork's pull_request run can satisfy: it executes
+the pull request's own edit of `schedule.yml`, from a branch it can name `main`, and can upload an artifact of any
+name. The bundle's hashes are public content digests and its origin fields are self-declared, so a forged bundle
+passed every content check and its interpretation would have been rendered by the next refresh. Eligibility now
+also requires the run lookup's `head_repository.id` to equal `repository.id` (integers GitHub requires on every
+run); anything missing or malformed is not eligible, so a foreign artifact never outranks an older valid one.
+Existing artifacts from this repository's own runs stay eligible; no workflow, bundle or admission change.
+
 ## Next
 
 Editorial compression: after merge, verify Slice A against the Monday 2026-09-28 PREMARKET and OPEN_30M run
@@ -118,6 +127,9 @@ is in publication (a push rejected by a merge, a Pages failure) should be follow
 One paid synthesis per checkpoint (R2): after merge, each PREMARKET and OPEN_30M run's artifacts should include
 `market-brief-attempt-<session>-<checkpoint>`, and any second wake of the same checkpoint should log
 `SKIP / <checkpoint> / paid synthesis already attempted` (or `already completed`) with no provider request.
+
+Continuity restores only this repository's own runs (S1): after merge, the next scheduled run should still log
+`Continuity: restored artifact … from run <the previous run>`.
 
 Market Memory, Week Ahead, market clocks and Opus 5.5 (approved plan, revision 2 with the source-lineage
 amendment: `docs/2026-09-27-market-memory-week-ahead.md`). Slice order D1 → C1 → A1 → one full week of session

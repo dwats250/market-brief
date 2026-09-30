@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 from test_cadence import TUE, Day
 from test_ci_triggers import top_level
-from test_continuity_restore import REPOSITORY, Actions, own, workflow_steps
+from test_continuity_restore import HOME, REPOSITORY, Actions, own, workflow_steps
 from test_contract import edition_response
 from test_pipeline import fixture_packet, narrative
 
@@ -399,7 +399,11 @@ def test_only_a_record_uploaded_by_this_workflow_on_the_branch_counts(monkeypatc
     monkeypatch.setattr(cli, "RUN_ROOT", tmp_path)
     monkeypatch.setenv("GITHUB_REPOSITORY", REPOSITORY)
     name = attempt(TUE, "PREMARKET")
-    runs = {7: dict(path=WORKFLOW_PATH, conclusion="cancelled"), 8: dict(path=".github/workflows/pages.yml")}
+    fork = dict(id=9999, full_name="someone/market-brief")
+    runs = {7: own(path=WORKFLOW_PATH, conclusion="cancelled"), 8: own(path=".github/workflows/pages.yml"),
+            9: dict(path=WORKFLOW_PATH, conclusion="success", repository=HOME, head_repository=fork),
+            10: dict(path=WORKFLOW_PATH, conclusion="success", repository=HOME, head_repository=None),
+            11: dict(path=WORKFLOW_PATH, conclusion="success")}
     listed = []
 
     def serve(artifacts):
@@ -410,14 +414,18 @@ def test_only_a_record_uploaded_by_this_workflow_on_the_branch_counts(monkeypatc
             return {"artifacts": artifacts}
         monkeypatch.setattr(cli, "_gh_json", gh_json)
 
-    def artifact(ident, run, branch="main", named=name, expired=False, head_repository=1):
-        return dict(id=ident, name=named, expired=expired, workflow_run=dict(
-            id=run, head_branch=branch, repository_id=1, head_repository_id=head_repository))
+    def artifact(ident, run, branch="main", named=name, expired=False, **listing_ids):
+        # The listing's repository ids are optional in GitHub's schema: absent unless a case sets them.
+        return dict(id=ident, name=named, expired=expired, workflow_run=dict(id=run, head_branch=branch,
+                                                                            **listing_ids))
     args = SimpleNamespace(repository=None, branch="main")
-    # Another branch, another workflow, another name, and a fork's pull_request run of its own edit of
-    # schedule.yml from a branch it named main: none of them is this repository's attempt.
+    # Another branch, another workflow, another name; a fork's pull_request run of its own edit of schedule.yml
+    # from a branch it named main, whether the listing omits its repository ids (None == None once passed) or
+    # claims they match; a deleted fork's null head; a run with no origin at all. None of them is this
+    # repository's attempt: the run details decide, as for continuity restore.
     serve([artifact(1, 7, branch="feature"), artifact(2, 8), artifact(3, 7, named=name + "-X"), "junk",
-           artifact(5, 7, head_repository=2)])
+           artifact(5, 9), artifact(6, 9, repository_id=4242, head_repository_id=4242), artifact(12, 10),
+           artifact(13, 11)])
     assert cli.earlier_attempt(args, TUE, "PREMARKET") is None
     assert listed == [f"repos/{REPOSITORY}/actions/artifacts?name={name}&per_page=100"]
     # A cancelled run's record and an expired record still prove the attempt: the upload is the proof.

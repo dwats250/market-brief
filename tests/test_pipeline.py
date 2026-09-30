@@ -346,7 +346,7 @@ def test_fresh_workspace_restores_a_valid_bundle_and_rejects_foreign_state(tmp_p
 
 def test_artifact_selection_requires_main_branch_expected_workflow():
     from market_brief.continuity import ARTIFACT_NAME, select_artifact
-    home = {"repository": {"id": 1}, "head_repository": {"id": 1}}  # required on every run by GitHub
+    home = {"repository": {"id": 1}, "head_repository": {"id": 1}}  # a run's origin, as GitHub returns it
     runs = {
         1: {"conclusion": "success", "path": ".github/workflows/schedule.yml", **home},
         2: {"conclusion": "failure", "path": ".github/workflows/schedule.yml", **home},

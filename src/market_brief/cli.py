@@ -27,6 +27,7 @@ from .continuity import (
     edition_state,
     interpretation_record,
     load_bundle,
+    own_repository_run,
     restore_bundle,
     select_artifact,
     session_handoff,
@@ -190,9 +191,10 @@ def earlier_attempt(args, session_date, checkpoint):
 
     This workspace's own record first; then, on Actions, a record uploaded by this repository's own run of the
     schedule workflow on the expected branch, whatever that run concluded (the upload proves the attempt, not its
-    acceptance). The workflow's
-    one concurrency group starts no run before the previous one has finished uploading. Raises when the uploaded
-    records cannot be listed, so the caller never pays on an unanswered question."""
+    acceptance). Origin is decided as for continuity restore, by `own_repository_run` on the run details, never by
+    the listing's optional repository ids. The workflow's one concurrency group starts no run before the previous one
+    has finished uploading. Raises when the uploaded records cannot be listed, so the caller never pays on an
+    unanswered question."""
     local = attempt_path(RUN_ROOT, session_date, checkpoint)
     if local.is_file():
         return f"record {local.name}"
@@ -210,10 +212,9 @@ def earlier_attempt(args, session_date, checkpoint):
         run = artifact.get("workflow_run")
         if not isinstance(run, dict) or run.get("head_branch") != getattr(args, "branch", "main"):
             continue
-        if run.get("head_repository_id") != run.get("repository_id"):
-            continue  # a fork's pull_request run can run its own edit of schedule.yml; only this repository's count
         details = _gh_json([f"repos/{repository}/actions/runs/{run['id']}"])
-        if isinstance(details, dict) and details.get("path") == WORKFLOW_PATH:
+        # A fork's pull_request run can run its own edit of schedule.yml; only this repository's own run counts.
+        if isinstance(details, dict) and details.get("path") == WORKFLOW_PATH and own_repository_run(details):
             return f"artifact {artifact.get('id')} from run {run['id']}"
     return None
 

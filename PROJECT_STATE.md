@@ -106,8 +106,10 @@ name, branch name, workflow path and conclusion, all of which a fork's pull_requ
 the pull request's own edit of `schedule.yml`, from a branch it can name `main`, and can upload an artifact of any
 name. The bundle's hashes are public content digests and its origin fields are self-declared, so a forged bundle
 passed every content check and its interpretation would have been rendered by the next refresh. Eligibility now
-also requires the run lookup's `head_repository.id` to equal `repository.id` (integers GitHub requires on every
-run); anything missing or malformed is not eligible, so a foreign artifact never outranks an older valid one.
+also requires the run lookup's `head_repository.id` to equal `repository.id` (integers; schema-required, though a
+deleted fork's head comes back null); anything missing, null or malformed is not eligible, so a foreign artifact
+never outranks an older valid one. R2's attempt lookup now decides origin the same way, on its run details,
+instead of the listing's optional ids (which let two absent ids compare equal).
 Existing artifacts from this repository's own runs stay eligible; no workflow, bundle or admission change.
 
 ## Next

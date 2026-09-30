@@ -183,8 +183,9 @@ def own_repository_run(run):
 
     A fork's pull_request run executes the pull request's own edit of the workflow, so it can upload an artifact of
     any name, from a branch it named main, under this workflow's path and with any conclusion; none of those proves
-    origin. GitHub requires `repository` and `head_repository` (each with an integer `id`) on every run; anything
-    missing or malformed proves nothing and is not eligible.
+    origin. GitHub's schema marks `repository` and `head_repository` (each with an integer `id`) as required on a run,
+    but the head can come back null, for example once a fork is deleted; anything missing, null or malformed proves
+    nothing and is not eligible.
     """
     owner, head = run.get("repository"), run.get("head_repository")
     if not isinstance(owner, dict) or not isinstance(head, dict):

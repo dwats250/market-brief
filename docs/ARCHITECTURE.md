@@ -263,10 +263,11 @@ The bundle (`runs/continuity/bundle.json`, schema `market-brief.continuity-bundl
 record content-hashed) is written only by accepted LIVE, non-experiment, non-commissioning runs.
 On Actions it is restored before collection from the newest unexpired artifact of this repository's own
 main-branch run of the schedule workflow and uploaded after acceptance, before the push and the Pages
-deployment. Own means the run's `head_repository` is the `repository` that owns it (the integer ids GitHub
-requires on every run; missing or malformed origin is not eligible): a fork's pull_request run executes its
-own edit of the workflow, so name, branch, path and conclusion alone would admit its artifact, and the
-bundle's content hashes are public digests, not signatures. The upload
+deployment. Own means the run's `head_repository` is the `repository` that owns it, by their integer ids (the
+schema marks both required, but a deleted fork's head comes back null, so missing, null or malformed origin
+is not eligible): a fork's pull_request run executes its own edit of the workflow, so name, branch, path and
+conclusion alone would admit its artifact, and the bundle's content hashes are public digests, not
+signatures. R2's attempt lookup applies the same check to its run details. The upload
 step runs only when every earlier step succeeded, so the artifact itself proves acceptance: a run that
 failed only in publication stays eligible, a run that failed earlier uploaded nothing, and a cancelled or
 unfinished run is not eligible. Each run's evidence, context, narrative, and metadata are archived for

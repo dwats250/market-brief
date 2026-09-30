@@ -4,8 +4,9 @@ A fork's pull_request run executes the pull request's own edit of schedule.yml, 
 `market-brief-continuity` from a branch it named main, under this workflow's path, with a success or failure
 conclusion. The bundle's hashes are public content digests and its origin fields are self-declared, so a forged
 bundle passes every content check, and its interpretation would be rendered by the next refresh. Eligibility now
-also requires the run's head repository to be the repository that owns the run, read from the two fields GitHub
-requires on every workflow run; anything missing or malformed is not eligible.
+also requires the run's head repository to be the repository that owns the run, read from the run's two origin
+fields; GitHub's schema marks both required, but the head can come back null (a deleted fork), so anything
+missing, null or malformed is not eligible.
 """
 
 import json
@@ -109,16 +110,19 @@ def test_a_foreign_artifact_cannot_outrank_an_older_valid_one(actions):
     dict(repository=HOME),
     dict(head_repository=HOME),
     dict(repository=None, head_repository=None),
+    dict(repository=HOME, head_repository=None),  # a deleted fork: the owner is known, the head is gone
     dict(repository={}, head_repository={}),  # no ids on either side: None == None proves nothing
     dict(repository={"id": "4242"}, head_repository={"id": "4242"}),
     dict(repository={"id": True}, head_repository={"id": True}),
     dict(repository={"id": 4242.0}, head_repository={"id": 4242.0}),
     dict(repository=HOME, head_repository=FORK),
-], ids=["no-origin", "no-head", "no-owner", "null", "no-ids", "string-ids", "bool-ids", "float-ids", "fork"])
+], ids=["no-origin", "no-head", "no-owner", "null", "deleted-fork-head", "no-ids", "string-ids", "bool-ids",
+        "float-ids", "fork"])
 def test_missing_ambiguous_or_foreign_origin_is_never_eligible(origin):
-    """GitHub requires `repository` and `head_repository`, each with an integer id, on every run, so nothing gives
-    missing or malformed origin a stronger reading than 'unproven': it fails closed, to the older valid artifact
-    when there is one and to a cold start when there is not."""
+    """GitHub's schema marks `repository` and `head_repository` (each with an integer id) required, but a deleted
+    fork comes back with a null head, so nothing gives missing, null or malformed origin a stronger reading than
+    'unproven': it fails closed, to the older valid artifact when there is one and to a cold start when there is
+    not."""
     runs = {1: own(conclusion="success", path=WORKFLOW_PATH), 2: dict(conclusion="success", path=WORKFLOW_PATH,
                                                                        **origin)}
     older, newer = artifact(10, 1, "2026-09-08T13:03:00Z"), artifact(20, 2, "2026-09-08T14:03:00Z")

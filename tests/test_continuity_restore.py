@@ -25,7 +25,7 @@ from market_brief.evidence import ROOT
 
 REPOSITORY = "dwats250/market-brief"
 FRI = "2026-09-04"
-# GitHub requires both on every workflow run: the repository that owns the run and the one its head came from.
+# A workflow run's origin as GitHub returns it: the repository that owns the run and the one its head came from.
 HOME = dict(id=4242, full_name=REPOSITORY)
 
 

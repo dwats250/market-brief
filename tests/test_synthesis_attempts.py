@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 from test_cadence import TUE, Day
 from test_ci_triggers import top_level
-from test_continuity_restore import REPOSITORY, Actions, workflow_steps
+from test_continuity_restore import REPOSITORY, Actions, own, workflow_steps
 from test_contract import edition_response
 from test_pipeline import fixture_packet, narrative
 
@@ -97,7 +97,7 @@ class PaidActions(Actions):
         run_id = 1001 + len(self.runs)
         root = self.tmp_path / f"runner-{run_id}"
         root.mkdir()
-        self.runs[run_id] = dict(status="in_progress", conclusion=None, path=WORKFLOW_PATH, head_branch="main")
+        self.runs[run_id] = own(status="in_progress", conclusion=None, path=WORKFLOW_PATH, head_branch="main")
         self.monkeypatch.setattr(cli, "RUN_ROOT", root)
         restore = SimpleNamespace(from_file=None, repository=REPOSITORY, branch="main")
         assert cli.restore_continuity(restore, runner=self.gh) == 0

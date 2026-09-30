@@ -178,18 +178,35 @@ WORKFLOW_PATH = ".github/workflows/schedule.yml"
 RESTORABLE_CONCLUSIONS = ("success", "failure")
 
 
-def select_artifact(artifacts, run_lookup, branch="main", workflow_path=WORKFLOW_PATH, name=ARTIFACT_NAME):
-    """Pick the newest unexpired continuity artifact of an expected-workflow run that concluded success or failure.
+def own_repository_run(run):
+    """Whether a workflow run's head repository is the repository that owns the run.
 
-    The artifact name alone proves nothing; branch, workflow, and conclusion are checked. A push or Pages
-    failure after the upload does not disqualify accepted state (see RESTORABLE_CONCLUSIONS).
+    A fork's pull_request run executes the pull request's own edit of the workflow, so it can upload an artifact of
+    any name, from a branch it named main, under this workflow's path and with any conclusion; none of those proves
+    origin. GitHub requires `repository` and `head_repository` (each with an integer `id`) on every run; anything
+    missing or malformed proves nothing and is not eligible.
+    """
+    owner, head = run.get("repository"), run.get("head_repository")
+    if not isinstance(owner, dict) or not isinstance(head, dict):
+        return False
+    return type(owner.get("id")) is int and type(head.get("id")) is int and head["id"] == owner["id"]
+
+
+def select_artifact(artifacts, run_lookup, branch="main", workflow_path=WORKFLOW_PATH, name=ARTIFACT_NAME):
+    """Pick the newest unexpired continuity artifact of this repository's own expected-workflow run that concluded
+    success or failure.
+
+    The artifact name alone proves nothing; branch, workflow, conclusion and origin are checked. A push or Pages
+    failure after the upload does not disqualify accepted state (see RESTORABLE_CONCLUSIONS); a run from any other
+    head repository never qualifies (see own_repository_run), so it cannot outrank an older valid artifact.
     """
     candidates = [a for a in artifacts if isinstance(a, dict) and a.get("name") == name and not a.get("expired")
                   and isinstance(a.get("workflow_run"), dict)
                   and a["workflow_run"].get("head_branch") == branch and a.get("created_at")]
     for artifact in sorted(candidates, key=lambda a: a["created_at"], reverse=True):
         run = run_lookup(artifact["workflow_run"]["id"]) or {}
-        if run.get("conclusion") in RESTORABLE_CONCLUSIONS and run.get("path") == workflow_path:
+        if (run.get("conclusion") in RESTORABLE_CONCLUSIONS and run.get("path") == workflow_path
+                and own_repository_run(run)):
             return artifact
     return None
 

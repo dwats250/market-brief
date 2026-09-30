@@ -25,6 +25,13 @@ from market_brief.evidence import ROOT
 
 REPOSITORY = "dwats250/market-brief"
 FRI = "2026-09-04"
+# GitHub requires both on every workflow run: the repository that owns the run and the one its head came from.
+HOME = dict(id=4242, full_name=REPOSITORY)
+
+
+def own(**fields):
+    """A workflow run of this repository's own head, as GitHub returns it."""
+    return dict(fields, repository=HOME, head_repository=HOME)
 
 
 class Actions:
@@ -63,9 +70,11 @@ class Actions:
 
     def upload(self, run_id, name, now, minutes, content=None):
         created = datetime.fromisoformat(now).astimezone(timezone.utc) + timedelta(minutes=minutes)
+        head = self.runs[run_id]["head_repository"]["id"]
         self.artifacts.append(dict(id=len(self.artifacts) + 1, name=name, expired=False,
                                    created_at=created.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                   workflow_run=dict(id=run_id, head_branch="main")))
+                                   workflow_run=dict(id=run_id, head_branch="main", repository_id=HOME["id"],
+                                                     head_repository_id=head)))
         if content is not None:
             self.files[run_id, name] = content
 
@@ -75,7 +84,7 @@ class Actions:
         run_id = 1001 + len(self.runs)
         root = self.tmp_path / f"runner-{run_id}"
         root.mkdir()
-        self.runs[run_id] = dict(status="in_progress", conclusion=None, path=WORKFLOW_PATH, head_branch="main")
+        self.runs[run_id] = own(status="in_progress", conclusion=None, path=WORKFLOW_PATH, head_branch="main")
         self.monkeypatch.setattr(cli, "RUN_ROOT", root)
         restore = SimpleNamespace(from_file=None, repository=REPOSITORY, branch="main")
         assert cli.restore_continuity(restore, runner=self.gh) == 0
@@ -192,7 +201,7 @@ def artifact(ident, run, created, name=ARTIFACT_NAME, branch="main", expired=Fal
     (None, False),  # unfinished: unchanged
 ])
 def test_a_runs_continuity_artifact_is_eligible_whatever_its_publication_did(conclusion, eligible):
-    runs = {1: dict(conclusion="success", path=WORKFLOW_PATH), 2: dict(conclusion=conclusion, path=WORKFLOW_PATH)}
+    runs = {1: own(conclusion="success", path=WORKFLOW_PATH), 2: own(conclusion=conclusion, path=WORKFLOW_PATH)}
     older, newer = artifact(10, 1, "2026-09-08T13:03:00Z"), artifact(20, 2, "2026-09-08T14:03:00Z")
     assert select_artifact([older, newer], runs.get)["id"] == (20 if eligible else 10)
 
@@ -206,8 +215,8 @@ def test_a_runs_continuity_artifact_is_eligible_whatever_its_publication_did(con
 def test_a_failed_run_is_eligible_only_through_its_own_continuity_artifact_on_main(newer):
     """Admitting `failure` widened nothing else: name, branch, workflow and expiry are checked as before, so
     older valid continuity is still the one restored when the newest candidate is not eligible."""
-    runs = {1: dict(conclusion="success", path=WORKFLOW_PATH), 2: dict(conclusion="failure", path=WORKFLOW_PATH),
-            3: dict(conclusion="failure", path=".github/workflows/pages.yml")}
+    runs = {1: own(conclusion="success", path=WORKFLOW_PATH), 2: own(conclusion="failure", path=WORKFLOW_PATH),
+            3: own(conclusion="failure", path=".github/workflows/pages.yml")}
     assert select_artifact([artifact(10, 1, "2026-09-08T13:03:00Z"), newer], runs.get)["id"] == 10
 
 

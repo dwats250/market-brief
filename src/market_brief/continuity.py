@@ -14,7 +14,7 @@ from pathlib import Path
 
 import exchange_calendars as xcals
 
-from .curve import SPREAD_CHANGE, SPREAD_LEVEL
+from .curve import SPREAD_CHANGE, SPREAD_LEVEL, stale_movement
 from .evidence import ET, PLACEHOLDER, USABLE, digest, evidence_catalog, model_packet, read_json, timestamp
 from .schedule import CHECKPOINT_TITLES, VANCOUVER, next_session_date, next_synthesis
 
@@ -341,7 +341,9 @@ def admit_interpretation(bundle, packet):
 def _current_by_key(packet):
     rows = {}
     for row in [*packet["observations"], *packet["derived"]]:
-        if row.get("status") in USABLE and row.get("value") is not None and row.get("identity"):
+        # A stale curve's changes are not current movement, so no comparison is built on one (`stale_movement`).
+        if (row.get("status") in USABLE and row.get("value") is not None and row.get("identity")
+                and not stale_movement(packet, row)):
             rows.setdefault(row["identity"]["key"], row)
     return rows
 
@@ -535,6 +537,10 @@ def validate_state(narrative, context, shown, topics):
         seen.add(change["comparison_id"])
         if comparison["status"] != "changed":
             raise ValueError("only a deterministic changed comparison can be interpreted as a change")
+        # Bound to what the comparison measured: its own current and prior operands, nothing else admitted.
+        foreign = set(change["evidence_ids"]) - {comparison.get("current_ref"), comparison.get("prior_ref")}
+        if foreign:
+            raise ValueError("change cites evidence outside its comparison: " + ", ".join(sorted(foreign)))
         check_refs(change, True)
     return narrative
 

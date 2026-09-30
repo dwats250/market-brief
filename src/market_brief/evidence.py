@@ -344,12 +344,14 @@ def compact_model_record(row):
 
 
 def model_packet(packet):
+    from .curve import stale_movement  # the curve owns its freshness rule and imports this module
     result = copy.deepcopy(packet)
     allowed = {s["id"] for s in packet["sources"] if s["llm_allowed"] is True}
     result.pop("history", None)
     for field in ("observations", "derived", "events", "context_items"):
         result[field] = [compact_model_record(r) for r in result[field]
-                         if r.get("source_id") in allowed and r.get("status") in USABLE | {"SCHEDULED"}]
+                         if r.get("source_id") in allowed and r.get("status") in USABLE | {"SCHEDULED"}
+                         and not stale_movement(packet, r)]
     result["sector_leadership"] = dict(
         top=[compact_model_record(r) for r in result.get("sector_leadership", {}).get("top", [])
              if r.get("source_id") in allowed and r.get("status") in USABLE | {"SCHEDULED"}],

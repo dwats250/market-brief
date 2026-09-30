@@ -112,6 +112,15 @@ never outranks an older valid one. R2's attempt lookup now decides origin the sa
 instead of the listing's optional ids (which let two absent ids compare equal).
 Existing artifacts from this repository's own runs stay eligible; no workflow, bundle or admission change.
 
+**Evidence integrity (E1, 2026-09-29).** Two authority gaps closed without a new clock, source or comparison
+system. (1) A stale Treasury curve (`curve_freshness`: more than five calendar days old) already rendered levels
+only, but its daily tenor and spread change rows still passed the authority filter and could be cited, or offered
+through a `changed` comparison, as current movement; `curve.stale_movement` now withholds them from `model_packet`
+(the analyst context and the validator) and from `_current_by_key` (comparisons), exactly when the page blanks them.
+Dated levels stay citable; every row stays in the evidence record. (2) A `change` named a changed comparison but
+could cite any admitted evidence; it now cites only that comparison's `current_ref` and `prior_ref`. The prompt's
+comparison sentence says so and shrinks (10,997 → 10,990 bytes under the 11,000 ceiling).
+
 ## Next
 
 Editorial compression: after merge, verify Slice A against the Monday 2026-09-28 PREMARKET and OPEN_30M run
@@ -129,6 +138,9 @@ is in publication (a push rejected by a merge, a Pages failure) should be follow
 One paid synthesis per checkpoint (R2): after merge, each PREMARKET and OPEN_30M run's artifacts should include
 `market-brief-attempt-<session>-<checkpoint>`, and any second wake of the same checkpoint should log
 `SKIP / <checkpoint> / paid synthesis already attempted` (or `already completed`) with no provider request.
+
+Evidence integrity (E1): after merge, a synthesis on a stale curve should cite Treasury levels only, and any
+rejection reading `change cites evidence outside its comparison` names the stray reference.
 
 Continuity restores only this repository's own runs (S1): after merge, the next scheduled run should still log
 `Continuity: restored artifact … from run <the previous run>`.

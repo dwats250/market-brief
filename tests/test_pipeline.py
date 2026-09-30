@@ -346,11 +346,12 @@ def test_fresh_workspace_restores_a_valid_bundle_and_rejects_foreign_state(tmp_p
 
 def test_artifact_selection_requires_main_branch_expected_workflow():
     from market_brief.continuity import ARTIFACT_NAME, select_artifact
+    home = {"repository": {"id": 1}, "head_repository": {"id": 1}}  # required on every run by GitHub
     runs = {
-        1: {"conclusion": "success", "path": ".github/workflows/schedule.yml"},
-        2: {"conclusion": "failure", "path": ".github/workflows/schedule.yml"},
-        3: {"conclusion": "success", "path": ".github/workflows/pages.yml"},
-        4: {"conclusion": "success", "path": ".github/workflows/schedule.yml"},
+        1: {"conclusion": "success", "path": ".github/workflows/schedule.yml", **home},
+        2: {"conclusion": "failure", "path": ".github/workflows/schedule.yml", **home},
+        3: {"conclusion": "success", "path": ".github/workflows/pages.yml", **home},
+        4: {"conclusion": "success", "path": ".github/workflows/schedule.yml", **home},
     }
     def artifact(ident, run, branch, created, expired=False):
         return {"id": ident, "name": ARTIFACT_NAME, "expired": expired, "created_at": created,
@@ -383,7 +384,8 @@ def test_restore_uses_gh_only_for_listing_run_lookup_and_download(tmp_path, monk
                  "workflow_run": {"id": 99, "head_branch": "main"}}]}))
         if argv[:2] == ["gh", "api"]:
             return SimpleNamespace(returncode=0, stdout=json.dumps(
-                {"conclusion": "success", "path": ".github/workflows/schedule.yml"}))
+                {"conclusion": "success", "path": ".github/workflows/schedule.yml",
+                 "repository": {"id": 1}, "head_repository": {"id": 1}}))
         assert argv[:3] == ["gh", "run", "download"] and argv[3] == "99"
         target = Path(argv[argv.index("-D") + 1])
         target.mkdir(parents=True, exist_ok=True)

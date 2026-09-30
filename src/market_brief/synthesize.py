@@ -1,5 +1,6 @@
 """One Claude CLI route and bounded, mechanically grounded narrative validation."""
 
+import http.client
 import json
 import os
 import re
@@ -540,7 +541,10 @@ def _openrouter_post(payload, api_key, timeout=180):
             # bare or unrelated 404 is not this condition and falls through to fail closed with no fallback.
             raise _ModelUnavailableError(exc.code, error) from None
         raise ValueError(f"OpenRouter HTTP {exc.code}; diagnostic={diagnostic}") from None
-    except (URLError, TimeoutError, OSError, UnicodeError, json.JSONDecodeError):
+    except (URLError, TimeoutError, OSError, UnicodeError, json.JSONDecodeError, RecursionError,
+            http.client.HTTPException):
+        # HTTPException covers a body cut off mid-read (IncompleteRead) and an unparseable status line: faults after
+        # the request left, handled like any transport failure (no automatic paid retry).
         raise _TransientOpenRouterError("OpenRouter network or response failure") from None
 
 
@@ -638,13 +642,19 @@ def _healing_diagnostic(response):
         and isinstance(stage.get("data"), dict)]
 
 
+def _text_parts(content):
+    """The text of a list-form message content; parts that are not text objects contribute nothing."""
+    return "".join(part["text"] for part in content if isinstance(part, dict) and isinstance(part.get("text"), str))
+
+
 def _openrouter_diagnostic(response, message=None, content=None):
-    choice = (response.get("choices") or [{}])[0] if isinstance(response, dict) else {}
+    choices = response.get("choices") if isinstance(response, dict) else None
+    choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
     message = message if isinstance(message, dict) else (choice.get("message") or {})
     if content is None and isinstance(message, dict):
         content = message.get("content")
         if isinstance(content, list):
-            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+            content = _text_parts(content)
     transport = response.get("_market_brief_transport", {}) if isinstance(response, dict) else {}
     return canonical({
         "http_status": transport.get("http_status", "unknown"),
@@ -668,21 +678,30 @@ def _openrouter_diagnostic(response, message=None, content=None):
 
 
 def _openrouter_narrative(response):
+    # Every shape is checked before it is read: a malformed 200 is a rejection of the paid attempt, never a crash.
+    if not isinstance(response, dict):
+        raise ValueError(f"OpenRouter returned a malformed response ({type(response).__name__} body)")
     if response.get("error"):
         raise ValueError("OpenRouter returned an error")
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices:
         raise ValueError("OpenRouter returned no synthesis choice")
+    if not isinstance(choices[0], dict):
+        raise ValueError(f"OpenRouter returned a malformed synthesis choice ({type(choices[0]).__name__}); "
+                         f"diagnostic={_openrouter_diagnostic(response)}")
     if choices[0].get("finish_reason") == "length":
         diagnostic = _openrouter_diagnostic(response)
         raise ValueError("OpenRouter synthesis output budget exhausted (finish_reason=length); "
                          f"structured output rejected before validation; diagnostic={diagnostic}")
     message = choices[0].get("message") or {}
+    if not isinstance(message, dict):
+        raise ValueError(f"OpenRouter returned a malformed synthesis message ({type(message).__name__}); "
+                         f"diagnostic={_openrouter_diagnostic(response)}")
     if message.get("refusal"):
         raise ValueError("OpenRouter refused synthesis")
     content = message.get("content")
     if isinstance(content, list):
-        content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        content = _text_parts(content)
     if not isinstance(content, str) or not content:
         diagnostic = _openrouter_diagnostic(response, message)
         raise ValueError("OpenRouter returned no structured synthesis; "

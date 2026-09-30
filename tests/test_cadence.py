@@ -204,8 +204,9 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.metadata("OPEN_1M")["synthesis"] == dict(kind="refresh", calls=0)
     assert day.metadata("OPEN_1M")["interpretation"]["checkpoint"] == "PREMARKET"
 
-    # 7:00 AM PT: the one interpretive update after the open, against the premarket and opening anchors.
-    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
+    # 7:00 AM PT: the one interpretive update after the open, against the premarket and opening anchors. QQQ has
+    # moved since the opening print (a later print at the same value is not a move).
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", prints=(("SPY", -0.53), ("QQQ", -0.48), ("XLI", 0.4))) == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]
     structure = day.page("OPEN_30M")
     assert '<div class="status-line">' not in structure
@@ -278,8 +279,10 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert all(slot in bundle for slot in SLOTS)
     assert day.published == ["PREMARKET", "OPEN_1M", "OPEN_30M", "HOURLY_1300", "HOURLY_1400", "CLOSE_1M"]
 
-    # Wednesday 6:00 AM PT: the next premarket admits the deterministic close and synthesizes again.
-    assert day.run("2026-09-09T13:00:00+00:00", "PREMARKET", intraday=False, last_history_date=TUE) == 0
+    # Wednesday 6:00 AM PT: the next premarket admits the deterministic close and synthesizes again. Tuesday's
+    # completed bar closes SPY higher than the fixture's re-dated history would.
+    assert day.run("2026-09-09T13:00:00+00:00", "PREMARKET", intraday=False, last_history_date=TUE,
+                   scale_last_close={"SPY": 1.004}) == 0
     assert day.calls == ["PREMARKET", "OPEN_30M", "PREMARKET"]
     wednesday = day.page("PREMARKET", "2026-09-09")
     assert clock_lines(wednesday) == ["Prices · prior close Tue, Sep 8", "Analysis · 6:00 AM PT · premarket",

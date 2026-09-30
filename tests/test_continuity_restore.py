@@ -7,10 +7,16 @@ the continuity artifact itself: the workflow uploads it only when every earlier 
 succeeded, so a run that concluded `failure` after its upload is as eligible as one that concluded `success`.
 A rejected synthesis never uploads, a cancelled or unfinished run stays ineligible, and admission of what is
 restored is unchanged.
+
+Pre-freeze: the diagnostic run archive comes after the continuity upload and publication, so its failure can gate
+neither; and a restore that cannot finish (the GitHub API, the download, a timeout) stops the run instead of cold
+starting it, because that run's cold bundle would replace accepted state for every run after it. Only the absence
+of an eligible bundle is a cold start.
 """
 
 import json
 import re
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,30 +43,37 @@ def own(**fields):
 class Actions:
     """schedule.yml on main, one fresh runner per run, with `gh` answered the way GitHub answers it.
 
-    A run restores through `continuity-restore`, runs the pipeline as a Cloudflare wake does, archives its run
-    folder (always), and uploads the continuity bundle only when the pipeline step succeeded: the step gate that
-    `test_the_workflow_uploads_continuity_only_after_acceptance_and_before_publication` pins in the workflow.
-    Publication runs after the upload and decides only the run's conclusion. Every runner starts from a checkout
-    without the earlier pages or checkpoint markers, as after a failed push: the bundle is its only memory.
+    A run restores through `continuity-restore`; a restore that fails fails its step, and every later step that
+    inherits success() is skipped, so the run collects, synthesizes, uploads and publishes nothing. Otherwise it runs
+    the pipeline as a Cloudflare wake does and uploads the continuity bundle only when the pipeline step succeeded:
+    the step gate that `test_the_workflow_uploads_continuity_only_after_acceptance_and_before_publication` pins in
+    the workflow. Publication runs after the upload and decides only the run's conclusion; the diagnostic archive
+    comes after both (always). `broken` names the GitHub calls that fail during a run ("list", "run", "download").
+    Every runner starts from a checkout without the earlier pages or checkpoint markers, as after a failed push:
+    the bundle is its only memory.
     """
 
     def __init__(self, monkeypatch, tmp_path):
         self.monkeypatch, self.tmp_path = monkeypatch, tmp_path
-        self.runs, self.artifacts, self.files, self.days = {}, [], {}, {}
-        self.downloads, self.calls, self.published = [], [], []
+        self.runs, self.artifacts, self.files, self.days, self.restores = {}, [], {}, {}, {}
+        self.downloads, self.calls, self.published, self.broken = [], [], [], set()
 
     def gh(self, argv, **kwargs):
         if argv[:2] == ["gh", "api"]:
             url = urlparse(argv[2])
             if url.path == f"repos/{REPOSITORY}/actions/artifacts":
+                if "list" in self.broken:
+                    return SimpleNamespace(returncode=1, stdout="")
                 wanted = parse_qs(url.query).get("name", [None])[0]
                 listed = sorted((a for a in self.artifacts if wanted in (None, a["name"])),
                                 key=lambda a: a["created_at"], reverse=True)  # newest first, as GitHub lists
                 return SimpleNamespace(returncode=0, stdout=json.dumps({"artifacts": listed}))
+            if "run" in self.broken:
+                return SimpleNamespace(returncode=1, stdout="")
             return SimpleNamespace(returncode=0, stdout=json.dumps(self.runs[int(url.path.rsplit("/", 1)[1])]))
         assert argv[:3] == ["gh", "run", "download"] and argv[argv.index("-R") + 1] == REPOSITORY
         key = (int(argv[3]), argv[argv.index("-n") + 1])
-        if key not in self.files:
+        if key not in self.files or "download" in self.broken:
             return SimpleNamespace(returncode=1, stdout="")
         target = Path(argv[argv.index("-D") + 1])
         target.mkdir(parents=True, exist_ok=True)
@@ -87,14 +100,18 @@ class Actions:
         self.runs[run_id] = own(status="in_progress", conclusion=None, path=WORKFLOW_PATH, head_branch="main")
         self.monkeypatch.setattr(cli, "RUN_ROOT", root)
         restore = SimpleNamespace(from_file=None, repository=REPOSITORY, branch="main")
-        assert cli.restore_continuity(restore, runner=self.gh) == 0
+        restored = self.restores[run_id] = cli.restore_continuity(restore, runner=self.gh)
+        if restored != 0:
+            # The restore step failed: nothing after it runs but the always() steps, which find nothing to archive.
+            self.runs[run_id].update(status="completed", conclusion="failure")
+            return run_id
         day = self.days[run_id] = Day(self.monkeypatch, root)
         code = day.run(now, checkpoint, command="schedule", **kwargs)
         self.calls += day.calls
         self.published += day.published
-        self.upload(run_id, f"market-brief-run-{checkpoint}-{run_id}", now, 1)
         if code == 0 and bundle_path(root).is_file():
             self.upload(run_id, ARTIFACT_NAME, now, 2, bundle_path(root).read_bytes())
+        self.upload(run_id, f"market-brief-run-{checkpoint}-{run_id}", now, 3)
         failed = code != 0 or publication != "success"
         self.runs[run_id].update(status="completed", conclusion="failure" if failed else "success")
         return run_id
@@ -256,3 +273,128 @@ def test_the_workflow_uploads_continuity_only_after_acceptance_and_before_public
                              ("deploy", "uses: actions/deploy-pages@"))
     }
     assert all(positions and min(positions) > index for positions in publication.values()), publication
+
+
+PUBLICATION = ("git push", "uses: actions/configure-pages@", "uses: actions/upload-pages-artifact@",
+               "uses: actions/deploy-pages@")
+
+
+def test_the_diagnostic_archive_cannot_gate_continuity_or_publication():
+    """A failed step turns off every later step that inherits success(). The run archive is diagnostic, so it and
+    every other step that runs whatever happened before it (always(), failure(), cancelled()) come after the
+    continuity upload and every publication step: an archive failure can decide neither. The archive still runs
+    always(), so a rejected synthesis or a failed publication is archived too."""
+    steps = workflow_steps("brief")
+    gated = [i for i, step in enumerate(steps)
+             if re.search(rf"^          name: {ARTIFACT_NAME}$", step["text"], re.M)
+             or any(marker in step["code"] for marker in PUBLICATION)]
+    assert len(gated) == 1 + len(PUBLICATION)
+    independent = [i for i, step in enumerate(steps) if re.search(r"\b(always|failure|cancelled)\s*\(", step["code"])]
+    assert independent and min(independent) > max(gated), (independent, gated)
+    archive = [i for i, step in enumerate(steps) if "name: market-brief-run-" in step["code"]]
+    assert len(archive) == 1 and archive[0] in independent
+    assert "uses: actions/upload-artifact@" in steps[archive[0]]["code"]
+    assert re.search(r"^        if: always\(\) && ", steps[archive[0]]["code"], re.M)
+
+
+# --- a restore that cannot finish stops the run; only absence is a cold start -----------------------------------
+
+def test_no_accepted_artifact_is_a_cold_start_and_the_run_goes_on(actions, capsys):
+    first = actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
+    assert actions.restores[first] == 0
+    assert "Continuity: cold start; no accepted bundle from a main-branch run." in capsys.readouterr().out
+    assert actions.calls == ["PREMARKET"] and actions.published == ["PREMARKET"]
+    assert actions.bundle(first)["interpretation"]["origin"]["checkpoint"] == "PREMARKET"
+
+
+def test_a_foreign_artifact_alone_is_still_absence(actions):
+    """Ineligible is not an error: a fork's same-named artifact is passed over and the run cold starts."""
+    actions.runs[999] = dict(own(conclusion="success", path=WORKFLOW_PATH, head_branch="main"),
+                             head_repository=dict(id=77, full_name="someone/fork"))
+    actions.upload(999, ARTIFACT_NAME, f"{TUE}T12:00:00+00:00", 0, b"{}")
+    first = actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
+    assert actions.restores[first] == 0 and actions.downloads == [] and actions.calls == ["PREMARKET"]
+
+
+@pytest.mark.parametrize("broken", ["list", "run", "download"])
+def test_a_restore_that_cannot_finish_stops_the_run_and_accepted_state_survives(actions, capsys, broken):
+    premarket = actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
+    structure = actions.run(f"{TUE}T14:01:00+00:00", "OPEN_30M")
+    capsys.readouterr()
+    actions.broken = {broken}
+    failed = actions.run(f"{TUE}T15:01:00+00:00", "HOURLY_1100")
+    actions.broken = set()
+    assert actions.restores[failed] == 2 and actions.runs[failed]["conclusion"] == "failure"
+    assert "Continuity: restore failed (ValueError); stopping before collection." in capsys.readouterr().out
+    # Nothing after the restore ran: no collection, no bundle, no page, no artifact of any kind.
+    assert failed not in actions.days and not bundle_path(actions.tmp_path / f"runner-{failed}").exists()
+    assert [a["name"] for a in actions.artifacts if a["workflow_run"]["id"] == failed] == []
+    assert actions.published == ["PREMARKET", "OPEN_30M"]
+    # So no cold bundle replaced accepted state: the next run restores the structure update's.
+    refresh = actions.run(f"{TUE}T16:01:00+00:00", "HOURLY_1200")
+    assert actions.downloads == [premarket, structure]
+    metadata = actions.days[refresh].metadata("HOURLY_1200")
+    assert metadata["interpretation"]["checkpoint"] == "OPEN_30M"
+    assert metadata["continuity"]["anchors"]["latest"] == actions.bundle(structure)["latest"]["origin"]["run_id"]
+    assert actions.calls == ["PREMARKET", "OPEN_30M"]
+
+
+def answering(listing="", lookup="", download=None, raises=None):
+    """A `gh` runner: the artifact listing and the run lookup print these, the download writes `download` as
+    bundle.json (or nothing, exiting 0), and `raises`, when given, is raised by every call."""
+    def runner(argv, **kwargs):
+        if raises is not None:
+            raise raises
+        if argv[:2] == ["gh", "api"]:
+            return SimpleNamespace(returncode=0, stdout=listing if "artifacts" in argv[2] else lookup)
+        if download is not None:
+            target = Path(argv[argv.index("-D") + 1])
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "bundle.json").write_text(download)
+        return SimpleNamespace(returncode=0, stdout="")
+    return runner
+
+
+LISTED = json.dumps({"artifacts": [artifact(7, 99, "2026-09-08T14:03:00Z")]})
+OWN_RUN = json.dumps(own(conclusion="success", path=WORKFLOW_PATH))
+
+
+@pytest.mark.parametrize("runner", [
+    answering(raises=subprocess.TimeoutExpired(["gh"], 60)),  # the API or the download timed out
+    answering(raises=FileNotFoundError("gh")),  # the CLI is not there
+    answering(listing="<html>rate limited</html>"),  # a listing that is not the API's JSON
+    answering(listing="[]"),  # nor a JSON object
+    answering(listing=LISTED, lookup="{"),  # a run lookup that is not JSON
+    answering(listing=LISTED, lookup=OWN_RUN),  # a download that exits 0 and writes no bundle
+], ids=["timeout", "no-gh", "unreadable-listing", "listing-not-an-object", "unreadable-run", "empty-download"])
+def test_every_restore_error_returns_non_zero_and_installs_nothing(tmp_path, monkeypatch, runner):
+    monkeypatch.setattr(cli, "RUN_ROOT", tmp_path)
+    args = SimpleNamespace(from_file=None, repository=REPOSITORY, branch="main")
+    assert cli.restore_continuity(args, runner=runner) == 2
+    assert not bundle_path(tmp_path).exists()
+
+
+def test_a_successful_restore_is_unchanged(tmp_path, monkeypatch, actions):
+    premarket = actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
+    monkeypatch.setattr(cli, "RUN_ROOT", tmp_path)
+    args = SimpleNamespace(from_file=None, repository=REPOSITORY, branch="main")
+    runner = answering(listing=json.dumps({"artifacts": actions.artifacts}), lookup=OWN_RUN,
+                       download=actions.files[premarket, ARTIFACT_NAME].decode())
+    assert cli.restore_continuity(args, runner=runner) == 0
+    assert json.loads(bundle_path(tmp_path).read_text()) == actions.bundle(premarket)
+
+
+def test_a_failed_restore_stops_the_workflow_before_collection():
+    steps = workflow_steps("brief")
+    restore = [i for i, step in enumerate(steps) if "python -m market_brief continuity-restore" in step["code"]]
+    pipeline = [i for i, step in enumerate(steps)
+                if re.search(r"python -m market_brief (premarket|schedule)\b", step["code"])]
+    assert len(restore) == 1 and pipeline and restore[0] < min(pipeline)
+    # Its exit status is the step's: nothing swallows it, and nothing after it that collects, uploads continuity
+    # or publishes runs whatever came before (they all inherit success()).
+    code = steps[restore[0]]["code"]
+    assert "continue-on-error" not in code and not re.search(r"\|\|\s*(true|:)|set \+e|exit 0", code)
+    gated = [*pipeline, *(i for i, step in enumerate(steps)
+                          if re.search(rf"^          name: {ARTIFACT_NAME}$", step["text"], re.M)
+                          or any(marker in step["code"] for marker in PUBLICATION))]
+    assert all(not re.search(r"\b(always|failure|cancelled)\s*\(", steps[i]["code"]) for i in gated)

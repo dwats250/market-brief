@@ -457,7 +457,10 @@ def _gh_json(args, runner=subprocess.run):
 def restore_continuity(args, runner=subprocess.run):
     """Install the newest accepted production bundle from a prior runner, or cold start explicitly.
 
-    Never fails the job: an absent, foreign, or corrupt bundle produces a current-only brief.
+    Only the absence of accepted state is a cold start: no eligible artifact (none yet, or only foreign, ineligible
+    or expired ones), or a bundle whose records the content rules drop. A restore that cannot finish (the GitHub
+    API, a run lookup, the download, a timeout, installing the bundle) returns non-zero, so the workflow stops
+    before collection: a cold bundle from this run would otherwise replace accepted state for every later run.
     """
     destination = bundle_path(RUN_ROOT)
     try:
@@ -483,6 +486,9 @@ def restore_continuity(args, runner=subprocess.run):
             if result.returncode != 0:
                 raise ValueError("artifact download failed")
             source = download / "bundle.json"
+            if not source.is_file():
+                # The accepted artifact exists; a download that yields no bundle is a failed restore, not absence.
+                raise ValueError("artifact download held no bundle")
             origin = f"artifact {artifact.get('id')} from run {artifact['workflow_run']['id']}"
         bundle, note = restore_bundle(source, destination)
         slots = {slot: (bundle[slot]["origin"]["run_id"] if bundle.get(slot) else None) for slot in SLOTS}
@@ -491,8 +497,9 @@ def restore_continuity(args, runner=subprocess.run):
                   + (f"; {note}" if note else ""))
         else:
             print(f"Continuity: cold start; {origin} held no usable production state" + (f" ({note})" if note else ""))
-    except (ValueError, OSError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
-        print(f"Continuity: cold start; restore failed ({type(exc).__name__}).")
+    except (ValueError, OSError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired) as exc:
+        print(f"Continuity: restore failed ({type(exc).__name__}); stopping before collection.")
+        return 2
     return 0
 
 

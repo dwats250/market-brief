@@ -1,3 +1,4 @@
+import http.client
 import json
 
 import pytest
@@ -496,6 +497,81 @@ def test_transport_failure_makes_one_http_request_and_enables_metadata(monkeypat
     with pytest.raises(ValueError, match="no automatic paid retry"):
         synthesize_openrouter(fixture_packet(), api_key="fake")
     assert len(calls) == 1
+
+
+class Returned:
+    """A 200 from the fake transport: this JSON body, or `fault` raised while the body is read."""
+    status = 200
+
+    def __init__(self, body=None, fault=None):
+        self.body, self.fault = json.dumps(body).encode(), fault
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def read(self, limit):
+        if self.fault:
+            raise self.fault
+        return self.body
+
+
+def send_through_transport(monkeypatch, answer):
+    """One synthesis through the real `_openrouter_post`, `answer(request)` standing in for urlopen: the requests
+    sent, the paid-attempt hooks fired, and the error raised."""
+    import importlib
+    module = importlib.import_module("market_brief.synthesize")
+    requests, hooks = [], []
+
+    def fake_urlopen(request, timeout):
+        requests.append(request)
+        return answer(request)
+
+    monkeypatch.setattr(module, "urlopen", fake_urlopen)
+    with pytest.raises(ValueError) as caught:
+        synthesize_openrouter(fixture_packet(), api_key="fake", on_request=hooks.append)
+    return requests, hooks, caught.value
+
+
+def raise_(exc):
+    raise exc
+
+
+@pytest.mark.parametrize("answer", [
+    lambda request: Returned(fault=http.client.IncompleteRead(b'{"choi', 4000)),  # the body stops short
+    lambda request: raise_(http.client.BadStatusLine("garbage")),
+    lambda request: raise_(http.client.LineTooLong("header line")),
+], ids=["IncompleteRead", "BadStatusLine", "LineTooLong"])
+def test_http_client_faults_after_the_request_take_the_no_retry_transport_path(monkeypatch, answer):
+    requests, hooks, error = send_through_transport(monkeypatch, answer)
+    assert "OpenRouter transport failure; no automatic paid retry" in str(error)
+    # One request, accounted once as the paid attempt it may have been.
+    assert len(requests) == 1 and len(hooks) == 1 and error.attempt["attempts"] == 1
+
+
+COST = {"prompt_tokens": 2200, "completion_tokens": 3100, "total_tokens": 5300, "cost": 0.154}
+
+
+@pytest.mark.parametrize(("body", "expected"), [
+    (["not", "an", "object"], "OpenRouter returned a malformed response (list body)"),
+    ({"id": "gen-1", "model": OPENROUTER_MODEL, "choices": ["nope"], "usage": COST},
+     "OpenRouter returned a malformed synthesis choice (str)"),
+    ({"id": "gen-1", "model": OPENROUTER_MODEL, "choices": [{"finish_reason": "stop", "message": "nope"}],
+      "usage": COST}, "OpenRouter returned a malformed synthesis message (str)"),
+    ({"id": "gen-1", "model": OPENROUTER_MODEL, "usage": COST,
+      "choices": [{"finish_reason": "stop", "message": {"content": [{"type": "text", "text": 7}]}}]},
+     "OpenRouter returned no structured synthesis"),
+], ids=["list body", "string choice", "string message", "non-text content part"])
+def test_a_malformed_200_is_a_rejection_of_the_paid_attempt_never_a_crash(monkeypatch, body, expected):
+    requests, hooks, error = send_through_transport(monkeypatch, lambda request: Returned(body))
+    assert str(error).startswith(expected)
+    assert len(str(error)) < 2000 and "nope" not in str(error)  # bounded: shapes and sizes, never the content
+    assert len(requests) == 1 and len(hooks) == 1 and error.attempt["attempts"] == 1
+    if isinstance(body, dict):
+        # A billed generation came back: its cost is on the attempt whatever its shape.
+        assert error.attempt["usage"] == COST and error.attempt["response_id"] == "gen-1"
 
 
 @pytest.mark.parametrize("reasoning", [True, "1700", -1, 4001])

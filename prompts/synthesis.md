@@ -145,8 +145,8 @@ Prior facts are namespaced `anchor:evidence-id` (for example
 `premarket:SPY-intraday`). Cite them only in `changes`, `relationships`, and
 `watch_updates`, alongside current IDs; the banner, summary, take, sections,
 `character`, and new watches cite current IDs only. A comparison row's `id`
-(`cmp-...`) is never an evidence ID: it belongs only in `comparison_id`. To
-cite what a comparison measured, use its `prior_ref` and `current_ref`. Inside
+(`cmp-...`) is never an evidence ID: it belongs only in `comparison_id`. A
+change cites only its comparison's `prior_ref` and `current_ref`. Inside
 those three records a numeric placeholder may use a prior ref like a current
 one.
 

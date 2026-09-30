@@ -80,6 +80,16 @@ def curve_freshness(curve_date, run_date):
     return dict(status=status, expected=expected.isoformat(), age_days=age)
 
 
+def stale_movement(packet, row):
+    """A daily yield change or spread change on a stale curve (the saved record's `curve_freshness`).
+
+    The page stops presenting that move as current once the curve is stale (the rates module blanks the changes and
+    names no move), so it is not evidence of current movement for the analyst either: the authority filter and the
+    deterministic comparisons leave it out. Levels stay, dated, and the row stays in the evidence record.
+    """
+    return row.get("metric") in (CHANGE, SPREAD_CHANGE) and (packet.get("curve") or {}).get("freshness") == "stale"
+
+
 def classify(d2, d10, long_change=None, threshold=3.0):
     """Name the move between two daily entries from integer 2Y and 10Y changes (bp), rules applied in order.
 

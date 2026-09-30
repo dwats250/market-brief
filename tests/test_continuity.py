@@ -227,6 +227,10 @@ def test_provisional_near_close_prints_advance_a_labeled_handoff_and_carry_next_
     assert prior["next_events"][0]["id"] == "wed-release"
     # The event is rechecked from current collection and keeps its own date.
     assert next(e for e in wednesday["events"] if e["id"] == "wed-release")["session_relation"] == "BEFORE OPEN"
+    # The fixture re-dates the same closes, so Tuesday's completed bar is given a return of its own: a later
+    # entry at the same value would not be a move.
+    daily = next(row for row in wednesday["derived"] if row["id"] == "SPY-daily")
+    daily["value"] = round(daily["value"] + 0.25, 6)
     comparisons = {c["id"]: c for c in compare_all(prior, wednesday)}
     assert comparisons["cmp-previous_close-SPY-daily"]["status"] == "changed"
     assert comparisons["cmp-previous_close-SPY-daily"]["prior_observed_at"] == "2026-09-04"
@@ -330,6 +334,85 @@ def test_valid_change_interpretation_cites_the_deterministic_comparison():
     assert state["assessment"]["changes"][0]["comparison_id"] == "cmp-premarket-SPY-intraday"
     assert next(c for c in state["observed"]["comparisons"] if c["id"] == "cmp-premarket-SPY-intraday")["delta"] == \
         pytest.approx(0.74)
+
+
+# --- a `changed` comparison is a later entry whose value moved ---------------------------------------------
+
+def spy_since_premarket(value, observed_at=None):
+    """The OPEN_30M edition's packet, light context and SPY comparison against the premarket anchor, with this run's
+    print at `value` (and, when given, stamped `observed_at` instead of four minutes before the run)."""
+    _, handoff = friday_close()
+    bundle = advance_bundle(empty_bundle(), _, handoff, utc(CLOSE_FRI))
+    premarket = run_packet(PREMARKET_TUE, "sample-premarket-124500-tue", intraday_value=-0.53)  # printed 12:41 UTC
+    _, _, _, state = accept(premarket, bundle, session_watch_narrative())
+    bundle = advance_bundle(bundle, state, None, utc(PREMARKET_TUE))
+    afternoon = run_packet(AFTERNOON_TUE, "sample-afternoon-191000-tue", checkpoint="OPEN_30M", intraday_value=value)
+    if observed_at:
+        next(row for row in afternoon["observations"] if row["id"] == "SPY-intraday")["observed_at"] = observed_at
+    prior = admit_prior_state(bundle, afternoon)
+    comparisons = compare_all(prior, afternoon)
+    profile = edition_profile("OPEN_30M")
+    context = dict(analyst_context(afternoon, profile, comparisons, prior),
+                   **continuity_context(prior, comparisons, profile))
+    return afternoon, context, next(c for c in comparisons if c["id"] == "cmp-premarket-SPY-intraday")
+
+
+def spy_change():
+    value = trimmed(narrative(), edition_profile("OPEN_30M"))
+    value["changes"] = [dict(comparison_id="cmp-premarket-SPY-intraday", text="SPY has moved since the premarket.",
+                             evidence_ids=["SPY-intraday", "premarket:SPY-intraday"])]
+    return value
+
+
+@pytest.mark.parametrize(("value", "observed_at", "status", "reason"), [
+    (-0.53, None, "no_new_observation", "same value as the prior state"),  # a later print at the same value
+    (0.21, "2026-09-08T12:30:00+00:00", "not_comparable", "current observation predates the prior state"),
+    (0.21, None, "changed", ""),  # a later print that moved
+], ids=["newer-same-value", "older-current", "genuine-move"])
+def test_only_a_later_entry_that_moved_is_changed_and_can_be_interpreted(value, observed_at, status, reason):
+    packet, context, comparison = spy_since_premarket(value, observed_at)
+    assert (comparison["status"], comparison["reason"]) == (status, reason)
+    assert (comparison["delta"] is None) == (status != "changed")
+    if status == "changed":
+        assert comparison["delta"] == pytest.approx(0.74)
+        assert validate_narrative(spy_change(), packet, context)
+    else:
+        with pytest.raises(ValueError, match="only a deterministic changed comparison can be interpreted"):
+            validate_narrative(spy_change(), packet, context)
+
+
+@pytest.mark.parametrize(("day", "value", "status"), [
+    ("2026-09-24", 5.18, "no_new_observation"),  # the next entry at the same yield
+    ("2026-09-22", 5.30, "not_comparable"),  # an entry dated before the prior state
+    ("2026-09-24", 5.30, "changed"),
+])
+def test_daily_entries_follow_the_same_rule(day, value, status):
+    from test_curve import SEP24_CHANGES, rates_packet, rows_for
+
+    from market_brief.continuity import _snapshot, compare_anchor
+    earlier = rates_packet(utc("2026-09-24T13:00:00+00:00"),
+                           rows_for("2026-09-23", {"2Y": 4.87, "5Y": 5.03, "10Y": 5.18, "30Y": 5.47}, SEP24_CHANGES))
+    later = rates_packet(utc("2026-09-25T13:00:00+00:00"),
+                         rows_for(day, {"2Y": 4.87, "5Y": 5.03, "10Y": value, "30Y": 5.47}, SEP24_CHANGES,
+                                  prior="2026-09-21"))
+    prior = next(row for row in earlier["observations"] if row["id"] == "treasury-10y")
+    [comparison] = compare_anchor("previous_close", {"treasury-10y": _snapshot(prior, "earlier-run")}, later)
+    assert comparison["status"] == status
+
+
+@pytest.mark.parametrize(("fields", "reason"), [
+    (dict(delta=0), "same value as the prior state"),
+    (dict(current_observed_at="2026-09-08T12:30:00+00:00"), "current observation predates the prior state"),
+    (dict(current_observed_at=None), "observation clocks cannot be ordered"),
+])
+def test_validation_rechecks_the_move_whatever_the_record_is_labelled(fields, reason):
+    """A context carried from older code, or edited, can label a non-move `changed`; the validator re-derives it."""
+    packet, context, comparison = spy_since_premarket(0.21)
+    record = next(c for c in context["comparisons"] if c["id"] == comparison["id"])
+    assert record["status"] == "changed"
+    record.update(fields)
+    with pytest.raises(ValueError, match=f"change names a comparison that is not a move: {reason}$"):
+        validate_narrative(spy_change(), packet, context)
 
 
 # --- missing, stale, corrupt, or foreign state means an explicit cold start -------------------

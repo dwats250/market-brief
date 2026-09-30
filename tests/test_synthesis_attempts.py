@@ -8,6 +8,7 @@ never pays for a checkpoint that has one. Attempt records are accounting, never 
 restores or renders them. A rejected generation's metadata records the paid call it was.
 """
 
+import http.client
 import json
 import re
 from types import SimpleNamespace
@@ -51,6 +52,14 @@ class Served:
         return self.body
 
 
+class CutOff(Served):
+    def __init__(self):
+        super().__init__({})
+
+    def read(self, limit):
+        raise http.client.IncompleteRead(b'{"id": "gen-1", "choi', 4000)
+
+
 class PaidActions(Actions):
     """R1's model of schedule.yml on main, now paying through the real analyst path.
 
@@ -83,6 +92,12 @@ class PaidActions(Actions):
         self.requests.append(checkpoint)
         if self.verdict == "timeout":
             raise TimeoutError()
+        if self.verdict == "incomplete":
+            return CutOff()  # the response body stops short: http.client.IncompleteRead on read
+        if self.verdict == "malformed":
+            # A billed 200 whose choice is not an object.
+            return Served({"id": "gen-1", "model": OPENROUTER_MODEL, "provider": "Anthropic",
+                           "choices": ["not a choice"], "usage": COST})
         value = edition_response(edition_profile(checkpoint), context)
         value["mode"] = "LIVE"
         if self.verdict == "reject":
@@ -100,13 +115,17 @@ class PaidActions(Actions):
         self.runs[run_id] = own(status="in_progress", conclusion=None, path=WORKFLOW_PATH, head_branch="main")
         self.monkeypatch.setattr(cli, "RUN_ROOT", root)
         restore = SimpleNamespace(from_file=None, repository=REPOSITORY, branch="main")
-        assert cli.restore_continuity(restore, runner=self.gh) == 0
+        restored = self.restores[run_id] = cli.restore_continuity(restore, runner=self.gh)
+        if restored != 0:
+            # The restore step failed: no pipeline ran, so no request was sent and there is no record to upload.
+            self.runs[run_id].update(status="completed", conclusion="failure")
+            return run_id
         day = self.days[run_id] = Day(self.monkeypatch, root)
         code = day.run(now, checkpoint, command=command, wire=True, **kwargs)
         self.published += day.published
-        self.upload(run_id, f"market-brief-run-{checkpoint}-{run_id}", now, 1)
         if code == 0 and bundle_path(root).is_file() and continuity_upload == "success":
             self.upload(run_id, ARTIFACT_NAME, now, 2, bundle_path(root).read_bytes())
+        self.upload(run_id, f"market-brief-run-{checkpoint}-{run_id}", now, 3)
         # The workflow's last steps, always(): whatever the pipeline, the continuity upload or publication did.
         for record in sorted((root / "runs/attempts").glob("*.json")):
             self.upload(run_id, f"{cli.ATTEMPT_ARTIFACT}-{record.stem}", now, 5, record.read_bytes())
@@ -244,9 +263,13 @@ def test_a_weekend_manual_run_never_consumes_the_next_sessions_checkpoint(action
 
 # --- a rejected generation is accounted as the paid call it was ---------------------------------------------
 
-@pytest.mark.parametrize("verdict", ["reject", "timeout"])
-def test_a_rejected_generation_records_the_paid_call_truthfully(actions, verdict):
+@pytest.mark.parametrize("verdict", ["reject", "timeout", "incomplete", "malformed"])
+def test_a_rejected_generation_records_the_paid_call_truthfully(actions, capsys, verdict):
+    """Whatever came back (a rejected narrative, nothing, a body cut off mid-read, or a 200 in the wrong shape), the
+    run ends as a diagnosed rejection of the one paid call it made, and the checkpoint stays spent."""
     run_id = actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False, verdict=verdict)
+    assert actions.runs[run_id]["conclusion"] == "failure"
+    assert "Brief not accepted:" in capsys.readouterr().err
     metadata = actions.metadata(run_id, "PREMARKET")
     assert metadata["validation"] == "FAILED"
     assert metadata["synthesis"] == dict(kind="synthesis", calls=1)
@@ -254,11 +277,13 @@ def test_a_rejected_generation_records_the_paid_call_truthfully(actions, verdict
     model = metadata["model"]
     assert model["attempts"] == 1 and model["requested_model"] == OPENROUTER_MODEL and model["profile"] == "rich"
     assert model["requested_at"] and model["prompt_hash"] and model["evidence_hash"]
-    if verdict == "reject":
+    if verdict in ("reject", "malformed"):
         # A generation came back and was billed: its usage and cost are on record, as for an accepted one.
         assert model["usage"] == COST and model["response_id"] == "gen-1"
-        assert model["resolved_model"] == OPENROUTER_MODEL and model["finish_reason"] == "stop"
-        assert "unsupplied evidence reference" in metadata["error"]
+        assert model["resolved_model"] == OPENROUTER_MODEL
+        assert model["finish_reason"] == ("stop" if verdict == "reject" else "unknown")
+        assert ("unsupplied evidence reference" if verdict == "reject"
+                else "malformed synthesis choice (str)") in metadata["error"]
     else:
         assert "usage" not in model and "no automatic paid retry" in metadata["error"]
     assert metadata["attempt_record"] == f"runs/attempts/{TUE}-PREMARKET.json"
@@ -266,6 +291,10 @@ def test_a_rejected_generation_records_the_paid_call_truthfully(actions, verdict
     assert record == dict(schema_version=cli.ATTEMPT_SCHEMA, session_date=TUE, checkpoint="PREMARKET",
                           run_id=metadata["run_id"], route="openrouter", requested_model=OPENROUTER_MODEL,
                           requested_at=model["requested_at"])
+    # A fresh runner inside the window finds the record and sends nothing.
+    actions.run(f"{TUE}T13:11:00+00:00", "PREMARKET", intraday=False)
+    assert "SKIP / PREMARKET / paid synthesis already attempted" in capsys.readouterr().out
+    assert actions.requests == ["PREMARKET"]
 
 
 def test_a_failure_before_any_request_is_neither_a_call_nor_an_attempt(actions, monkeypatch):

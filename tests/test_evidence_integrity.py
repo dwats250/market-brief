@@ -103,9 +103,10 @@ def test_a_stale_change_cannot_back_the_narrative_but_a_dated_level_can():
 
 
 def comparisons_of(packet, day):
-    """Deterministic comparisons of the 10Y level and daily change against snapshots of an earlier entry."""
+    """Deterministic comparisons of the 10Y level and daily change against snapshots of an earlier entry, one unit
+    away (a later entry at the same value is not a move)."""
     rows = {row["id"]: row for row in packet["observations"]}
-    snapshots = {ident: dict(_snapshot(rows[ident], "earlier-run"), observed_at=day)
+    snapshots = {ident: dict(_snapshot(rows[ident], "earlier-run"), observed_at=day, value=rows[ident]["value"] - 1)
                  for ident in ("treasury-10y", "treasury-10y-change")}
     return {c["prior_ref"]: c for c in compare_anchor("previous_close", snapshots, packet)}
 

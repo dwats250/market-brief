@@ -141,7 +141,8 @@ jobs:
       - name: Restore continuity bundle from the last accepted production run
         # Short-horizon operational continuity: the newest unexpired bundle uploaded by a main-branch run
         # of this workflow. The upload proves acceptance, so a push or Pages failure after it does not
-        # disqualify the bundle; a cancelled run does. Anything else is an explicit cold start.
+        # disqualify the bundle; a cancelled run does. No eligible bundle is an explicit cold start; a restore
+        # that cannot finish fails this step, so the run stops before collection and uploads no cold bundle.
         if: steps.checkpoint.outputs.run == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -181,17 +182,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
-      - name: Archive this run's evidence, context, narrative, and metadata
-        # Outside the Pages payload and Git history; thirty-day retention, not a historical store.
-        if: always() && steps.checkpoint.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: market-brief-run-${{ steps.checkpoint.outputs.checkpoint }}-${{ github.run_id }}
-          path: |
-            runs/
-            !runs/continuity/
-          if-no-files-found: ignore
-          retention-days: 30
       - name: Upload accepted continuity bundle
         # Only after local acceptance: the bundle is written solely by accepted LIVE, non-experiment,
         # non-commissioning runs. This step inherits success() (no status function here, no
@@ -228,6 +218,19 @@ jobs:
         if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Archive this run's evidence, context, narrative, and metadata
+        # Outside the Pages payload and Git history; thirty-day retention, not a historical store. Diagnostic only,
+        # so it comes after the continuity upload and publication, where its own failure can gate neither, and runs
+        # always(), so a rejected synthesis or a failed publication is still archived.
+        if: always() && steps.checkpoint.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-brief-run-${{ steps.checkpoint.outputs.checkpoint }}-${{ github.run_id }}
+          path: |
+            runs/
+            !runs/continuity/
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Name this run's paid synthesis attempt
         # A production synthesis writes runs/attempts/<session>-<checkpoint>.json before its provider request is
         # sent, whatever it then does. These two steps come last and run always(), so they record a rejected or

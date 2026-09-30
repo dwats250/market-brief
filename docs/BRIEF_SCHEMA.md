@@ -79,7 +79,7 @@ are caller-owned provenance in `metadata.json`. Fields:
   when the watch is not `assessable` on current comparisons. A verdict is the change: the same
   move is not written again as a `changes` or `relationships` record.
 - `changes`: up to three, each naming a deterministic `changed` comparison ID and citing only that comparison's
-  `current_ref` and `prior_ref`.
+  `current_ref` and `prior_ref`. A comparison is `changed` only for a later entry whose value moved.
 
 Prior facts are cited as `anchor:evidence-id` (`previous_close:`, `premarket:`, `latest:`) and
 only inside the three continuity records above.

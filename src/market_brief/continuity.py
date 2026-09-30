@@ -9,7 +9,7 @@ factual record remains usable on its own.
 
 import json
 import uuid
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import exchange_calendars as xcals
@@ -355,8 +355,35 @@ def _observation_date(row):
     return value
 
 
+def _observed_clock(value):
+    """An observation's place in time: a timestamp as given, a date at the start of its ET day."""
+    if "T" in value:
+        return timestamp(value)
+    return datetime.combine(date.fromisoformat(value), time.min, tzinfo=ET)
+
+
+def _move(prior_observed_at, current_observed_at, delta):
+    """(status, reason) for an entry of the same measurement: `changed` only when it is later and its value moved.
+
+    The same value at a later entry is nothing new to interpret, and an entry dated before the prior state (or whose
+    clocks cannot be ordered) is no forward comparison at all. `compare_anchor` labels comparisons by this rule and
+    `validate_state` re-checks every change against it.
+    """
+    try:
+        current, prior = _observed_clock(current_observed_at), _observed_clock(prior_observed_at)
+    except (TypeError, ValueError):
+        return "not_comparable", "observation clocks cannot be ordered"
+    if current < prior:
+        return "not_comparable", "current observation predates the prior state"
+    if current == prior:
+        return "no_new_observation", "same observation as the prior state"
+    if not delta:
+        return "no_new_observation", "same value as the prior state"
+    return "changed", ""
+
+
 def compare_anchor(anchor, snapshots, packet):
-    """Mathematically valid change only: same identity, compatible basis and session."""
+    """Mathematically valid change only: same identity, compatible basis and session, a later entry that moved."""
     current = _current_by_key(packet)
     comparisons = []
     for ident, prior in snapshots.items():
@@ -379,7 +406,9 @@ def compare_anchor(anchor, snapshots, packet):
         elif row["observed_at"] == prior["observed_at"]:
             record.update(status="no_new_observation", reason="same observation as the prior state")
         else:
-            record.update(status="changed", reason="", delta=round(row["value"] - prior["value"], 6))
+            delta = round(row["value"] - prior["value"], 6)
+            status, reason = _move(prior["observed_at"], row["observed_at"], delta)
+            record.update(status=status, reason=reason, delta=delta if status == "changed" else None)
         comparisons.append(record)
     return comparisons
 
@@ -537,6 +566,11 @@ def validate_state(narrative, context, shown, topics):
         seen.add(change["comparison_id"])
         if comparison["status"] != "changed":
             raise ValueError("only a deterministic changed comparison can be interpreted as a change")
+        # A move is a later entry whose value moved, whatever label the record carries.
+        status, reason = _move(comparison.get("prior_observed_at"), comparison.get("current_observed_at"),
+                               comparison.get("delta"))
+        if status != "changed":
+            raise ValueError(f"change names a comparison that is not a move: {reason}")
         # Bound to what the comparison measured: its own current and prior operands, nothing else admitted.
         foreign = set(change["evidence_ids"]) - {comparison.get("current_ref"), comparison.get("prior_ref")}
         if foreign:

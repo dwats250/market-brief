@@ -467,7 +467,9 @@ def test_a_carried_take_keeps_the_values_and_clock_its_analyst_saw(monkeypatch, 
     day = Day(monkeypatch, tmp_path)
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
     assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M") == 0
-    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", mutate=opening_take) == 0
+    # QQQ has moved since the opening print, so the analysis has a measured change behind it.
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", mutate=opening_take,
+                   prints=(("SPY", -0.53), ("QQQ", -0.48), ("XLI", 0.4))) == 0
     later = (("SPY", 0.80), ("QQQ", 0.95), ("XLI", 0.40))
     assert day.run(f"{TUE}T17:01:00+00:00", "HOURLY_1300", prints=later) == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]

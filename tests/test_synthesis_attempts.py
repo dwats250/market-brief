@@ -11,6 +11,7 @@ restores or renders them. A rejected generation's metadata records the paid call
 import http.client
 import json
 import re
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -179,18 +180,64 @@ def test_a_rejected_synthesis_is_never_paid_for_again(actions, capsys):
 
 
 
-def test_a_double_fired_recovery_tick_pays_the_opening_synthesis_once(actions, capsys):
-    """Scheduler liveness: at 14:01 EDT the Worker clears the stalled 13:31 wake, and a double-fired tick runs two
-    replacement wakes. The first pays for OPEN_30M and is rejected; the second finds its attempt record and pays
-    nothing. Recovery never adds a paid request."""
+# --- scheduler liveness: recovery never adds a paid request (scenario D) -----------------------------------
+
+def stalled_opening_lane():
+    """The real Worker's 14:01 UTC (10:01 EDT) tick on TUE: the 13:01 wake ran PREMARKET at once; the 13:31 wake
+    took the group and its brief job never got a runner."""
+    from test_cloudflare_liveness import ran_jobs, stuck_jobs, utc, wake
+    premarket, stalled = utc(f"{TUE}T13:01:42+00:00"), utc(f"{TUE}T13:31:42+00:00")
+    return utc(f"{TUE}T14:01:00+00:00"), [
+        wake(1, 1, premarket, status="completed", conclusion="success",
+             jobs=ran_jobs(10, premarket, premarket + timedelta(seconds=6), premarket + timedelta(minutes=2))),
+        wake(2, 2, stalled, jobs=stuck_jobs(20, stalled + timedelta(seconds=2)))]
+
+
+def test_a_double_fired_recovery_tick_pays_the_opening_synthesis_once(actions, capsys, tmp_path):
+    """The real Worker, fired twice for the 14:01 UTC tick, clears the stalled 13:31 wake once and dispatches two
+    wakes. Both resolve OPEN_30M: the first pays and is rejected; the second finds the attempt record and pays
+    nothing."""
+    from test_cloudflare_liveness import Worker
+    worker = Worker(tmp_path)
+    try:
+        tick, runs = stalled_opening_lane()
+        first = worker.tick(tick, runs)
+        second = worker.tick(tick, first.state["runs"])
+    finally:
+        worker.close()
+    assert first.cancels == [2] and second.cancels == [] and first.outcome("cleared")
+    assert len(first.dispatches) == len(second.dispatches) == 1
     actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
-    first = actions.run(f"{TUE}T14:01:53+00:00", "OPEN_30M", verdict="reject")
-    assert actions.runs[first]["conclusion"] == "failure"
+    replacement = actions.run(f"{TUE}T14:01:53+00:00", "OPEN_30M", verdict="reject")
+    assert actions.runs[replacement]["conclusion"] == "failure"
     capsys.readouterr()
-    second = actions.run(f"{TUE}T14:04:10+00:00", "OPEN_30M")
+    duplicate = actions.run(f"{TUE}T14:04:10+00:00", "OPEN_30M")
     assert "SKIP / OPEN_30M / paid synthesis already attempted" in capsys.readouterr().out
-    assert actions.requests == ["PREMARKET", "OPEN_30M"] and not actions.days[second].attempts("OPEN_30M")
-    assert actions.published == ["PREMARKET"]
+    assert actions.requests == ["PREMARKET", "OPEN_30M"] and not actions.days[duplicate].attempts("OPEN_30M")
+
+
+def test_a_cancel_that_lands_after_a_paid_request_never_pays_again(actions, capsys, tmp_path):
+    """The race between the Worker's re-read and its cancel: a runner reached the stalled wake first, it resolved
+    OPEN_30M and sent its request before the normal cancel landed. The Worker says so, and the cancelled run's
+    always() upload of its attempt record still stops every replacement from paying."""
+    from test_cloudflare_liveness import Worker
+    worker = Worker(tmp_path)
+    try:
+        tick, runs = stalled_opening_lane()
+        runs[1]["_cancel"] = "runner_first"
+        result = worker.tick(tick, runs)
+    finally:
+        worker.close()
+    assert result.cancels == [2] and result.outcome("cancelled_after_start") and not result.outcome("cleared")
+    assert "paid attempt it recorded stands" in result.dispatches[0]["inputs"]["liveness_recovery"]
+    actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
+    interrupted = actions.run(f"{TUE}T14:01:20+00:00", "OPEN_30M", verdict="timeout")
+    actions.runs[interrupted]["conclusion"] = "cancelled"  # a cancelled run's attempt record still counts
+    capsys.readouterr()
+    replacement = actions.run(f"{TUE}T14:01:53+00:00", "OPEN_30M")
+    assert "SKIP / OPEN_30M / paid synthesis already attempted" in capsys.readouterr().out
+    assert actions.requests == ["PREMARKET", "OPEN_30M"] and not actions.days[replacement].attempts("OPEN_30M")
+
 
 def test_a_manual_production_attempt_counts_and_experiments_stay_outside(actions, capsys):
     """An owner's manual production dispatch is not gated, but its paid attempt is recorded, so the scheduled wake

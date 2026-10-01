@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from test_ci_triggers import top_level
 
 ROOT = Path(__file__).parents[1]
 
@@ -117,10 +118,18 @@ def test_a_stalled_wake_is_superseded_by_a_later_checkpoint_at_the_next_wake(day
 
 
 def test_the_worker_clears_only_wakes_the_workflow_names_as_its_own():
+    """Only the Worker's exact inputs earn the wake title: a smoke test, continuity check, commissioning run or
+    experiment dispatched by hand keeps the workflow's name, so the Worker never clears it."""
     workflow = workflow_text()
     assert workflow.startswith("name: Scheduled Market Brief\n")
-    assert ("\nrun-name: ${{ inputs.cloudflare_wakeup == true && 'Cloudflare wake-up' || 'Scheduled Market Brief' }}\n"
-            in workflow)
+    assert ("\nrun-name: >-\n"
+            "  ${{ inputs.cloudflare_wakeup == true && inputs.cloudflare_smoke != true"
+            " && inputs.continuity_check != true\n"
+            "  && inputs.commissioning != true && inputs.experiment != true && 'Cloudflare wake-up' || "
+            "'Scheduled Market Brief' }}\n") in workflow
+    inputs = top_level(workflow, "on")
+    boolean = [line.strip()[:-1] for line, kind in zip(inputs, inputs[4:]) if kind.strip() == "type: boolean"]
+    assert boolean == ["commissioning", "experiment", "continuity_check", "cloudflare_wakeup", "cloudflare_smoke"]
     assert worker_constant("WAKE_TITLE") == '"Cloudflare wake-up"'
     assert worker_constant("SCHEDULE_PATH") == '".github/workflows/schedule.yml"'
 

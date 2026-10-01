@@ -15,9 +15,14 @@ const LISTED = 20;
 // is not a state the Worker understands, and it bounds the subrequests one tick can make (Free plan: fifty).
 const MOST_MEMBERS = 3;
 const REQUEST_TIMEOUT_MS = 10_000;
+// A re-read that takes longer than this is not current enough to cancel on: the run is left for the next tick.
+const REREAD_FRESH_MS = 2_000;
 const SWEEP_BUDGET_MS = 60_000;
 const CANCEL_CHECKS = 5;
 const CANCEL_CHECK_MS = 2_000;
+
+// Outcomes after which the group was freed, so the next run in the order may be cleared.
+const CLEARED = new Set(["cleared", "cancelled_after_start", "cancelled_unverified", "already_completed"]);
 
 class Unclear extends Error {}
 
@@ -104,16 +109,22 @@ async function recover(github, repository, now) {
   const order = [];
   for (const run of pending.sort((a, b) => created(b) - created(a))) {
     const reason = wakeProblem(run, repository, now, false);
-    if (reason) record(entry("left", run, now, `${reason}; pending, so it may run once the group is free`));
-    else order.push([run, false]);
+    if (reason) {
+      record(entry("left", run, now,
+        `${reason}; pending: it runs only if this tick clears the holder, otherwise this tick's wake replaces it`));
+    } else {
+      order.push([run, false]);
+    }
   }
+  // A pending wake is cancelled only while the holder is still the stalled run that qualified.
+  if (order.length > 0 && !(await reread(github, repository, now, holder, true))) return "";
   order.push([holder, true]);
 
   const outcomes = [];
   for (const [run, holds] of order) {
     const outcome = await clear(github, repository, now, run, holds);
     if (outcome) outcomes.push(outcome);
-    if (!outcome || !["cleared", "already_completed"].includes(outcome.liveness)) break;
+    if (!outcome || !CLEARED.has(outcome.liveness)) break;
   }
   return outcomes.map(describeOutcome).join("; ").slice(0, 900);
 }
@@ -175,6 +186,13 @@ function wakeProblem(run, repository, now, holds) {
   return run.jobs.some((job) => NOT_STARTED.has(job.status)) ? null : "no job is waiting";
 }
 
+// Whether a runner ever reached the job: a runner id or name, or any step.
+function reached(job) {
+  return (Number.isInteger(job.runner_id) && job.runner_id > 0)
+    || (typeof job.runner_name === "string" && job.runner_name !== "")
+    || (Array.isArray(job.steps) && job.steps.length > 0);
+}
+
 function jobProblem(job) {
   if (!Array.isArray(job.steps)) return "a job without a step list";
   if (job.steps.length > 0) return "a job has started steps";
@@ -184,8 +202,9 @@ function jobProblem(job) {
   return NOT_STARTED.has(job.status) ? null : `a job is ${job.status}`;
 }
 
-// The live-queue condition: the run before the holder got a runner within the same twenty minutes. A slow but
-// working queue is left alone, so recovery never starves it by cancelling each run just before its runner comes.
+// The live-queue condition: the run before the holder got a runner within the same twenty minutes. Clearing never
+// repeats in a row, so a slow but working queue is never starved; its first wake still waiting at the next tick
+// after a prompt run is cleared, like a stalled one.
 async function quietQueue(github, holder) {
   const before = encodeURIComponent(`<${holder.created_at}`);
   const listing = await github.read(`actions/workflows/${WORKFLOW}/runs?branch=main&per_page=1&created=${before}`);
@@ -196,15 +215,17 @@ async function quietQueue(github, holder) {
   if (!isObject(earlier) || !Number.isInteger(earlier.id) || !(created(earlier) < created(holder))) {
     throw new Unclear("the run before the holder was malformed");
   }
+  const waited = (job) => Date.parse(job.started_at) - Date.parse(job.created_at);
   const prompt = (await jobsOf(github, earlier.id)).some((job) => Number.isInteger(job.runner_id)
     && job.runner_id > 0 && Array.isArray(job.steps) && job.steps.length > 0
-    && Date.parse(job.started_at) - Date.parse(job.created_at) <= SUPERSEDED_MINUTES * 60_000);
+    && waited(job) >= 0 && waited(job) <= SUPERSEDED_MINUTES * 60_000);
   return prompt ? null : `the run before it did not get a runner within ${SUPERSEDED_MINUTES} minutes: `
     + "a slow or stalled queue is left alone";
 }
 
-async function clear(github, repository, now, run, holds) {
-  // Re-read the candidate and its jobs immediately before the cancel; any change leaves it alone.
+// Re-read a candidate and its jobs; the fresh run when it still qualifies and the read was quick, otherwise null.
+async function reread(github, repository, now, run, holds) {
+  const started = Date.now();
   let fresh;
   try {
     fresh = await github.read(`actions/runs/${run.id}`);
@@ -214,11 +235,22 @@ async function clear(github, repository, now, run, holds) {
     record(entry("left", run, now, `could not be re-read before the cancel (${describe(error)})`));
     return null;
   }
+  if (Date.now() - started > REREAD_FRESH_MS) {
+    record(entry("left", fresh, now, "the re-read was too slow to be current; left for the next tick"));
+    return null;
+  }
   const problem = wakeProblem(fresh, repository, now, holds);
   if (problem) {
     record(entry("left", fresh, now, `changed when re-read before the cancel: ${problem}`));
     return null;
   }
+  return fresh;
+}
+
+async function clear(github, repository, now, run, holds) {
+  // Re-read the candidate and its jobs immediately before the cancel; any change leaves it alone.
+  const fresh = await reread(github, repository, now, run, holds);
+  if (!fresh) return null;
 
   let answer = null;
   try {
@@ -230,9 +262,10 @@ async function clear(github, repository, now, run, holds) {
   if (answer === 409) {
     const now409 = await state(github, run.id);
     liveness = now409?.status === "completed" ? "already_completed" : "cancel_failed";
-  } else if (answer !== null && answer !== 202) {
+  } else if (answer !== null && answer !== 202 && answer < 500) {
     liveness = "cancel_failed";
   } else {
+    // 202, no answer, or a gateway error after which the cancel may still have landed: verify.
     liveness = "cancel_not_effective";
     for (let check = 0; check < CANCEL_CHECKS; check += 1) {
       await new Promise((resolve) => setTimeout(resolve, CANCEL_CHECK_MS));
@@ -243,8 +276,17 @@ async function clear(github, repository, now, run, holds) {
       }
     }
   }
+  if (liveness === "cleared") {
+    // The cancel takes no precondition: a runner could have arrived after the re-read. Say so if one did.
+    const jobs = (await state(github, `${run.id}/jobs?filter=latest&per_page=100`))?.jobs;
+    if (!Array.isArray(jobs) || !jobs.every(isObject)) liveness = "cancelled_unverified";
+    else if (jobs.some(reached)) liveness = "cancelled_after_start";
+  }
   const reason = {
     cleared: "never started (no runner, no step) and superseded by a later checkpoint; cancelled",
+    cancelled_after_start: "cancelled, but a runner or a step reached it after the re-read; any paid attempt it "
+      + "recorded stands",
+    cancelled_unverified: "cancelled; whether a runner reached it after the re-read could not be read",
     already_completed: "had already completed when the cancel landed",
     cancel_failed: `the cancel was refused${answer ? ` (HTTP ${answer})` : ""}`,
     cancel_not_effective: `the cancel did not take effect within ${CANCEL_CHECKS * CANCEL_CHECK_MS / 1000} s`,
@@ -254,9 +296,10 @@ async function clear(github, repository, now, run, holds) {
   return outcome;
 }
 
-async function state(github, id) {
+// Verification reads after a cancel; bounded by CANCEL_CHECKS, so the sweep's budget does not refuse them.
+async function state(github, path) {
   try {
-    return await github.read(`actions/runs/${id}`);
+    return await github.read(`actions/runs/${path}`, true);
   } catch {
     return null;
   }
@@ -267,6 +310,9 @@ function describeOutcome(outcome) {
     + `${outcome.age_minutes} min old)`;
   return {
     cleared: `cleared ${run}: never started (no runner, no step); superseded by a later checkpoint`,
+    cancelled_after_start: `cancelled ${run}, but a runner or step reached it after the re-read; `
+      + "any paid attempt it recorded stands",
+    cancelled_unverified: `cancelled ${run}; whether a runner reached it after the re-read is unknown`,
     already_completed: `${run} had already completed`,
     cancel_failed: `cancel of ${run} failed: ${outcome.reason}`,
     cancel_not_effective: `cancel of ${run} requested but not effective: ${outcome.reason}`,
@@ -328,8 +374,8 @@ function connect(repository, token) {
       if (bounded) init.signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
       return fetch(base + path, init);
     },
-    async read(path) {
-      if (Date.now() > github.deadline) throw new Unclear("the sweep ran out of time");
+    async read(path, verifying = false) {
+      if (!verifying && Date.now() > github.deadline) throw new Unclear("the sweep ran out of time");
       const response = await github.send("GET", path, undefined, true);
       if (!response.ok) throw new Unclear(`GitHub answered ${response.status} to a read`);
       return response.json();

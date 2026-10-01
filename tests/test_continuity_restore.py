@@ -316,6 +316,8 @@ def test_the_deploy_guard_follows_the_continuity_upload_and_the_push_and_gates_o
     assert upload < push < guard < min(pages) and len(pages) == 3
     code = steps[guard]["code"]
     assert not re.search(r"\b(always|success|failure|cancelled)\s*\(", code) and "continue-on-error" not in code
+    # A step timeout fails the run (restorable), never the job timeout's cancel (which would make it ineligible).
+    assert re.search(r"^        timeout-minutes: [1-5]$", code, re.M)
     assert not any(marker in code for marker in PUBLICATION)
     for i in pages:
         assert re.search(r"^        if: .* && steps\.current\.outputs\.deploy == 'true'$", steps[i]["code"], re.M)
@@ -363,7 +365,7 @@ class Origin:
         (clone / path).write_text(text)
         self.git(clone, "add", path)
         self.git(clone, "commit", "--quiet", "-m", message)
-        self.git(clone, "push", "--quiet", "origin", "HEAD:main")
+        self.git(clone, "push", "--quiet", "origin", "HEAD:refs/heads/main")
 
     def guard(self, clone, label="HOURLY_1400"):
         output = clone / ".output"
@@ -408,6 +410,24 @@ def test_an_unrelated_commit_on_main_does_not_hold_back_a_new_page(origin):
     origin.commit(owner, "README.md", "Market Brief, revised", "Revise the README")
     result, output = origin.guard(run)
     assert result.returncode == 0 and output == "deploy=true\n"
+
+
+def test_a_tag_named_main_never_stands_in_for_the_branch(origin):
+    stale = origin.checkout("stale")
+    origin.git(stale, "tag", "main")
+    origin.git(stale, "push", "--quiet", "origin", "refs/tags/main")
+    first = origin.checkout("first")
+    origin.commit(first, "publish/index.html", "HOURLY_1400 page", "Publish HOURLY_1400 brief")
+    result, output = origin.guard(stale)
+    assert result.returncode == 0 and output == "deploy=false\n"
+
+
+def test_a_file_the_commit_does_not_hold_is_never_deployed_unseen(origin):
+    """Pages uploads the working tree of publish/, so anything there that main does not hold blocks the deploy."""
+    run = origin.checkout("run")
+    (run / "publish/extra.html").write_text("not on main")
+    result, output = origin.guard(run)
+    assert result.returncode == 0 and output == "deploy=false\n"
 
 
 def test_a_guard_that_cannot_see_main_deploys_nothing(origin):

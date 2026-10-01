@@ -96,12 +96,19 @@ function serve(state, method, path, query, body, signal) {
     if (behaviour === "refused") return respond(403, { message: "Resource not accessible by personal access token" });
     if (run.status === "completed") return respond(409, { message: "Cannot cancel a workflow run that is completed." });
     if (behaviour === "ignored") return respond(202, {});
+    if (behaviour === "fails502") return respond(502, { message: "Bad Gateway" });
+    if (behaviour === "runner_first") {
+      // A runner reached the job after the Worker's re-read and before GitHub processed the cancel.
+      Object.assign(run.jobs[0], { status: "in_progress", runner_id: 1000005399,
+                                   runner_name: "GitHub Actions 1000005399",
+                                   steps: [{ name: "Set up job", status: "in_progress", number: 1 }] });
+    }
     run.status = "completed";
     run.conclusion = "cancelled";
     for (const job of run.jobs) {
       if (job.status !== "completed") { job.status = "completed"; job.conclusion = "cancelled"; }
     }
-    return respond(202, {});
+    return behaviour === "lands502" ? respond(502, { message: "Bad Gateway" }) : respond(202, {});
   }
   if (method === "POST" && path === "actions/workflows/schedule.yml/dispatches") {
     if (state.reject_note && body && body.inputs && "liveness_recovery" in body.inputs) {
@@ -137,6 +144,7 @@ async function invoke(scenario) {
       if (override.seen <= (override.skip || 0)) continue;
       if (override.times !== undefined && override.seen - (override.skip || 0) > override.times) continue;
       if (override.hang) return hang(init.signal);
+      if (override.delay) await new Promise((resolve) => realSetTimeout(resolve, override.delay));
       return respond(override.status || 200, override.json, override.text);
     }
     const answer = serve(state, method, path, query, body, init.signal);
@@ -543,7 +551,9 @@ def test_a_stall_tick_stays_far_inside_the_free_plan_subrequest_budget(worker):
     pages = wake(5, 16, utc("2026-09-30T18:30:00+00:00"), status="pending", path=PAGES, event="push", title="Publish")
     for runs, at in ((sep30(), TICK), (sep30() + [pending, pages], utc("2026-09-30T19:01:00+00:00"))):
         result = worker.tick(at, runs)
-        assert result.outcome("cleared") and len(result.requests) <= 20
+        # Worst case: 5 lists, 3 job lists, 2 reads for the run before the holder, 2 to re-check the holder, 9 per
+        # cleared run (re-read, cancel, 5 checks, jobs) for 3 runs and 2 dispatches: 41, under the limit of 50.
+        assert result.outcome("cleared") and len(result.requests) <= 25
 
 
 def test_more_unfinished_runs_than_one_listing_shows_cancels_nothing(worker):
@@ -654,6 +664,67 @@ def test_log_lines_are_narrow(worker):
     assert all(len(line) < 600 for line in result.logs)
 
 
+# --- the re-read and the cancel: what can change between them is detected, verified and reported -----------
+
+def test_a_runner_that_arrives_after_the_re_read_is_reported_not_called_never_started(worker):
+    result = worker.tick(TICK, sep30(cancel="runner_first"))
+    assert result.cancels == [36748511695]
+    assert not result.outcome("cleared")
+    [entry] = result.outcome("cancelled_after_start")
+    assert "after the re-read" in entry["reason"] and "paid attempt" in entry["reason"]
+    note = result.dispatches[0]["inputs"]["liveness_recovery"]
+    assert "never started" not in note and "after the re-read" in note
+
+
+def test_a_cancel_that_cannot_be_checked_afterwards_is_reported_unverified(worker):
+    result = worker.tick(TICK, sep30(), overrides=[
+        dict(method="GET", path="^actions/runs/36748511695/jobs$", skip=2, status=500, json={})])
+    assert result.cancels == [36748511695] and result.outcome("cancelled_unverified")
+    assert not result.outcome("cleared")
+
+
+def test_a_cancel_that_lands_but_answers_a_gateway_error_is_verified(worker):
+    pending = wake(36755617810, 204, utc("2026-09-30T18:01:44+00:00"), status="pending", cancel="lands502")
+    result = worker.tick(utc("2026-09-30T19:01:00+00:00"), sep30() + [pending])
+    assert result.cancels == [36755617810, 36748511695]
+    assert [entry["run_id"] for entry in result.outcome("cleared")] == [36755617810, 36748511695]
+
+
+def test_a_gateway_error_on_a_cancel_that_did_not_land_is_not_effective(worker):
+    result = worker.tick(TICK, sep30(cancel="fails502"))
+    assert result.cancels == [36748511695] and result.outcome("cancel_not_effective")
+    assert len(result.dispatches) == 1
+
+
+def test_a_slow_re_read_is_not_current_enough_to_cancel_on(worker):
+    result = worker.tick(TICK, sep30(), overrides=[
+        dict(method="GET", path="^actions/runs/36748511695$", delay=2_100, json=run_view(run_203()))])
+    assert result.cancels == [] and result.dispatches == [PLAIN_WAKEUP]
+    assert "too slow" in result.outcome("left")[0]["reason"]
+
+
+def test_a_pending_wake_is_cancelled_only_while_the_holder_still_qualifies(worker):
+    """The holder is re-checked before any pending wake is cancelled: a holder that got a runner since the first
+    read is not stalled, so nothing is cancelled at all."""
+    pending = wake(36755617810, 204, utc("2026-09-30T18:01:44+00:00"), status="pending")
+    picked_up = stuck_jobs(110000782238, T203 + timedelta(seconds=2))
+    picked_up[0].update(runner_id=1000005325, runner_name="GitHub Actions 1000005325")
+    result = worker.tick(utc("2026-09-30T19:01:00+00:00"), sep30() + [pending], overrides=[
+        dict(method="GET", path="^actions/runs/36748511695/jobs$", skip=1, json=dict(total_count=3, jobs=picked_up))])
+    assert result.cancels == [] and result.dispatches == [PLAIN_WAKEUP]
+
+
+def test_an_inverted_runner_wait_is_no_evidence_of_a_live_queue(worker):
+    previous = run_202()
+    previous["jobs"][0].update(created_at="2026-09-30T16:40:00Z", started_at="2026-09-30T15:00:00Z")
+    result = worker.tick(TICK, [previous, run_203()])
+    assert result.cancels == [] and "queue" in result.outcome("left")[0]["reason"]
+
+
+def run_view(run):
+    return {key: value for key, value in run.items() if key != "jobs" and not key.startswith("_")}
+
+
 # --- replays: one concurrency lane through a whole day, with runs resolved by the real scheduler ------------
 
 class Lane:
@@ -714,8 +785,9 @@ class Lane:
                     self.completed[checkpoint] = run["id"]
                 self.events.append((at + timedelta(minutes=2), "finish", run))
             else:
+                started = at - timedelta(minutes=2)
                 run.update(status="completed", conclusion="success",
-                           jobs=ran_jobs(100 * run["id"], at - self.wait, at - timedelta(minutes=2), at))
+                           jobs=ran_jobs(100 * run["id"], started - self.wait, started, at))
                 self.release(at)
 
     def sync(self, result, at):
@@ -735,8 +807,12 @@ class Lane:
             self.dispatch(at + timedelta(seconds=2), at)
 
     def replay(self, worker):
+        """Every tick of the day through the real Worker; with no worker, the Worker as it was before recovery."""
         for tick in self.ticks():
             self.advance(tick + timedelta(seconds=40))
+            if worker is None:
+                self.dispatch(tick + timedelta(seconds=43), tick + timedelta(seconds=41))
+                continue
             result = worker.tick(tick, self.runs)
             assert result.error is None
             self.sync(result, tick + timedelta(seconds=41))
@@ -792,9 +868,21 @@ def test_a_green_day_never_cancels(worker, day):
     assert lane.cancelled == []
 
 
-@pytest.mark.parametrize("minutes", [35, 45, 61])
-def test_a_slow_but_live_queue_is_cancelled_at_most_once(worker, minutes):
-    """Every run waits for a runner; recovery must not starve the day by cancelling each run before it starts."""
-    lane = Lane("2026-09-30", wait=timedelta(minutes=minutes)).replay(worker)
+@pytest.mark.parametrize(("day", "minutes", "recovered", "unrecovered"), [
+    ("2026-09-30", 25, ["O1", "H11", "H12", "H13", "H14", "H15", "C1"],
+     ["O1", "H11", "H12", "H13", "H14", "H15", "C1"]),
+    ("2026-09-30", 35, ["O30", "H11", "H12", "H13", "H14", "H15", "C1"],
+     ["O1", "O30", "H11", "H12", "H13", "H14", "H15", "C1"]),
+    ("2026-09-30", 61, ["H11", "H12", "H13", "H14"], ["O30", "H11", "H12", "H13", "H14", "H15", "C1"]),
+    ("2026-12-01", 61, ["O1", "H11", "H12", "H13"], ["PM", "O30", "H11", "H12", "H13", "H14", "H15", "C1"]),
+])
+def test_a_slow_but_live_queue_is_cleared_at_most_once_and_its_cost_is_pinned(worker, day, minutes, recovered,
+                                                                             unrecovered):
+    """Every run waits the same time for a runner. Clearing never repeats in a row, so recovery never starves the
+    day; but the first wake still waiting at the next tick after a prompt run is cleared like a stalled one, and in a
+    long, steady slowdown that one cancel delays every later run by a tick. The cost against no recovery at all is
+    pinned here so it stays visible (owner ruling 1 accepted the trade for recovery from a stalled wake)."""
+    lane = Lane(day, wait=timedelta(minutes=minutes)).replay(worker)
     assert len(lane.cancelled) <= 1
-    assert published(lane)
+    assert published(lane) == recovered
+    assert published(Lane(day, wait=timedelta(minutes=minutes)).replay(None)) == unrecovered

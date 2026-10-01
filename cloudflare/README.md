@@ -27,16 +27,22 @@ repository's own `schedule.yml` dispatch on `main`, first attempt, named
 "Cloudflare wake-up" by the workflow's `run-name`; no job ever had a runner or
 a step; it is at least twenty minutes old (`TOLERANCE_MINUTES["synthesis"]`),
 which it first is at the next wake, when a later checkpoint has superseded it;
-and the run before it got a runner within those twenty minutes, so a slow but
-live queue is left alone. The holder is the one unfinished run of the group
+and the run before it got a runner within those twenty minutes. Clearing
+therefore never repeats in a row, so a slow but live queue is never starved,
+though its first wake still waiting at the next tick after a prompt run is
+cleared like a stalled one. The holder is the one unfinished run of the group
 with jobs. Anything unknown, malformed or ambiguous cancels nothing; manual
-dispatches, `pages.yml`, other branches and started runs are never cancelled;
-there is no force-cancel. The candidate is re-read just before the cancel and
-the cancel is verified. Every decision is one JSON log line
-(`{"liveness": "idle" | "left" | "unknown" | "cleared" | "already_completed" |
-"cancel_failed" | "cancel_not_effective" | "note_rejected", …}`), persisted by
-Workers Logs, and an outcome is passed to the dispatched run as the
-`liveness_recovery` input, which its log prints as `Liveness: …`. The wake is
+dispatches (smoke tests, continuity checks, commissioning and experiments
+included), `pages.yml`, other branches and started runs are never cancelled;
+there is no force-cancel. The candidate is re-read just before the cancel, and
+the cancel is verified, including whether a runner reached the run first.
+Every decision is one JSON log line (`{"liveness": "idle" | "left" | "unknown"
+| "cleared" | "cancelled_after_start" | "cancelled_unverified" |
+"already_completed" | "cancel_failed" | "cancel_not_effective" |
+"note_rejected", …}`), persisted by Workers Logs, which is the authoritative
+record. An outcome is also passed to the dispatched run as the
+`liveness_recovery` input, which its log prints as `Liveness: …`; that copy is
+best effort (a later dispatch can replace the run that carries it). The wake is
 always dispatched.
 
 The Worker requires the Cloudflare deployment credentials already configured

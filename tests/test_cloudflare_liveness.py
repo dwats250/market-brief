@@ -529,6 +529,23 @@ def test_a_group_without_a_run_holding_jobs_cancels_nothing(worker):
     assert result.cancels == [] and result.outcome("unknown")
 
 
+def test_more_unfinished_lane_runs_than_one_group_holds_cancels_nothing(worker):
+    """A group holds one run and one pending run; a crowd of lane runs is not understood, and reading each one's jobs
+    would spend the tick's subrequests before the dispatch."""
+    crowd = [wake(300 + i, 300 + i, T203 + timedelta(minutes=i + 1), status="pending") for i in range(3)]
+    result = worker.tick(TICK, sep30() + crowd)
+    assert result.cancels == [] and result.dispatches == [PLAIN_WAKEUP]
+    assert result.outcome("unknown") and len(result.requests) == 6
+
+
+def test_a_stall_tick_stays_far_inside_the_free_plan_subrequest_budget(worker):
+    pending = wake(36755617810, 204, utc("2026-09-30T18:01:44+00:00"), status="pending")
+    pages = wake(5, 16, utc("2026-09-30T18:30:00+00:00"), status="pending", path=PAGES, event="push", title="Publish")
+    for runs, at in ((sep30(), TICK), (sep30() + [pending, pages], utc("2026-09-30T19:01:00+00:00"))):
+        result = worker.tick(at, runs)
+        assert result.outcome("cleared") and len(result.requests) <= 20
+
+
 def test_more_unfinished_runs_than_one_listing_shows_cancels_nothing(worker):
     crowd = [wake(100 + i, 100 + i, TICK - timedelta(minutes=i), status="queued", path=".github/workflows/tests.yml",
                   event="push", title="Tests") for i in range(21)]

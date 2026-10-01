@@ -11,6 +11,9 @@ const SUPERSEDED_MINUTES = 20;
 const UNFINISHED = ["queued", "in_progress", "waiting", "pending", "requested"];
 const NOT_STARTED = new Set(["queued", "waiting", "pending", "requested"]);
 const LISTED = 20;
+// A group holds one run and at most one pending run; one more covers a pending run being replaced. More than this
+// is not a state the Worker understands, and it bounds the subrequests one tick can make (Free plan: fifty).
+const MOST_MEMBERS = 3;
 const REQUEST_TIMEOUT_MS = 10_000;
 const SWEEP_BUDGET_MS = 60_000;
 const CANCEL_CHECKS = 5;
@@ -75,6 +78,7 @@ async function recover(github, repository, now) {
     record({ liveness: "idle" });
     return "";
   }
+  if (members.length > MOST_MEMBERS) throw new Unclear("more unfinished runs than one group holds");
   for (const run of members) run.jobs = await jobsOf(github, run.id);
 
   // GitHub does not name the group's holder. With a workflow-level group a run gets jobs only once it holds the

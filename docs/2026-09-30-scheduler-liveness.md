@@ -574,3 +574,118 @@ tests and `git diff --check` after each.
 4. Measure the Worker's request and CPU budget; independent adversarial review (false-positive cancellation,
    paid-synthesis duplication, continuity rollback, stale-page deployment, the re-read/cancel race); stop for
    the owner before merge or deploy.
+
+### Phase 2 report, 2026-10-01: implemented; waiting for the owner before merge or deploy
+
+**Commits** on `ccr-840c4634-k9bz7y` (pushed to that branch only; nothing merged, deployed or dispatched):
+
+| Commit | What it does |
+|---|---|
+| 442cb84 | docs: the PRD body corrected; Phase 2 approved; owner rulings and slice plan |
+| ff7bdb1 | The Worker's liveness step, `[observability]`, and the Node-harness tests |
+| 15b2967 | `run-name`, the `liveness_recovery` note, the `resolve-scheduled` SKIP reason, the deploy guard |
+| 42f4d27 | docs: README, ARCHITECTURE, one DECISIONS bullet, PROJECT_STATE |
+| bb2e6fa | Caps the group members the Worker inspects, which bounds its subrequests |
+| 8f488a5 | Fixes from the adversarial review (below) |
+
+**Files changed** (`git diff --stat c226967..HEAD`; 14 files):
+- **Worker:** `cloudflare/src/index.js`, `cloudflare/wrangler.toml`, `cloudflare/README.md`.
+- **Workflow and CLI:** `.github/workflows/schedule.yml`, `src/market_brief/cli.py`.
+- **Tests:**
+  - `tests/test_cloudflare_liveness.py` (new);
+  - `tests/test_cloudflare_scheduler.py`, `tests/test_continuity_restore.py`, `tests/test_schedule.py`,
+    `tests/test_synthesis_attempts.py`.
+- **Docs:** `DECISIONS.md`, `PROJECT_STATE.md`, `docs/ARCHITECTURE.md`, this PRD.
+
+Untouched: `pages.yml`, `continuity.py`, `schedule.py`, the validator, prompts and synthesis.
+
+**Tests:**
+- `.venv/bin/python3 -m pytest -q`: 904 passed, 12 skipped. The baseline was 775 passed; the skips are the same
+  headless-Chrome checks.
+- `ruff check src tests`: clean. `git diff --check`: clean.
+- The Worker's Node tests (84, in `tests/test_cloudflare_liveness.py`) ran here on Node 22. They have not run in CI
+  yet, because Tests runs only on pull requests and pushes to `main`. Under CI they fail rather than skip if Node is
+  missing.
+- Every new Worker test was checked to fail against the previous Worker:
+  - 65 of 75 fail against the c226967 Worker;
+  - the 7 review tests fail against bb2e6fa;
+  - the 3 new guard tests fail against the previous guard.
+
+**Replays** (the real Worker against a fake GitHub lane, with runs resolved by the real `scheduled_checkpoint`):
+
+| Case | Result |
+|---|---|
+| Sep 30 (#203 stalled before runner assignment) | Cleared at the 18:01 tick; HOURLY_1300 stays missing; HOURLY_1400, HOURLY_1500 and CLOSE_1M publish; exactly one cancel; nothing backfilled |
+| OPEN_1M wake stalled, EDT, EST and both DST-change Mondays | Superseded and cleared at the next tick; OPEN_30M runs |
+| Early close (2026-11-27), the H12 wake stalled | CLOSE_1M runs |
+| Green days | No cancel |
+| Slow but live queue | At most one cancel; cost pinned (see residual risk 1) |
+| Executing synthesis | Never cancelled across 12 ticks |
+| Rejected paid synthesis; double-fired tick; a runner arriving before the cancel | Exactly one OPEN_30M provider request |
+| Stale checkout; tag named `main`; untracked file in `publish/` | No deploy |
+| Failed, refused, gateway-error and ignored cancels | Reported, never as `cleared` |
+| Malformed, hung or unreadable GitHub answers | Nothing cancelled; the wake is still dispatched |
+
+**Worker budget.** Measured with Node 22 on the first invocation, with GitHub answers prepared before timing (5 runs
+each):
+
+| Tick | Requests | Cold CPU | Warm CPU |
+|---|---|---|---|
+| Quiet | 6 | 2.5–3.0 ms | 0.2 ms |
+| Stall | 14 | 6.2–7.7 ms | 1.2 ms |
+| Worst (holder + 2 pending) | 23 | 7.7–8.9 ms | 1.9 ms |
+
+- For comparison, the original Worker costs 0.7–2.2 ms, and a control making the same requests with no logic costs
+  about 4.2 ms. That control cost is Node's own `fetch`/`Response`, which Workers implements natively.
+- The theoretical maximum is 41 subrequests (limit 50). All measured cases are inside the Free plan's 10 ms CPU and
+  50 subrequests, but the stall tick's margin is not wide in Node. Confirm with Workers Logs' `cpuTime` after deploy.
+
+**Adversarial review.** Five lenses, 19 agents, each finding re-checked by a skeptical verifier. **No blocker or
+major finding.**
+
+| Lens | Confirmed findings, and what was done |
+|---|---|
+| False-positive cancellation | **Fixed:** a manual smoke test, continuity check, commissioning run or experiment with the wake box ticked got the wake name and could be cleared. `run-name` now requires exactly the Worker's inputs. **Fixed:** a pending wake was cancelled before the holder was re-checked; an inverted runner wait counted as a live queue. **Pinned and reported:** the slow-but-live-queue cost (residual risk 1). |
+| Paid-synthesis duplication | No duplication found. **Fixed:** the scenario-D test did not exercise recovery. It is replaced by two tests that drive the real Worker (a double-fired tick; a runner arriving before the cancel lands) into the paid-attempt model; exactly one OPEN_30M provider request either way. |
+| Continuity rollback | No rollback by the change. **Fixed:** the guard's fetch had no step timeout; it now has two minutes, so a hang fails the run (restorable) instead of reaching the job timeout's cancel (ineligible). **Pre-existing, residual:** re-running a `schedule.yml` run can make its bundle ineligible (residual risk 5). |
+| Stale-page deployment | **Fixed:** the guard now fetches `refs/heads/main`, so a tag named `main` cannot stand in for the branch. It compares the `publish/` tree that is actually uploaded, untracked files included. **Pre-existing, residual:** `pages.yml` is unguarded; an owner page push can be replaced by a SKIP wake (residual risks 3–4). |
+| Re-read and cancel race | **Fixed:** a runner arriving after the re-read was reported as "never started". The Worker now reads the jobs after the cancel and reports `cancelled_after_start` (or `cancelled_unverified`). **Fixed:** a cancel that lands but answers 5xx is now verified. **Fixed:** verification reads are no longer refused by the sweep budget. **Fixed:** a re-read slower than 2 s is not acted on. The PRD's "~100 ms" was a typical figure, not a bound; the bound is now the cancel request itself (≤ 10 s), plus GitHub's asynchronous handling after a 202, which nothing can bound. |
+
+**Residual risks that changed from Phase 1:**
+1. **The slow-but-live-queue cost is larger than Phase 1 reported.**
+   - Phase 1 said "a slow day gets at most one cancel" and reported only mean costs. One cancel still holds. But the
+     first wake still waiting at the next tick after a prompt run is cleared, and in a long, steady slowdown that
+     one cancel delays every later run by a tick.
+   - Pinned against no recovery:
+     - 2026-09-30 with a 61-minute runner wait: 4 checkpoints publish against 7 (OPEN_30M and CLOSE_1M lost).
+     - 2026-12-01 at 61 minutes: 4 against 8 (both syntheses and CLOSE_1M lost).
+     - At 35 minutes: one checkpoint fewer.
+   - With mixed latencies, cancels can recur within a day (the review measured up to 5 a day with alternating
+     10 s / 70 min waits, while publishing more than no recovery).
+   - This is ruling 1's trade, now measured. No invariant is weakened: nothing is paid twice, rolled back or
+     overwritten.
+2. **The re-read/cancel window.** It is bounded by the cancel request (≤ 10 s) and by GitHub's processing of an
+   accepted cancel. When a runner wins the race, the outcome is visible (`cancelled_after_start`), and the attempt
+   record the run uploaded still prevents a second payment.
+3. **`pages.yml` is unguarded (pre-existing).** An owner dispatch or re-run of it, or a late push event, can deploy
+   an older page until the next run that deploys. A fix would add the same guard to `pages.yml`; that is out of
+   this slice.
+4. **An owner page push can be replaced (pre-existing).** A wake's dispatch replaces a pending `pages.yml` run, and a
+   wake that resolves SKIP deploys nothing, so the page can stay behind `main` until the next checkpoint publishes.
+   Re-dispatch `pages.yml` by hand if needed.
+5. **Re-runs and continuity (pre-existing).** Re-running a `schedule.yml` run makes its earlier attempt's continuity
+   artifact ineligible once that run is cancelled or still running. Dispatch a fresh run instead.
+6. **The `Liveness:` line in the run log is best effort.** A later dispatch can replace the run that carries it.
+   Workers Logs is the authoritative record.
+7. **`run-name` is set at run creation (inferred).** If it is not, nothing is ever cleared, which is fail-safe and
+   logged as `left`. Check it once after merge.
+
+**Before merge or deploy (owner steps):**
+1. Record the deployed Worker version (`wrangler versions list --config cloudflare/wrangler.toml`) for
+   `wrangler rollback <id>`. A bare rollback is a no-op, because each deploy makes two versions.
+2. Confirm `GH_DISPATCH_TOKEN` can still dispatch (Actions read and write on this repository), without exposing it.
+3. Open the PR and let Tests run, with the Node tests executed. Merging to `main` deploys the Worker.
+4. After merge:
+   - the first wake's run is named `Cloudflare wake-up`;
+   - Workers Logs show `{"liveness":"idle"}` and the tick's `cpuTime`;
+   - the 21:01 UTC summer wake logs `SKIP / - / no checkpoint due at …`.

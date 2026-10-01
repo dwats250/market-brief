@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from test_pipeline import freeze_clock
+
 from market_brief import cli
 from market_brief.schedule import checkpoint_session, due, scheduled_checkpoint
 
@@ -180,3 +182,16 @@ def test_scheduled_checkpoint_is_idempotent(tmp_path, monkeypatch, capsys):
     assert cli.scheduled(args) == 0
     assert calls == ["PREMARKET"]
     assert "already completed" in capsys.readouterr().out
+
+
+def test_a_wake_that_resolves_nothing_says_why(monkeypatch, capsys):
+    """The workflow captures stdout as the checkpoint; the reason a wake resolves nothing goes to the log."""
+    freeze_clock(monkeypatch, "2026-09-30T21:01:37+00:00")  # the 21:01 UTC wake, a SKIP slot in New York summer
+    assert cli.main(["resolve-scheduled"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "SKIP\n"
+    assert captured.err == "SKIP / - / no checkpoint due at 2026-09-30T21:01:37+00:00\n"
+    freeze_clock(monkeypatch, "2026-09-30T18:01:53+00:00")
+    assert cli.main(["resolve-scheduled"]) == 0
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == ("HOURLY_1400\n", "")

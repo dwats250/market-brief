@@ -1,4 +1,7 @@
 name: Scheduled Market Brief
+# A Cloudflare wake-up carries the Worker's name; a manual dispatch keeps the workflow's. The Cloudflare Worker
+# clears only its own never-started wakes, and the name is set when the run is created, before any job exists.
+run-name: ${{ inputs.cloudflare_wakeup == true && 'Cloudflare wake-up' || 'Scheduled Market Brief' }}
 
 on:
   workflow_dispatch:
@@ -43,6 +46,11 @@ on:
         required: false
         default: false
         type: boolean
+      liveness_recovery:
+        description: Set by the Cloudflare wake-up when it cleared a stalled run; printed in the log only. Leave empty
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -106,7 +114,12 @@ jobs:
           INPUT_CHECKPOINT: ${{ inputs.checkpoint }}
           INPUT_COMMISSIONING: ${{ inputs.commissioning }}
           INPUT_CLOUDFLARE_WAKEUP: ${{ inputs.cloudflare_wakeup }}
+          LIVENESS_RECOVERY: ${{ inputs.liveness_recovery }}
         run: |
+          if [ -n "$LIVENESS_RECOVERY" ]; then
+            # The Worker's note on a stalled run it cleared before dispatching this one: one line, never a command.
+            printf 'Liveness: %s\n' "$(printf '%s' "$LIVENESS_RECOVERY" | tr '\r\n' '  ' | cut -c1-1000)"
+          fi
           if [ "$INPUT_COMMISSIONING" = "true" ]; then
             # The application resolves the market phase from the clock at collection time.
             checkpoint=CURRENT
@@ -206,16 +219,33 @@ jobs:
             git commit -m "Publish ${{ steps.checkpoint.outputs.label }} brief"
             git push
           fi
-      - name: Configure Pages
+      - name: Deploy only the page main holds
+        # The checkout is main as it was at dispatch. A run that skipped a checkpoint an earlier run published (a
+        # duplicate or queue-delayed wake) would otherwise put its older page back over the newer one. Pages is
+        # deployed only when this checkout's publish/ is main's; a fetch that fails fails the step, so nothing is
+        # deployed on an unanswered question. It changes no file and follows the continuity upload and the push.
+        id: current
         if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
+        env:
+          LABEL: ${{ steps.checkpoint.outputs.label }}
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          if git diff --quiet HEAD FETCH_HEAD -- publish; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "NOT DEPLOYED / $LABEL / this checkout's page is behind main; the newer page stays live"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Configure Pages
+        if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true && steps.current.outputs.deploy == 'true'
         uses: actions/configure-pages@v5
       - name: Upload Pages artifact
-        if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
+        if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true && steps.current.outputs.deploy == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: publish
       - name: Deploy Pages
-        if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
+        if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true && steps.current.outputs.deploy == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
       - name: Archive this run's evidence, context, narrative, and metadata

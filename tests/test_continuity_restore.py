@@ -15,6 +15,7 @@ of an eligible bundle is a cold start.
 """
 
 import json
+import os
 import re
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -296,6 +297,134 @@ def test_the_diagnostic_archive_cannot_gate_continuity_or_publication():
     assert "uses: actions/upload-artifact@" in steps[archive[0]]["code"]
     assert re.search(r"^        if: always\(\) && ", steps[archive[0]]["code"], re.M)
 
+
+
+# --- a run never redeploys a page older than main's (scheduler liveness) ------------------------------------
+
+def test_the_deploy_guard_follows_the_continuity_upload_and_the_push_and_gates_only_pages():
+    """A run whose checkout predates main's latest publication (a duplicate or queue-delayed wake that skipped its
+    checkpoint) must not redeploy its older page. The guard decides only the Pages steps; it comes after the
+    continuity upload and the push, inherits success() and changes nothing, so it can gate neither."""
+    steps = workflow_steps("brief")
+    guards = [i for i, step in enumerate(steps) if re.search(r"^        id: current$", step["code"], re.M)]
+    assert len(guards) == 1
+    guard = guards[0]
+    upload = next(i for i, step in enumerate(steps)
+                  if re.search(rf"^          name: {ARTIFACT_NAME}$", step["text"], re.M))
+    push = next(i for i, step in enumerate(steps) if "git push" in step["code"])
+    pages = [i for i, step in enumerate(steps) if any(marker in step["code"] for marker in PUBLICATION[1:])]
+    assert upload < push < guard < min(pages) and len(pages) == 3
+    code = steps[guard]["code"]
+    assert not re.search(r"\b(always|success|failure|cancelled)\s*\(", code) and "continue-on-error" not in code
+    assert not any(marker in code for marker in PUBLICATION)
+    for i in pages:
+        assert re.search(r"^        if: .* && steps\.current\.outputs\.deploy == 'true'$", steps[i]["code"], re.M)
+
+
+def guard_script():
+    [step] = [step for step in workflow_steps("brief") if re.search(r"^        id: current$", step["code"], re.M)]
+    script = step["text"].split("        run: |\n", 1)[1]
+    lines = []
+    for line in script.splitlines():
+        if line and not line.startswith("          "):
+            break
+        lines.append(line[10:])
+    return "\n".join(lines) + "\n"
+
+
+GIT = dict(GIT_AUTHOR_NAME="Market Brief", GIT_AUTHOR_EMAIL="brief@example.invalid", GIT_COMMITTER_NAME="Market Brief",
+           GIT_COMMITTER_EMAIL="brief@example.invalid", GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+
+
+class Origin:
+    """A bare `main` and depth-1 checkouts of it, as actions/checkout leaves a run."""
+
+    def __init__(self, root):
+        self.root, self.url = root, (root / "origin.git").as_uri()
+        self.git(root, "init", "--quiet", "--bare", "--initial-branch=main", str(root / "origin.git"))
+        seed = root / "seed"
+        self.git(root, "init", "--quiet", "--initial-branch=main", str(seed))
+        (seed / "publish").mkdir()
+        (seed / "publish/index.html").write_text("HOURLY_1200 page")
+        (seed / "README.md").write_text("Market Brief")
+        self.git(seed, "add", ".")
+        self.git(seed, "commit", "--quiet", "-m", "Publish HOURLY_1200 brief")
+        self.git(seed, "push", "--quiet", self.url, "main")
+
+    def git(self, cwd, *args):
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
+                       env=dict(os.environ, **GIT))
+
+    def checkout(self, name):
+        self.git(self.root, "clone", "--quiet", "--depth=1", self.url, name)
+        return self.root / name
+
+    def commit(self, clone, path, text, message):
+        (clone / path).write_text(text)
+        self.git(clone, "add", path)
+        self.git(clone, "commit", "--quiet", "-m", message)
+        self.git(clone, "push", "--quiet", "origin", "HEAD:main")
+
+    def guard(self, clone, label="HOURLY_1400"):
+        output = clone / ".output"
+        result = subprocess.run(["bash", "-e", "-c", guard_script()], cwd=clone, capture_output=True, text=True,
+                                check=False, env=dict(os.environ, **GIT, LABEL=label, GITHUB_OUTPUT=str(output)))
+        return result, output.read_text() if output.exists() else ""
+
+
+@pytest.fixture
+def origin(tmp_path):
+    return Origin(tmp_path)
+
+
+def test_the_run_that_published_deploys_its_own_page(origin):
+    run = origin.checkout("run")
+    origin.commit(run, "publish/index.html", "HOURLY_1400 page", "Publish HOURLY_1400 brief")
+    result, output = origin.guard(run)
+    assert result.returncode == 0 and output == "deploy=true\n"
+
+
+def test_a_current_checkout_with_nothing_new_still_deploys_mains_page(origin):
+    result, output = origin.guard(origin.checkout("run"))
+    assert result.returncode == 0 and output == "deploy=true\n"
+
+
+def test_a_stale_checkout_never_redeploys_its_older_page(origin):
+    """A second wake for a completed checkpoint, dispatched before the first one's publish, skips its checkpoint
+    and must not put the older page back over the newer one."""
+    stale = origin.checkout("stale")
+    first = origin.checkout("first")
+    origin.commit(first, "publish/index.html", "HOURLY_1400 page", "Publish HOURLY_1400 brief")
+    result, output = origin.guard(stale)
+    assert result.returncode == 0 and output == "deploy=false\n"
+    assert result.stdout.strip().splitlines()[-1] == (
+        "NOT DEPLOYED / HOURLY_1400 / this checkout's page is behind main; the newer page stays live")
+
+
+def test_an_unrelated_commit_on_main_does_not_hold_back_a_new_page(origin):
+    run = origin.checkout("run")
+    origin.commit(run, "publish/index.html", "HOURLY_1400 page", "Publish HOURLY_1400 brief")
+    owner = origin.checkout("owner")
+    origin.commit(owner, "README.md", "Market Brief, revised", "Revise the README")
+    result, output = origin.guard(run)
+    assert result.returncode == 0 and output == "deploy=true\n"
+
+
+def test_a_guard_that_cannot_see_main_deploys_nothing(origin):
+    run = origin.checkout("run")
+    origin.git(run, "remote", "set-url", "origin", (origin.root / "missing.git").as_uri())
+    result, output = origin.guard(run)
+    assert result.returncode != 0 and output == ""
+
+
+def test_a_skipping_run_reuploads_the_bundle_it_restored_unchanged(actions, capsys):
+    """A second wake for a completed checkpoint advances nothing: what it uploads is what it restored."""
+    first = actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
+    capsys.readouterr()
+    again = actions.run(f"{TUE}T13:03:10+00:00", "PREMARKET", intraday=False)
+    assert "SKIP / PREMARKET / already completed" in capsys.readouterr().out
+    assert actions.bundle(again) == actions.bundle(first)
+    assert actions.calls == ["PREMARKET"] and actions.published == ["PREMARKET"]
 
 # --- a restore that cannot finish stops the run; only absence is a cold start -----------------------------------
 

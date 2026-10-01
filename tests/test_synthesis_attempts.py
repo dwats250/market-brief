@@ -178,6 +178,20 @@ def test_a_rejected_synthesis_is_never_paid_for_again(actions, capsys):
     assert actions.runs[second]["conclusion"] == "success" and actions.published == []
 
 
+
+def test_a_double_fired_recovery_tick_pays_the_opening_synthesis_once(actions, capsys):
+    """Scheduler liveness: at 14:01 EDT the Worker clears the stalled 13:31 wake, and a double-fired tick runs two
+    replacement wakes. The first pays for OPEN_30M and is rejected; the second finds its attempt record and pays
+    nothing. Recovery never adds a paid request."""
+    actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
+    first = actions.run(f"{TUE}T14:01:53+00:00", "OPEN_30M", verdict="reject")
+    assert actions.runs[first]["conclusion"] == "failure"
+    capsys.readouterr()
+    second = actions.run(f"{TUE}T14:04:10+00:00", "OPEN_30M")
+    assert "SKIP / OPEN_30M / paid synthesis already attempted" in capsys.readouterr().out
+    assert actions.requests == ["PREMARKET", "OPEN_30M"] and not actions.days[second].attempts("OPEN_30M")
+    assert actions.published == ["PREMARKET"]
+
 def test_a_manual_production_attempt_counts_and_experiments_stay_outside(actions, capsys):
     """An owner's manual production dispatch is not gated, but its paid attempt is recorded, so the scheduled wake
     that follows it inside the window does not pay again."""

@@ -1,8 +1,8 @@
 # PRD: Scheduler liveness after a stuck wake (defect P0)
 
-**Status:** Phase 1 (investigate and design) approved by the owner, 2026-09-30. Phase 2 (implement) waits for the owner's review of your Phase 1 report.
-**Base:** `main` @ c226967 (or later; re-verify)
-**Branch:** `fix/scheduler-liveness`
+**Status:** Phase 1 (investigate and design) approved 2026-09-30 and reported 2026-10-01. **Phase 2 (implement) approved by the owner, 2026-10-01**, with the rulings recorded in Progress.
+**Base:** `main` @ c226967 (later `main` commits are publication-only; re-verify)
+**Branch:** `ccr-840c4634-k9bz7y` (the session branch, accepted by the owner in place of `fix/scheduler-liveness`)
 **Save as:** `docs/2026-09-30-scheduler-liveness.md`, and keep the Progress section at the bottom current.
 **Out of scope here:** release actuals and RSP. They get their own PRD after this one is repaired.
 
@@ -21,7 +21,10 @@
 
 ## 1. Why
 
-On Sep 30, the HOURLY_1300 wake (run #203) went to `queued` and never started. Because the workflow serializes on one concurrency group, every later wake waited behind it and was cancelled by the next one to arrive. HOURLY_1300, HOURLY_1400, HOURLY_1500 and CLOSE_1M never published, and Sep 30 has no close snapshot or handoff.
+On Sep 30, the HOURLY_1300 wake (run #203) took the workflow's concurrency group, and its `brief` job then never
+received a runner. Because the workflow serializes on one concurrency group, every later wake waited behind it
+as the pending run and was cancelled by the next one to arrive. HOURLY_1300, HOURLY_1400, HOURLY_1500 and
+CLOSE_1M never published, and Sep 30 has no close snapshot or handoff.
 
 The serialization is right. It protects continuity, publication order and paid-synthesis dedupe, and stays. The defect is that **one wake that never starts can hold the group indefinitely**, so a single platform hiccup silently costs the rest of the day, and possibly the next one.
 
@@ -29,28 +32,45 @@ The serialization is right. It protects continuity, publication order and paid-s
 
 ---
 
-## 2. Verified facts (public run pages and code, read 2026-10-01 ~01:40 UTC)
+## 2. Facts (GitHub API and code, verified 2026-10-01)
+
+The incident identifiers are kept here for a possible GitHub Support ticket. Phase 1 (Progress) holds the full
+timeline, its evidence labels and the corrections to the first reading of the run pages.
 
 ### Runs
-- **#203** (`36748511695`), the HOURLY_1300 wake: created 17:02 UTC Sep 30 by `workflow_dispatch` on c226967. Still **queued** about 8.5 hours later. All three jobs (`continuity-check`, `cloudflare-smoke`, `brief`) show queued and 0s, including the two whose `if:` should have evaluated false. That suggests the run itself was never picked up, not that a runner was missing for `brief`. This is **inferred**; confirm it with the jobs API.
-- **#204** (`36755617810`): created 18:01 UTC, **cancelled** after 59m56s with the annotation "Canceling since a higher priority waiting request for market-brief-pages exists".
-- **#205** and **#206**: about 1h0m each. The workflow list page showed them as "Success", but #204 showed the same and was actually cancelled. Verify both with the API.
-- **#207** (`36776686174`): pending at read time.
-- The owner has been asked to cancel #203 manually so the next session isn't blocked. Record whether it was cancelled, by whom, and when.
+- **#202** (`36741213779`, deployment `6764055004`): the HOURLY_1200 wake, success; the last good run. Its
+  github-pages deployment went `waiting` → `queued` → `in_progress` within 4 s, as every sampled deployment did.
+- **#203** (`36748511695`, check suite `99528538652`, `brief` job `110000782238`, deployment `6765318215`): the
+  HOURLY_1300 wake, created 17:02:03 UTC on c226967. It **was processed**: at 17:02:05 it took the group, its
+  three jobs were created, the two jobs whose `if:` was false completed `skipped`, and a github-pages deployment
+  was created for `brief`. Only `brief` never received a runner or ran a step. The deployment received **no
+  status at all for about 9 h 05 m**, not even `waiting`. #203 was cancelled at 02:07:36 UTC on Oct 1; who
+  cancelled it, and by which endpoint, is not observable through the API.
+- **#204**, **#205**, **#206** (`36755617810`, `36762759547`, `36769731557`): the HOURLY_1400, HOURLY_1500 and
+  CLOSE_1M wakes. Each waited as the pending run, never got a job, and was **cancelled** 2–3 s after the next wake
+  was created ("Canceling since a higher priority waiting request for market-brief-pages exists" on #204's page).
+  None succeeded.
+- **#207** (`36776686174`, deployment `6774440203`): the 21:01 wake. It waited as the pending run, started at
+  02:07:46 once #203 was cancelled, and **resolved SKIP**, as that slot always does in New York summer time. No
+  line in its log said why.
+- **Root cause not observable.** The observed failure boundary is GitHub-side environment and deployment
+  processing for the `brief` job, before runner assignment. Application, workflow, Cloudflare dispatch, the
+  concurrency group itself and any repository or deployment lock are excluded by evidence (Phase 1 §2).
 
 ### Configuration
-- **`schedule.yml`:** workflow-level `concurrency: { group: market-brief-pages, cancel-in-progress: false }`. The `brief` job runs on `ubuntu-latest` with `environment: github-pages`. Its last two steps record the paid-attempt artifact under `always()`.
-- **`pages.yml`:** the same group and the same `github-pages` environment. It triggers on pushes to `publish/**`. Publish commits are pushed with the default token, which does not trigger workflows, so this normally never runs.
-- **Cloudflare Worker** (`cloudflare/src/index.js`, 43 lines): dispatches `schedule.yml` with `cloudflare_wakeup=true` at the `wrangler.toml` crons, `1 13-21 * * MON-FRI` and `31 13-14 * * MON-FRI` (UTC). It does not read run state.
+- **`schedule.yml`:** workflow-level `concurrency: { group: market-brief-pages, cancel-in-progress: false }`; its only trigger is `workflow_dispatch`, and a run from any branch joins the group. The `brief` job runs on `ubuntu-latest` with `environment: github-pages`. Its last two steps record the paid-attempt artifact under `always()`. Its checkout is the commit `main` held at dispatch.
+- **`pages.yml`:** the same group and the same `github-pages` environment. It runs on pushes to `publish/**` or to itself, and on `workflow_dispatch`; publish commits are pushed with the default token, which does not trigger workflows, so the scheduler never starts it.
+- **Cloudflare Worker** (`cloudflare/src/index.js`, 43 lines at c226967): dispatches `schedule.yml` with `cloudflare_wakeup=true` at the `wrangler.toml` crons, `1 13-21 * * MON-FRI` and `31 13-14 * * MON-FRI` (UTC). At c226967 it does not read run state. Merging a change under `cloudflare/` to `main` redeploys it.
 
 ### Scheduler semantics
-- **Tolerance:** `TOLERANCE_MINUTES = {"synthesis": 20, "refresh": 45, "close": 45}`. A wake outside its checkpoint's window logs `SKIP / … / outside checkpoint window` and exits 0.
-- **Idempotency:** a checkpoint marker, the published page's `data-session-date` / `data-checkpoint`, or the continuity bundle prevents re-running a completed checkpoint.
+- **Tolerance:** `TOLERANCE_MINUTES = {"synthesis": 20, "refresh": 45, "close": 45}`. A wake resolves its checkpoint from the clock when it starts (the nearest one due); it carries no checkpoint of its own. At c226967 a Cloudflare wake that resolves nothing prints a bare `SKIP` into the step output and nothing to the log; `SKIP / … / outside checkpoint window` appears only if the window closes between the resolve and `schedule` steps.
+- **Idempotency:** across runners, only the restored continuity bundle prevents re-running a completed checkpoint. The checkpoint marker is runner-local, and the published page's `data-session-date` / `data-checkpoint` are read from the dispatch-time checkout.
 - **Paid dedupe:** before a synthesis, `earlier_attempt` checks the durable attempt record. If it can't check, it refuses to call the provider.
 
 ### Platform
-- GitHub's concurrency allows one running and one pending run per group; a newer pending run cancels the older pending one.
+- GitHub's concurrency allows one running and one pending run per group; a newer pending run cancels the older pending one. A run can hold the group with no job running (#203). GitHub does not expose the group's holder on the run or job endpoints (a documented concurrency-groups endpoint could not be verified from the investigation environment); with a workflow-level group, jobs are created only once a run holds it.
 - `timeout-minutes` limits a job only after it starts. Nothing in the workflow bounds how long a run may sit queued.
+- `run_started_at` and a job's `started_at` are set even on runs and jobs that never ran; only runner assignment and steps show that a job started.
 
 ---
 
@@ -134,7 +154,8 @@ Implement the approved design tests first, in small slices. Run `.venv/bin/pytho
 
 _Claude Code keeps this current: Phase 1 findings, the owner's ruling, the slice plan, and what's done._
 
-**2026-10-01: Phase 1 complete (read-only). Waiting for the owner's review; no Phase 2 work has started.**
+**2026-10-01: Phase 1 complete (read-only).** (The PRD body above was corrected on 2026-10-01 after the
+owner's review; this report is kept as written.)
 Base re-verified: `main` is still c226967 ("Publish HOURLY_1200 brief"). Baseline: `.venv/bin/python3 -m pytest -q`
 775 passed, 12 skipped (headless Chrome); `ruff check src tests` clean. No code, workflow or Worker change; no
 dispatch, cancel or deploy.
@@ -503,3 +524,53 @@ Node 20 and 22 [O]. The Python tests extend existing modules.
 10. **§7:** merging redeploys the Worker automatically.
 11. **Stale docs:** ARCHITECTURE and SYNTHESIS_COST_CONTAINMENT still describe the 2026-09-10 hold as "in force",
     which PROJECT_STATE records as lifted.
+
+### Owner ruling, 2026-10-01: Phase 2 approved
+
+Clarification for the record: the Oct 1 OPEN_30M failure is a separate validator incident, not caused by this
+branch (it is not on `main`). PREMARKET and OPEN_1M succeeded; OPEN_30M collected, sent one Opus synthesis
+request and failed closed ("SMALL observations cannot anchor a watch"); its paid-attempt artifact was uploaded.
+This PR does not change the validator, retry that synthesis, or touch that issue.
+
+Rulings:
+1. The 20-minute threshold with the live-queue condition, tied to the 20-minute synthesis window: approved.
+2. Clearing the prior OPEN_1M wake at the next tick: approved. Terminology: the wake has been **superseded by a
+   later checkpoint and, if started now, can no longer resolve the checkpoint associated with its original wake**.
+   Tests prove this across normal sessions, DST transitions and early closes.
+3. Clear only verified Cloudflare wakes. Manual dispatches, `pages.yml`, other branches and other workflows are
+   logged and left alone.
+4. No force-cancel. A normal cancel that is not effective within the bounded wait logs `cancel_not_effective`;
+   the Worker dispatches as designed and leaves the uncertainty visible.
+5. The stale-page deploy guard (publish content versus `main`) is in this slice. Checking out the newest `main`
+   in a running job is rejected: it mixes dispatch-time workflow and code with a later repository state.
+6. The Cloudflare Worker is the recovery location, stateless: inspect, qualify, normal-cancel, verify, dispatch,
+   log. No Durable Object, database, lock service or watchdog workflow.
+7. Persisted Worker observability: approved; narrow structured logs, never the token, authorization headers or
+   unneeded GitHub payloads.
+8. `GH_DISPATCH_TOKEN`: the Actions write permission used for dispatch is the class cancellation needs; verify the
+   configured credential before deployment without exposing it. No token-lifecycle machinery.
+9. Stay inside the Free-plan CPU and subrequest budget; if measurements violate it, stop and report.
+10. GitHub Support is optional. The root cause stays "root cause not observable"; the incident IDs are kept in §2.
+11. The session branch `ccr-840c4634-k9bz7y` is accepted.
+
+Safety predicate, as ruled: a run is cleared only when all required evidence is present; unknown, malformed or
+missing GitHub state is not clearable; the candidate and its jobs are re-read before the cancel; any runner
+assignment, started step, completed work, other branch, manual identity, `run_attempt` > 1 or ambiguous
+ownership leaves it alone. The holder is not assumed to be the oldest unfinished run: the Worker establishes it
+from observed group, run and job state, and when it cannot, it logs `unknown` or `left` and cancels nothing.
+Pending members are cleared before the holder only when evidence shows they are Cloudflare wakes in this same
+lane and are themselves safe to clear.
+
+### Phase 2 slice plan
+
+Tests first in each slice; `.venv/bin/python3 -m pytest -q`, `.venv/bin/ruff check src tests`, the Worker's Node
+tests and `git diff --check` after each.
+
+1. **Worker (A, C, F):** a Node harness with a fake GitHub, the Worker tests and the Sep 30, EST, early-close,
+   green-day and slow-queue replays; then `cloudflare/src/index.js` and `[observability]` in `wrangler.toml`.
+2. **Workflow and CLI (B, C, D, E):** `run-name`, the `liveness_recovery` input and its one-line log, the
+   `resolve-scheduled` SKIP reason, the publish-versus-`main` deploy guard, and the supersession tests.
+3. **Docs (G):** `cloudflare/README.md`, the ARCHITECTURE scheduler paragraph, one DECISIONS bullet, PROJECT_STATE.
+4. Measure the Worker's request and CPU budget; independent adversarial review (false-positive cancellation,
+   paid-synthesis duplication, continuity rollback, stale-page deployment, the re-read/cancel race); stop for
+   the owner before merge or deploy.

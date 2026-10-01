@@ -245,7 +245,12 @@ workspace's record and lists that artifact name (a `schedule.yml` run on `main`,
 either one means SKIP, and a listing it cannot read means no request and a failed run. The workflow's one
 concurrency group starts no run before the previous one has finished, uploads included, so a later runner
 inside the window sees the record whenever the attempting runner lived to upload it (a lost runner cannot,
-and is the residual). The record is attempt accounting, never
+and is the residual). A run that holds the group without ever starting would hold it indefinitely (2026-09-30,
+#203), so before each dispatch the Worker normal-cancels one never-started Cloudflare wake (no runner, no step) once
+it is the synthesis window old, which it first is at the next wake, when a later checkpoint has superseded it, and
+only while the run before it got a runner within that window; anything it cannot establish leaves every run alone,
+and the next run's log prints the Worker's note (`cloudflare/README.md`). Pages is deployed only when the run's
+checkout holds `main`'s `publish/`, so a duplicate or queue-delayed wake never redeploys an older page. The record is attempt accounting, never
 continuity: nothing admits, restores or renders it. It is keyed by the run's own exchange-calendar date, like
 every acceptance record, so a weekend or holiday run never consumes the next session's checkpoint, and only
 this repository's own runs count (a fork's pull_request run can execute its own edit of the workflow). An

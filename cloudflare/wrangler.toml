@@ -3,6 +3,11 @@ main = "src/index.js"
 compatibility_date = "2026-09-09"
 workers_dev = true
 
+# Persist the scheduler's structured log lines (Workers Logs): every liveness decision, and any dispatch
+# rejection. Without this block a deploy turns persistence off.
+[observability]
+enabled = true
+
 [vars]
 GITHUB_REPOSITORY = "dwats250/market-brief"
 

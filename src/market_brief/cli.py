@@ -590,7 +590,12 @@ def main(argv=None):
         if args.command == "continuity-restore":
             return restore_continuity(args)
         if args.command == "resolve-scheduled":
-            print(scheduled_checkpoint(datetime.now(timezone.utc)) or "SKIP")
+            now = datetime.now(timezone.utc)
+            checkpoint = scheduled_checkpoint(now)
+            if checkpoint is None:
+                # The workflow captures stdout as the checkpoint; the reason goes to the log.
+                print(f"SKIP / - / no checkpoint due at {now.isoformat(timespec='seconds')}", file=sys.stderr)
+            print(checkpoint or "SKIP")
             return 0
         if args.command == "schedule":
             return scheduled(args)

@@ -133,7 +133,25 @@ eligible continuity bundle is a cold start; a restore that cannot finish (the Gi
 download, a timeout, installing the bundle) exits non-zero, so the run stops before collection and uploads no cold
 bundle over accepted state.
 
+**Scheduler liveness (L1, 2026-10-01).** On 2026-09-30 the HOURLY_1300 wake (#203) took the `market-brief-pages`
+group and its `brief` job never received a runner (its github-pages deployment got no status for 9 h 05 m; root
+cause not observable, a GitHub-side stall before runner assignment), so the HOURLY_1400, HOURLY_1500 and CLOSE_1M
+wakes were each replaced behind it and never published. Before each dispatch the Cloudflare Worker now normal-cancels
+one never-started Cloudflare wake that a later checkpoint has superseded (twenty minutes, the synthesis window,
+first reached at the next wake) while the queue is live; anything it cannot establish leaves every run alone.
+Replayed against Sep 30, only HOURLY_1300 is lost. Wake runs are named `Cloudflare wake-up`, the next run prints the
+Worker's `Liveness:` note, `resolve-scheduled` logs `SKIP / - / no checkpoint due at …`, Pages deploys only `main`'s
+page (`NOT DEPLOYED / … / this checkout's page is behind main`), and Workers Logs persist the Worker's decisions.
+Unchanged: the group, checkpoint windows, paid-attempt dedupe, continuity and the validator
+(`docs/2026-09-30-scheduler-liveness.md`).
+
 ## Next
+
+Scheduler liveness (L1): merging deploys the Worker. Before merging, record the deployed Worker version
+(`wrangler versions list --config cloudflare/wrangler.toml`) for a rollback, and confirm `GH_DISPATCH_TOKEN` still
+dispatches. After merge, the first wake's run is named `Cloudflare wake-up`; Workers Logs show `{"liveness":"idle"}`
+on a quiet tick with its CPU time; the 21:01 UTC summer wake logs `SKIP / - / no checkpoint due at …`. A stalled wake
+should next read `{"liveness":"cleared",…}` in Workers Logs and `Liveness: cleared run …` in the following run's log.
 
 Editorial compression: after merge, verify Slice A against the Monday 2026-09-28 PREMARKET and OPEN_30M run
 artifacts (re-render, screenshots at phone width), then judge the prompt from the next normal day's two

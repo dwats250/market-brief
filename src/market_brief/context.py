@@ -7,7 +7,7 @@ which facts were supplied so that references can be checked against the exact co
 
 import re
 
-from .evidence import ROOT, digest, evidence_catalog, model_packet, read_json
+from .evidence import MODEL_EVENT_FIELDS, ROOT, digest, evidence_catalog, model_packet, read_json
 
 CONTEXT_SCHEMA = "market-brief.analyst-context.v1"
 ANCHOR_TOPICS = ("SPY", "QQQ", "GLD", "US 2Y", "US 5Y", "US 10Y", "US 30Y", "US 2s10s", "US 5s30s")
@@ -113,8 +113,7 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
         groups.setdefault(row["topic"], []).append(fact)
     baselines = {metric: next(iter(values)) for metric, values in baselines.items() if len(values) == 1}
     for row in projected["events"]:
-        events.append({key: row[key] for key in ("id", "title", "scheduled_at", "session_relation", "status")
-                       if row.get(key) is not None})
+        events.append({key: row[key] for key in MODEL_EVENT_FIELDS if row.get(key) is not None})
     for row in projected["context_items"]:
         context_items.append({key: row[key] for key in ("id", "title", "published_at") if row.get(key) is not None})
     session = projected["run"].get("session", {})

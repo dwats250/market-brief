@@ -414,6 +414,8 @@ def validate_narrative(narrative, packet, context=None, schema=None):
         for key in ("title", "text", "limitation", "uncertainty", "alternative", "condition",
                     "confirmation", "contradiction", "horizon", "statement", "reason"):
             text = record.get(key, "")
+            if key == "horizon" and EVENT_HORIZON.fullmatch(text):
+                continue  # a reference to an admitted event (checked below), not a numeric claim: bls-event-0
             for ident in TOKEN.findall(text):
                 if ident not in refs or not isinstance(values.get(ident, {}).get("value"), (int, float)):
                     raise ValueError("numeric placeholder not grounded in cited observation")

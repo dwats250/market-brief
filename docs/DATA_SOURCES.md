@@ -85,11 +85,15 @@ unavailable. Optional failures are visible and do not invite invented facts.
 - **[S6] Cboe:** the VIX historical page offers daily closing data. It does not
   establish an intraday quote feed or blanket redistribution permission.
   [VIX historical data](https://www.cboe.com/tradable_products/vix/vix_historical_data)
-- **[S7] Official context:** BLS offers an ICS schedule; BEA publishes release
+- **[S7] Official context:** BLS offers an ICS schedule and the same schedule as
+  a monthly List View page; BEA publishes release
   dates; the Fed offers press-release and speech feeds. These cover official
   sources, not every economic event or market-moving headline. No surveyed
   consensus forecast was verified; omit "beat/miss expectations" without one.
+  BLS may block robots that carry no way to contact their owner, so BLS
+  requests identify the owner's contact (the `BLS_CONTACT` secret).
   [BLS iCal](https://www.bls.gov/help/hlpiCAL.htm),
+  [BLS robot policy](https://www.bls.gov/bls/pss.htm),
   [BEA schedule](https://www.bea.gov/news/schedule),
   [Fed feeds](https://www.federalreserve.gov/feeds/feeds.htm),
   [Fed calendar](https://www.federalreserve.gov/newsevents/calendar.htm)

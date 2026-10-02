@@ -97,13 +97,13 @@ JOBS, PERCENT, CHANGE = "thousand jobs", "percent", "percent change"
 MEASURES = {
     "empsit": (
         ("payrolls", "bls-empsit-payrolls", "nonfarm payroll change", JOBS,
-         "over-the-month change in total nonfarm payroll employment, seasonally adjusted"),
+         "total nonfarm, change from the previous month, seasonally adjusted"),
         ("unemployment", "bls-empsit-unemployment-rate", "unemployment rate", PERCENT,
          "share of the labor force, seasonally adjusted"),
         ("earnings_mm", "bls-empsit-earnings-mm", "average hourly earnings, monthly change", CHANGE,
-         "all employees on private nonfarm payrolls, change from the previous month, seasonally adjusted"),
+         "private nonfarm, change from the previous month, seasonally adjusted"),
         ("earnings_yy", "bls-empsit-earnings-yy", "average hourly earnings, 12-month change", CHANGE,
-         "all employees on private nonfarm payrolls, change over the past 12 months"),
+         "private nonfarm, change over the past 12 months"),
     ),
     "cpi": (
         ("all_items_mm", "bls-cpi-all-items-mm", "CPI-U all items, monthly change", CHANGE,
@@ -463,9 +463,8 @@ def release_rows(release, retrieved):
         rows.append(dict(common, id=f"bls-empsit-revision-{revision['month']}", metric=REVISION,
                          value=revision["change"], unit=JOBS, revised_month=revision["month"],
                          revised_from=revision["previous"], revised_to=revision["revised"],
-                         baseline=f"change to the previously published {period_name(revision['month'])} estimate"))
+                         baseline="change to the revised month's previously published estimate"))
     if release["combined"] is not None:
-        months = " and ".join(period_name(revision["month"]) for revision in release["revisions"])
         rows.append(dict(common, id="bls-empsit-revision-combined", metric=COMBINED, value=release["combined"],
-                         unit=JOBS, baseline=f"{months} combined, change from previously reported"))
+                         unit=JOBS, baseline="the revised months together, change from previously reported"))
     return rows

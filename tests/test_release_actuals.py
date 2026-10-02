@@ -459,15 +459,19 @@ def test_the_rich_analyst_reads_what_released_when_for_which_month_and_every_val
     packet = release_packet(monkeypatch, "PREMARKET", now="2026-10-02T13:01:00+00:00")
     context = analyst_context(packet, edition_profile("PREMARKET"))
     group = next(group for group in context["catalog"] if group["topic"] == "Employment Situation")
+    # The release states its official time and reference month once; each row carries its value.
+    assert (group["released_at"], group["reference_period"]) == ("2026-10-02T12:30:00+00:00", "2026-09")
     rows = {row["id"]: row for row in group["rows"]}
     assert set(rows) == set(EMPSIT_ACTUALS)
     assert rows["bls-empsit-payrolls"] == dict(
         id="bls-empsit-payrolls", metric="nonfarm payroll change", value=29, unit="thousand jobs", magnitude="NEUTRAL",
-        status="AVAILABLE", observed_at="2026-10-02T12:30:00+00:00", reference_period="2026-09")
+        status="AVAILABLE")
     july = rows["bls-empsit-revision-2026-07"]
     assert (july["value"], july["revised_month"], july["revised_from"], july["revised_to"]) == (-31, "2026-07", 21, -10)
-    assert july["baseline"] == "change to the previously published July 2026 estimate"
+    assert context["baselines"]["payroll revision"] == "change to the revised month's previously published estimate"
     assert context["baselines"]["unemployment rate"] == "share of the labor force, seasonally adjusted"
+    # Every other group keeps its rows' own clocks.
+    assert all("released_at" not in group for group in context["catalog"] if group["topic"] != "Employment Situation")
     assert next(s for s in context["sources"] if s["id"] == "bls-empsit") == dict(
         id="bls-empsit", name="BLS Employment Situation", kind="release", status="AVAILABLE",
         coverage_date="2026-10-02")

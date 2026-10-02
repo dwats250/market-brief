@@ -85,6 +85,17 @@ def _selected_ids(packet, catalog, profile, comparisons, prior):
     return keep
 
 
+def catalog_group(topic, rows):
+    """One topic's rows. An official release states its publication time and reference month once, for the group."""
+    shared = {(row.get("observed_at"), row.get("reference_period")) for row in rows}
+    if not all(row.get("reference_period") for row in rows) or len(shared) != 1:
+        return dict(topic=topic, rows=rows)
+    released_at, period = shared.pop()
+    return dict(topic=topic, released_at=released_at, reference_period=period,
+                rows=[{key: value for key, value in row.items() if key not in ("observed_at", "reference_period")}
+                      for row in rows])
+
+
 def analyst_context(packet, profile=None, comparisons=None, prior=None):
     """One canonical copy of each admitted fact, a small legend, and caller-owned identity.
 
@@ -137,7 +148,7 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
         selection=selection,
         coverage=projected["coverage"],
         baselines=baselines,
-        catalog=[dict(topic=topic, rows=rows) for topic, rows in groups.items()],
+        catalog=[catalog_group(topic, rows) for topic, rows in groups.items()],
         sector_leadership={key: [row["id"] for row in rows if row["id"] in valued]
                            for key, rows in projected.get("sector_leadership", {}).items()},
         attention=projected["attention"],

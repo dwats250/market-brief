@@ -40,7 +40,7 @@ RELEASE_NUMBER = re.compile(r"\bUSDL-\d{2}-\d{3,5}\b")
 UP, DOWN = ("increased", "rose", "edged up", "grew"), ("decreased", "declined", "fell", "edged down")
 HAVE_UP, HAVE_DOWN = ("increased", "risen", "grown"), ("decreased", "declined", "fallen")
 VERB = "(" + "|".join(UP + DOWN) + ")"
-SIGNED = r"([+-]\d{1,3}(?:,\d{3})*)"
+SIGNED = r"([+\-\u2212]\d{1,3}(?:,\d{3})*|0)"  # BLS prints an unchanged month as (0)
 COUNT = r"(\d{1,3}(?:,\d{3})*)"
 PAYROLLS = (
     # The lead: "Both nonfarm payroll employment (+29,000) and the unemployment rate (4.2 percent) changed little in
@@ -75,7 +75,7 @@ REVISIONS = re.compile(
     rf"With these revisions, employment in {MONTH} and {MONTH} combined is {COUNT} (higher|lower) than previously "
     r"reported\.")
 REVISION_MENTION = re.compile(r"\brevised (?:up|down) by\b|\bWith these revisions\b")
-UNREAD_REVISIONS = "payroll revisions not read: the revisions paragraph did not read cleanly"
+UNREAD_REVISIONS = "payroll revisions not read cleanly"
 # Earnings: BLS rounds the cents change and the dollar level, and computes the percent from unrounded data.
 EARNINGS_TOLERANCE = 0.08
 # Bounds no real release crosses (payrolls in thousands of jobs; the rest in percent). A value outside one is a misread.
@@ -260,6 +260,20 @@ def signed(verb):
     return -1 if verb in DOWN or verb in HAVE_DOWN else 1
 
 
+def own_month(pattern, text, month, name):
+    """Each match of a statement whose clause names no month but the reference month; a statement about another month
+    (`... from August, when the unemployment rate was 4.3 percent`) refuses the release rather than stand in for it.
+    The clause runs from the previous sentence break (at most sixty characters back) to the end of the sentence."""
+    found = []
+    for match in pattern.finditer(text):
+        before = re.split(r"[.;] ", text[max(0, match.start() - 60):match.start()])[-1]
+        after = re.split(r"\. (?=[A-Z(])", text[match.end():match.end() + 200], maxsplit=1)[0]
+        if set(re.findall(MONTH, before + match.group(0) + after)) - {month}:
+            raise ReleaseError(f"a {name} statement names another month")
+        found.append(match.groups())
+    return found
+
+
 def employment(text, period):
     """The Employment Situation's required values and its stated payroll revisions, from its release text."""
     month = MONTHS[int(period[5:]) - 1]
@@ -267,26 +281,30 @@ def employment(text, period):
     payrolls += [m[1] for m in PAYROLLS[1].findall(text) if m[0] == month]
     payrolls += [("-" if m[0] in DOWN else "+") + m[1] for m in PAYROLLS[2].findall(text) if m[2] == month]
     payrolls = agree("nonfarm payroll", [thousands(value, LIMITS["payrolls"], "payroll change") for value in payrolls])
-    rates = [float(value) for pattern in UNEMPLOYMENT for value in pattern.findall(text)]
+    rates = [float(value) for pattern in UNEMPLOYMENT
+             for value, in own_month(pattern, text, month, "unemployment rate")]
     unemployment = bounded(agree("unemployment rate", rates), "unemployment")
     changes = []
     for found, verb, cents, percent, level in EARNINGS[0].findall(text):
         if found != month:
             continue
         sign, cents, level = signed(verb), int(cents), float(level)
+        if 100 * level - sign * cents <= 0:
+            raise ReleaseError("the monthly earnings change disagrees with its cents and dollar level")
         implied = 100 * sign * cents / (100 * level - sign * cents)
         if abs(implied - sign * float(percent)) > EARNINGS_TOLERANCE:
             raise ReleaseError("the monthly earnings change disagrees with its cents and dollar level")
         changes.append(sign * float(percent))
     changes += [0.0 for found, _ in EARNINGS[1].findall(text) if found == month]
     earnings_mm = bounded(agree("monthly earnings", changes), "earnings_mm")
-    yearly = [signed(verb) * float(percent) for verb, percent in EARNINGS_YEAR.findall(text)]
+    yearly = [signed(verb) * float(percent)
+              for verb, percent in own_month(EARNINGS_YEAR, text, month, "12-month earnings")]
     earnings_yy = bounded(agree("12-month earnings", yearly), "earnings_yy")
     values = dict(payrolls=payrolls, unemployment=unemployment, earnings_mm=earnings_mm, earnings_yy=earnings_yy)
     try:
         revisions, combined = payroll_revisions(text, period)
         note = ""
-    except ReleaseError:
+    except ValueError:  # a ReleaseError, or a number int() will not read
         revisions, combined, note = [], None, UNREAD_REVISIONS
     return dict(values=values, revisions=revisions, combined=combined, note=note)
 
@@ -381,7 +399,7 @@ def identity(family, text):
     if WEEKDAYS[released.weekday()] != weekday:
         raise ReleaseError("the embargo line's weekday does not match its date")
     upper = [month.upper() for month in MONTHS]
-    headings = re.findall(rf"\b{FAMILIES[family]['heading']} -{{1,2}} ({'|'.join(upper)}) (\d{{4}})\b", text)
+    headings = re.findall(rf"\b{FAMILIES[family]['heading']} (?:-{{1,2}}|\u2013) ({'|'.join(upper)}) (\d{{4}})\b", text)
     if len(headings) != 1:
         raise ReleaseError("the release text names no single reference month")
     return released, f"{headings[0][1]}-{upper.index(headings[0][0]) + 1:02d}"

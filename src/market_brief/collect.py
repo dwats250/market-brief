@@ -1,5 +1,6 @@
 """GET-only official sources. No account discovery, arbitrary crawling, or trading routes."""
 
+import http.client
 import json
 import os
 import re
@@ -103,7 +104,8 @@ def fetch(url, deadline):
             if attempt == 0 and exc.code in {500, 502, 503, 504}:
                 continue
             raise SourceError(f"HTTP {exc.code}") from None
-        except (URLError, TimeoutError, OSError):
+        # A malformed response (a cut chunked body, a garbled status line) is the network failing, never a crash.
+        except (URLError, TimeoutError, OSError, http.client.HTTPException):
             if attempt:
                 raise SourceError("network unavailable or timeout") from None
     raise SourceError("unavailable")
@@ -447,7 +449,8 @@ def release_actuals(events, now, deadline, fetcher):
             retrieved = datetime.now(timezone.utc)
             release = read_release(family, page)
             check_release(release, event, period)
-        except (SourceError, ValueError, LookupError, UnicodeError, OverflowError) as exc:
+        # Whatever a page holds, it costs the run this release, never the run.
+        except (SourceError, ValueError, LookupError, UnicodeError, ArithmeticError) as exc:
             record.update(status="UNAVAILABLE", reason=failure(exc))
         else:
             rows += release_rows(release, retrieved)

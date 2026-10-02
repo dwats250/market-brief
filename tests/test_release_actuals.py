@@ -8,6 +8,7 @@ Friday, September 11, 2026 (still the current CPI edition then). `bls-empsit.202
 previous Employment Situation (August 2026), the first <pre> of BLS's archived copy of that release.
 """
 
+import http.client
 import json
 import re
 import time
@@ -41,15 +42,17 @@ from market_brief.evidence import (
     ROOT,
     evidence_catalog,
     finalize_coverage,
+    metric_identity,
     normalize_observation,
     normalize_packet,
     read_json,
 )
 from market_brief.metrics import annotate_magnitude, derive
-from market_brief.render import formatted, render
+from market_brief.render import formatted, release_clock, render
 from market_brief.synthesize import construct_prompt, validate_narrative
 
 FIXTURES = ROOT / "tests/fixtures"
+UNREAD = "payroll revisions not read cleanly"
 EMPSIT_PAGE = (FIXTURES / "bls-empsit.2026-10-02.htm").read_text()
 CPI_PAGE = (FIXTURES / "bls-cpi.2026-09-11.htm").read_text()
 AUGUST_TEXT = (FIXTURES / "bls-empsit.2026-09-04.txt").read_text()
@@ -166,7 +169,7 @@ def test_revisions_that_do_not_read_cleanly_are_left_out_and_noted(old, new):
     release = read_release("empsit", damaged(EMPSIT_PAGE, old, new))
     assert release["values"] == dict(payrolls=29, unemployment=4.2, earnings_mm=0.1, earnings_yy=3.0)
     assert release["revisions"] == [] and release["combined"] is None
-    assert release["note"] == "payroll revisions not read: the revisions paragraph did not read cleanly"
+    assert release["note"] == UNREAD
 
 
 def test_a_release_without_a_revisions_paragraph_reports_none():
@@ -419,7 +422,8 @@ def tuesday_release(family="empsit", page=EMPSIT_PAGE, at=TUESDAY_RELEASE):
     release = read_release(family, page)
     release["released_at"] = utc(at)
     spec = FAMILIES[family]
-    record = collect.source(spec["source"], spec["name"], "release", spec["url"], utc(at))
+    record = collect.source(spec["source"], spec["name"], "release", spec["url"], utc(at),
+                            **(dict(status="DEGRADED", reason=release["note"]) if release["note"] else {}))
     event = dict(id="bls-event-0", title=spec["title"], source_id="bls", published_at=None, checked_at=at,
                  scheduled_at=at, status="SCHEDULED")
     return release_rows(release, utc(at)), record, event
@@ -553,7 +557,7 @@ def test_the_employment_situation_card_leads_macro_and_rates():
     card = section.split('<div class="release">', 1)[1].split("</dl>", 1)[0] + "</dl>"
     assert section.index('<div class="release">') < section.index("U.S. Treasury par curve")
     assert re.search(r'<div class="caption">Economic release<span>5:30 AM PT</span></div>', card)
-    assert "<b>Employment Situation</b> · September 2026" in card
+    assert "<b>Employment Situation</b> · <span>September 2026</span>" in card
     assert card_lines(card) == [
         ("Payrolls", ["+29k"]), ("Unemployment", ["4.2%"]), ("Avg hourly earnings", ["+0.1% m/m · +3.0% y/y"]),
         ("Revisions", ["Jul +21k → −10k", "Aug +162k → +133k", "Combined −60k"])]
@@ -566,13 +570,13 @@ def test_the_card_reads_the_same_in_markdown():
     section = markdown.split("## Macro & rates", 1)[1].split("\n## ", 1)[0]
     assert ("**ECONOMIC RELEASE** · 5:30 AM PT · Employment Situation · September 2026\n\n"
             "- Payrolls · +29k\n- Unemployment · 4.2%\n- Avg hourly earnings · +0.1% m/m · +3.0% y/y\n"
-            "- Revisions · Jul +21k → −10k · Aug +162k → +133k · Combined −60k\n") in section
+            "- Revisions · Jul +21k → −10k; Aug +162k → +133k; Combined −60k\n") in section
     assert section.index("ECONOMIC RELEASE") < section.index("U.S. TREASURY PAR CURVE")
 
 
 def test_the_cpi_card_reads_headline_and_core():
     _, _, _, (markdown, page) = tuesday_page("cpi", CPI_PAGE)
-    assert "<b>Consumer Price Index</b> · August 2026" in macro(page)
+    assert "<b>Consumer Price Index</b> · <span>August 2026</span>" in macro(page)
     assert card_lines(macro(page)) == [("CPI", ["+0.4% m/m · +3.4% y/y"]), ("Core CPI", ["+0.3% m/m · +2.4% y/y"])]
     assert "- CPI · +0.4% m/m · +3.4% y/y\n- Core CPI · +0.3% m/m · +2.4% y/y" in markdown
 
@@ -772,3 +776,123 @@ def test_the_owner_contact_identifies_the_requests_and_appears_in_nothing_the_ru
     assert not [path for path in kept if "owner-contact" in path.read_text(errors="replace")]
     output = capsys.readouterr()
     assert "owner-contact" not in output.out + output.err
+
+
+# --- Review fixes ----------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("old,new", [
+    # A rate stated for another month never stands in for the reference month's, even when the reference month's own
+    # statement is in a form the reader does not accept.
+    ("Both the unemployment rate, at 4.2 percent, and",
+     "The unemployment rate, at 4.2 percent in September, was little changed from August, when the unemployment rate "
+     "was 4.3 percent. Both the jobless rate and"),
+    ("Both the unemployment rate, at 4.2 percent, and", "In August, the unemployment rate was 4.3 percent. Both the"),
+    ("Over the past 12 months, average hourly earnings have increased\nby 3.0 percent.",
+     "In August, over the year, wages rose. Over the past 12 months, average hourly earnings have increased\nby 3.0 "
+     "percent in August."),
+])
+def test_a_rate_stated_for_another_month_refuses_the_release(old, new):
+    page = damaged(EMPSIT_PAGE, "and the unemployment rate (4.2 percent)", "and the jobless measure")
+    with pytest.raises(ReleaseError, match="names another month"):
+        read_release("empsit", damaged(page, old, new))
+
+
+@pytest.mark.parametrize("old,new,payrolls", [
+    ("(+29,000)", "(−29,000)", -29),  # a true minus
+    ("(+29,000)", "(0)", 0),  # an unchanged print
+])
+def test_signed_payroll_prints_read_in_every_form_bls_uses(old, new, payrolls):
+    assert read_release("empsit", EMPSIT_PAGE.replace(old, new))["values"]["payrolls"] == payrolls
+
+
+def test_an_en_dash_heading_reads():
+    page = damaged(EMPSIT_PAGE, "SITUATION - SEPTEMBER 2026", "SITUATION – SEPTEMBER 2026")
+    assert read_release("empsit", page)["period"] == "2026-09"
+
+
+def test_an_impossible_earnings_level_is_a_refusal_not_a_crash():
+    page = damaged(EMPSIT_PAGE, "edged up by 5\ncents, or 0.1 percent, to $37.81",
+                   "edged up by 5\ncents, or 0.1 percent, to $0.05")
+    with pytest.raises(ReleaseError, match="cents and dollar level"):
+        read_release("empsit", page)
+
+
+def test_an_unreadable_revision_number_leaves_only_the_revisions_out():
+    page = damaged(EMPSIT_PAGE, "combined is 60,000 lower", "combined is " + "9" * 5000 + " lower")
+    release = read_release("empsit", page)
+    assert release["values"]["payrolls"] == 29 and release["revisions"] == [] and release["note"] == UNREAD
+
+
+@pytest.mark.parametrize("error", [http.client.IncompleteRead(b""), http.client.BadStatusLine("HTTP/1.1 2xx OK")])
+def test_a_broken_http_response_is_a_source_failure_not_a_crash(monkeypatch, error):
+    attempts = []
+
+    class Opener:
+        def open(self, request, timeout):
+            attempts.append(request.full_url)
+            raise error
+    monkeypatch.setattr(collect, "build_opener", lambda *handlers: Opener())
+    with pytest.raises(SourceError, match="network unavailable or timeout"):
+        fetch(EMPLOYMENT_SITUATION, time.monotonic() + 30)
+    assert attempts == [EMPLOYMENT_SITUATION] * 2
+
+
+def test_each_revised_month_is_its_own_measurement():
+    rows, _, _ = tuesday_release()
+    keys = {row["id"]: metric_identity(row)["key"] for row in rows}
+    assert keys["bls-empsit-revision-2026-07"] != keys["bls-empsit-revision-2026-08"]
+
+
+def degraded_page():
+    page = damaged(EMPSIT_PAGE, "July and August combined is 60,000 lower", "July and August combined is 50,000 lower")
+    packet, value, context, rendered = tuesday_page(page=page)
+    return packet, rendered
+
+
+def test_a_release_whose_revisions_did_not_read_says_so_on_the_card_and_is_not_unavailable():
+    packet, (markdown, page) = degraded_page()
+    assert card_lines(macro(page))[-1] == ("Revisions", ["not read from the release"])
+    assert "- Revisions · not read from the release" in markdown
+    sources = drawer(page, "Sources ·")
+    assert "unavailable" not in sources.split("</summary>", 1)[0]
+    assert "Degraded · payroll revisions not read cleanly" in sources
+
+
+def test_a_card_counts_as_macro_and_rates_content():
+    rows, record, event = tuesday_release()
+    packet = run_packet(PREMARKET_TUE, "sample-premarket-tue", sources=[record], observations=rows, events=[event])
+    packet["observations"] = [row for row in packet["observations"] if not row["topic"].startswith("US ")]
+    packet["derived"] = [row for row in packet["derived"] if row["topic"] not in ("GLD", "GDX", "SLV")
+                         and not row["topic"].startswith("US ")]
+    packet.pop("curve", None)
+    profile = edition_profile("PREMARKET")
+    context = analyst_context(packet, profile)
+    value = edition_response(profile, context)
+    value["sections"]["macro"] = []
+    markdown, page = render(packet, value, context)
+    assert '<div class="release">' in page
+    omitted = [line for line in markdown.splitlines() if "Not in this edition" in line]
+    assert omitted and not any("Macro" in line or "Treasury" in line for line in omitted)
+
+
+def test_revision_evidence_names_its_month_and_estimates():
+    _, _, _, (_, page) = tuesday_page()
+    assert "Payroll revision, July 2026 (+21k → −10k)" in drawer(page, "Evidence ledger")
+    proof = macro(page).split('<div class="release">', 1)[1].split("</div></div>", 1)[0]
+    assert "Payroll revision, August 2026 (+162k → +133k)" in proof
+
+
+def test_a_release_from_another_session_shows_its_date():
+    rows, _, _ = tuesday_release()
+    session = dict(date="2026-09-09", open="2026-09-09T13:30:00+00:00", close="2026-09-09T20:00:00+00:00")
+    assert release_clock(rows[0], session) == "Tuesday, Sep 8 · 5:30 AM PT"
+    assert release_clock(rows[0], dict(session, date="2026-09-08")) == "5:30 AM PT"
+
+
+def test_large_payroll_values_keep_their_thousands_separator():
+    assert formatted(dict(value=-20493, unit="thousand jobs")) == "−20,493k"
+
+
+def test_markdown_revisions_separate_months_from_their_estimates():
+    _, _, _, (markdown, _) = tuesday_page()
+    assert "- Revisions · Jul +21k → −10k; Aug +162k → +133k; Combined −60k" in markdown

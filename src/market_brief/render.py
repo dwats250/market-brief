@@ -221,8 +221,13 @@ def metric_label(row, session=None):
 
 
 def reader_metric_label(row, session=None):
-    """`twenty-session return` → `20-session return`; `relative to SPY` → `vs SPY · 20 sessions`."""
+    """`twenty-session return` → `20-session return`; `relative to SPY` → `vs SPY · 20 sessions`; a payroll revision
+    names its month and estimates: `Payroll revision, July 2026 (+21k → −10k)`."""
     metric = row.get("metric", "")
+    if metric == REVISION and row.get("revised_month") and "revised_from" in row and "revised_to" in row:
+        return (f"Payroll revision, {period_name(row['revised_month'])} "
+                f"({formatted(dict(row, value=row['revised_from']))} \u2192 "
+                f"{formatted(dict(row, value=row['revised_to']))})")
     if metric.startswith("relative to "):
         return f"vs {metric.removeprefix('relative to ')} · 20 sessions"
     if current_print(row):
@@ -266,9 +271,11 @@ def source_rows(sources):
         reason = s.get("reason") or ""
         if reason.startswith("not automated"):
             reason = NOT_COLLECTED
+        # Degraded is available with a stated gap (a release whose revisions did not read): its values are shown.
         rows.append(dict(s, kind_label="" if redundant else kind,
                          status_label=SOURCE_STATUS_LABELS.get(status, status.title()),
-                         unavailable=status != "AVAILABLE", reason=reason,
+                         unavailable=status not in ("AVAILABLE", "DEGRADED"), degraded=status == "DEGRADED",
+                         reason=reason,
                          retrieved=compact_clock(s.get("retrieved_at", "")),
                          detail=" · ".join(filter(None, (s.get("provider"), s.get("feed"), s.get("data_delay"))))))
     return rows
@@ -278,6 +285,15 @@ def observed_label(value):
     if isinstance(value, str) and "T" in value:
         return pacific_time(value, True)
     return short_date(value) if isinstance(value, str) and value else value
+
+
+def release_clock(row, session):
+    """A release value's official time: `5:30 AM PT` in the session that published it, dated in any other (a carried
+    Friday print on Monday's page never reads as this morning's)."""
+    value = row.get("observed_at") or ""
+    if "T" in value and timestamp(value).astimezone(ET).date().isoformat() != (session or {}).get("date"):
+        return pacific_time(value, True)
+    return compact_clock(value)
 
 
 def compact_clock(value):
@@ -313,7 +329,7 @@ def release_display(value, unit):
     `+0.1%`, each to its published precision. Presentation only; the row keeps its number."""
     if unit == JOBS:
         whole = round(value)
-        return f"{MINUS if whole < 0 else '+' if whole > 0 else ''}{abs(whole)}k"
+        return f"{MINUS if whole < 0 else '+' if whole > 0 else ''}{abs(whole):,}k"
     if unit == PERCENT:
         return f"{value:.1f}%"
     tenth = round(value, 1)
@@ -565,7 +581,7 @@ def rates_module(packet, facts, catalog):
                            notes=notes))
 
 
-def release_cards(rows, events):
+def release_cards(rows, events, sources=()):
     """One card per admitted release, from this run's rows (the observed clock): its official time, family, reference
     month and values, and the IDs of the calendar events it has now happened for, which leave What matters next."""
     groups = {}
@@ -583,6 +599,11 @@ def release_cards(rows, events):
                     else formatted(row) for row in present)]))
         revisions = sorted((row for row in members if row["metric"] == REVISION), key=lambda row: row["revised_month"])
         combined = [row for row in members if row["metric"] == COMBINED]
+        unread = any(source.get("status") == "DEGRADED" for source in sources
+                     if source["id"] in {row["source_id"] for row in members})
+        if unread and not (revisions or combined):
+            # The release states revisions that did not read cleanly; the card says so instead of looking complete.
+            lines.append(dict(label="Revisions", values=["not read from the release"]))
         if revisions or combined:
             lines.append(dict(label="Revisions", values=[
                 *(f"{SHORT_MONTH_NAMES[int(row['revised_month'][5:]) - 1]} "
@@ -671,7 +692,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
             else:
                 label = row.get("title") or row.get("topic") or ref
             result.append(dict(id=ref, label=label, display=formatted(row) if "value" in row else "",
-                               when=compact_clock(row.get("observed_at") or row.get("published_at") or ""),
+                               when=(release_clock(row, session) if row.get("frequency") == "release" else
+                                     compact_clock(row.get("observed_at") or row.get("published_at") or "")),
                                anchor=ref in catalog))
         return result
 
@@ -759,7 +781,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     live_carried = [dict(c, assessment="", reason="") if c["assessment"] in VERDICTS else c for c in live_carried]
     # A release whose official values are admitted has happened: its card in Macro & rates is its one home, so it is no
     # longer listed among the events that matter next.
-    cards = [dict(card, proof=refs(card["ids"], catalog)) for card in release_cards(releases, packet["events"])]
+    cards = [dict(card, proof=refs(card["ids"], catalog))
+             for card in release_cards(releases, packet["events"], packet["sources"])]
     happened = {ident for card in cards for ident in card["events"]}
     events = [{**event, "scheduled_label": pacific_time(event["scheduled_at"], True),
                "relation_label": event.get("session_relation", "").lower(), "refs": refs([event["id"]], catalog)}
@@ -835,7 +858,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     # Market sections this edition could not fill. Cuttingboard is optional context, not market coverage,
     # so its absence is stated in Technical details rather than listed here.
     omitted = []
-    rates_present = bool(yields or module["curve"] or other_macro or narrative["sections"]["macro"])
+    rates_present = bool(yields or module["curve"] or other_macro or narrative["sections"]["macro"] or cards)
     if not rates_present:
         # Metals share the section; when they still render, only the rates half is missing.
         omitted.append("Treasury rates" if metal_rows else "Macro & rates")
@@ -893,7 +916,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     evidence_rows = [dict(r, display=formatted(r) if "value" in r else r["title"],
                           metric_label=(reader_metric_label(r, session) if r.get("metric")
                                         else "Published / scheduled item"),
-                          when=compact_clock(r.get("observed_at") or r.get("published_at") or ""),
+                          when=(release_clock(r, session) if r.get("frequency") == "release" else
+                                compact_clock(r.get("observed_at") or r.get("published_at") or "")),
                           source_name=source_names.get(r.get("source_id"), r.get("source_id", "")),
                           status_label=SOURCE_STATUS_LABELS.get(r.get("status", ""), (r.get("status") or "").title()))
                      for r in catalog.values()]
@@ -1073,7 +1097,8 @@ def markdown(view):
         lines += ["## Macro & rates", ""]
         for card in mac["releases"]:
             lines += [f"**ECONOMIC RELEASE** · {card['time']} · {esc(card['title'])} · {esc(card['period'])}", ""]
-            lines += [f"- {line['label']} · " + " · ".join(line["values"]) for line in card["lines"]]
+            # One `·` between a label and its values; months and their estimates are separated by `;`.
+            lines += [f"- {line['label']} · " + "; ".join(line["values"]) for line in card["lines"]]
             lines.append("")
         if mac["curve"]:
             curve = mac["curve"]

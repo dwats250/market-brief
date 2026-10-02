@@ -182,6 +182,12 @@ the event standing and says why in Coverage limitations, and the brief publishes
 read cleanly are left out and the source reads Degraded. No consensus, no surprise score, no prompt change, no new
 model call. Today's real requests with the release: PREMARKET 49,805 / 64,000 and OPEN_30M 34,529 / 40,000 (+1,940
 each). Not yet automated: consensus, other releases (BEA, ISM, claims), live yields for market transmission.
+Known limits, accepted for now: every run reads the page afresh and nothing carries an admitted release within the
+session, so a BLS failure on one later refresh hides that run's card and lists the event again (the next run restores
+it; the alternative is carrying release rows in continuity); an analyst may still time a watch `EVENT(<id>)` to a
+release that has already happened (unchanged behaviour for past events; rejecting it would discard a paid synthesis);
+a shutdown-delayed release that revises other than the two prior months shows its values without revisions; and
+`fetch` checks its deadline between attempts, not while a slow body arrives.
 
 ## Next
 

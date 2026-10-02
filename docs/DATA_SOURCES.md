@@ -92,6 +92,9 @@ unavailable. Optional failures are visible and do not invite invented facts.
   consensus forecast was verified; omit "beat/miss expectations" without one.
   BLS may block robots that carry no way to contact their owner, so BLS
   requests identify the owner's contact (the `BLS_CONTACT` secret).
+  Release values come from BLS's fixed current-edition pages for the
+  Employment Situation and the CPI (`news.release/empsit.nr0.htm`,
+  `news.release/cpi.nr0.htm`), read once the calendar's release time passes.
   [BLS iCal](https://www.bls.gov/help/hlpiCAL.htm),
   [BLS robot policy](https://www.bls.gov/bls/pss.htm),
   [BEA schedule](https://www.bea.gov/news/schedule),

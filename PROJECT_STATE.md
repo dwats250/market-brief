@@ -161,15 +161,36 @@ it had read `{id, status}`, which costs 125 to 145 more bytes per release on 202
 four-release day adds about 0.9 KB in all).
 Measurements keep their compact record and Fed items are unchanged. Release values (issue #23's larger gap) are not
 in this slice. Known limit, unchanged: a release on a market holiday (the Employment Situation on Good Friday) falls
-between today and the next session and is not admitted.
+between today and the next session and is not admitted. Merged as PR #47 (`e108fe3`, 2026-10-02 17:52 UTC, on the
+owner's instruction in this session; the auto-mode audit note "Merge Without Review" refers to that merge). The first
+run after it, HOURLY_1400 (run 37044676692), read `BLS calendar · Available` linked to the calendar file.
+
+**BLS release actuals (2026-10-02, issue #23's release-values half).** On a BLS release morning the page now shows what
+printed. When today's admitted calendar lists the Employment Situation or the CPI and its scheduled time has passed,
+the collector reads that family's fixed current-edition page (`empsit.nr0.htm`, `cpi.nr0.htm`; nothing else on BLS
+beyond the calendar) with the same identified request, and admits it only as the scheduled release: its embargo line's
+official time is the event's and its reference month is the one the calendar names. The CPI's headline and core,
+monthly and 12-month, come from Table A; the Employment Situation's payrolls, unemployment rate, average hourly
+earnings (m/m, y/y) and the two prior months' payroll revisions with their combined revision come from BLS's standard
+sentences, each pinned by real releases and checked against the others. Values are ordinary observation rows
+(`frequency: release`, current only in the session that published them) with stable IDs (`bls-empsit-payrolls`,
+`bls-cpi-core-mm`, …), so they reach the analyst (light contexts always keep them), are citable, and survive every
+refresh. One deterministic card opens Macro & rates (`Payrolls +29k`, `Unemployment 4.2%`, `Avg hourly earnings
++0.1% m/m · +3.0% y/y`, `Revisions Jul +21k → −10k …`), uncoloured, on the observed clock, in HTML and Markdown; the
+released event leaves What matters next. A page that is stale, refused, malformed or not the scheduled release leaves
+the event standing and says why in Coverage limitations, and the brief publishes as before; revisions that do not
+read cleanly are left out and the source reads Degraded. No consensus, no surprise score, no prompt change, no new
+model call. Today's real requests with the release: PREMARKET 49,805 / 64,000 and OPEN_30M 34,529 / 40,000 (+1,940
+each). Not yet automated: consensus, other releases (BEA, ISM, claims), live yields for market transmission.
 
 ## Next
 
-BLS release calendar: the `BLS_CONTACT` repository secret was set on 2026-10-02, before the merge (unset, BLS
-requests stay anonymous and the calendar stays visibly unavailable). After merge, the next run's Sources drawer should
-read `BLS calendar · Available` linked to the calendar file, Technical details `Calendar: checked`, and a release day
-lists its releases under Events; a reason reading `monthly schedule …; calendar file: …` means the List View carried
-the run and names why the file did not. Issue #23 stays open for current release values.
+BLS release actuals: after merge, the next run on a release day (the next is the CPI, Wednesday 2026-10-14, 8:30 AM ET)
+should show the `Economic release` card at the top of Macro & rates from the premarket on, `BLS Consumer Price Index ·
+Available` in the Sources drawer, and the event gone from What matters next. A Coverage limitation `BLS Consumer Price
+Index: …` means the page was not admitted and names why (`the page still shows the September 11, 2026 release` while
+BLS has not yet switched the page); a later refresh adds the card once it reads. Issue #23 stays open for consensus and
+market transmission.
 
 Scheduler liveness (L1): merging deploys the Worker. Before merging, record the deployed Worker version
 (`wrangler versions list --config cloudflare/wrangler.toml`) for a rollback, and confirm `GH_DISPATCH_TOKEN` still

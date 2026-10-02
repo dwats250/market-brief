@@ -54,8 +54,9 @@ TAKE = ("The tension is in the curve and metals, not in growth's 20-session lead
 TAKE_IDS = ["treasury-2y-change", "treasury-10y-change", "GDX-spread20", "QQQ-spread20"]
 MISMATCH = "take text and evidence must be both present or both empty"
 # The template's <style> block after the editorial compression pass (no pill, no figure strip, no-wrap numbers,
-# flexible tables up to 767 px, the retired-watch drawer); The Take adds no CSS of its own.
-STYLE_SHA256 = "94d9548b11edce997715683b047d5c7d5747ded2c1585ac0c2a6d10e1b39ec06"
+# flexible tables up to 767 px, the retired-watch drawer); The Take adds no CSS of its own. The economic release card
+# (Macro & rates) adds one rule set: `.release`, `.release-title`, `.release-values`.
+STYLE_SHA256 = "889f6a4a254043b698887063a426fecd4cdd2f835bbe2862d89d550904011ff1"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):

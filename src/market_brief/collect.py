@@ -458,6 +458,21 @@ def release_actuals(events, now, deadline, fetcher):
     return rows, records
 
 
+def bls_collection(now, deadline, fetcher):
+    """BLS for one run: the calendar (the file, else its official fallback pages; one source record either way), then
+    the official values of today's releases whose time has passed. The admitted calendar is the only trigger for a
+    release page: no calendar, no release read. Returns `(sources, events, observations)`."""
+    record = source("bls", "BLS calendar", "calendar", BLS, now)
+    try:
+        events, record["url"], record["reason"], retrieved = bls_calendar(now, deadline, fetcher)
+    except (SourceError, ValueError, LookupError, UnicodeError, OverflowError) as exc:
+        record.update(status="UNAVAILABLE", reason=failure(exc))
+        return [record], [], []
+    record.update(retrieved_at=retrieved.isoformat(), coverage_date=now.astimezone(EASTERN).date().isoformat())
+    rows, records = release_actuals(events, now, deadline, fetcher)
+    return [record, *records], events, rows
+
+
 def fed_context(text, now):
     root = xml_root(text)
     if root.tag != "rss" or root.find("channel") is None:
@@ -661,16 +676,11 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
     for ident, name, kind, url, request_url in jobs:
         record = source(ident, name, kind, url, now)
         try:
-            if ident == "bls":  # the calendar file, else its official fallback pages: one source record either way
-                events, record["url"], record["reason"], retrieved = bls_calendar(now, deadline, fetcher)
-                record.update(retrieved_at=retrieved.isoformat(),
-                              coverage_date=now.astimezone(EASTERN).date().isoformat())
+            if ident == "bls":
+                sources, events, rows = bls_collection(now, deadline, fetcher)
+                raw["sources"].extend(sources)
                 raw["events"].extend(events)
-                raw["sources"].append(record)
-                # The admitted calendar is the only trigger for a release page; no calendar, no release read.
-                rows, records = release_actuals(events, now, deadline, fetcher)
                 raw["observations"].extend(rows)
-                raw["sources"].extend(records)
                 continue
             body = fetcher(request_url, deadline)
             if ident == "treasury":

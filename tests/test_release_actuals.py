@@ -8,6 +8,7 @@ Friday, September 11, 2026 (still the current CPI edition then). `bls-empsit.202
 previous Employment Situation (August 2026), the first <pre> of BLS's archived copy of that release.
 """
 
+import json
 import re
 import time
 from datetime import datetime
@@ -15,10 +16,13 @@ from urllib.request import build_opener as real_build_opener
 
 import pytest
 from test_bls_calendar import FORBIDDEN, ICS, LIST, PAGES, Scripted, collected, network, releases, utc
+from test_cadence import Day, interpretation_fragments
 from test_continuity import PREMARKET_TUE, run_packet
 from test_contract import edition_response
 from test_light_context import OPEN_30M_TUE, light_edition
 from test_pipeline import fixture_packet
+from test_provenance import drawer
+from test_render import clock_lines
 
 from market_brief import collect
 from market_brief.actuals import (
@@ -324,7 +328,7 @@ def test_without_an_admitted_calendar_no_release_page_is_requested():
 
 
 def test_tomorrows_release_is_not_read_today():
-    # After Thursday's close the calendar admits Friday's release as the next session's; it is not read until it happens.
+    # After Thursday's close the calendar admits Friday's release as the next session's; it is read once it happens.
     raw, _, requests = collected(utc("2026-10-01T20:30:00+00:00"), {BLS: ICS, EMPLOYMENT_SITUATION: EMPSIT_PAGE})
     assert requests == [BLS] and NFP in releases(raw) and actuals(raw) == {}
 
@@ -465,7 +469,8 @@ def test_the_rich_analyst_reads_what_released_when_for_which_month_and_every_val
     assert july["baseline"] == "change to the previously published July 2026 estimate"
     assert context["baselines"]["unemployment rate"] == "share of the labor force, seasonally adjusted"
     assert next(s for s in context["sources"] if s["id"] == "bls-empsit") == dict(
-        id="bls-empsit", name="BLS Employment Situation", kind="release", status="AVAILABLE", coverage_date="2026-10-02")
+        id="bls-empsit", name="BLS Employment Situation", kind="release", status="AVAILABLE",
+        coverage_date="2026-10-02")
 
 
 def test_the_light_context_always_keeps_todays_release():
@@ -501,3 +506,265 @@ def test_the_analyst_can_cite_every_release_value(ident):
     markdown, page = render(packet, value, context)
     shown = formatted(next(row for row in rows if row["id"] == ident))
     assert f"The release printed {shown} for its month." in page
+
+
+# --- The page: one deterministic card in Macro & rates --------------------------------------------------------------
+
+@pytest.mark.parametrize("value,unit,shown", [
+    (29, "thousand jobs", "+29k"), (-10, "thousand jobs", "−10k"), (0, "thousand jobs", "0k"),
+    (133, "thousand jobs", "+133k"), (4.2, "percent", "4.2%"), (0.1, "percent change", "+0.1%"),
+    (-0.1, "percent change", "−0.1%"), (0.0, "percent change", "0.0%"), (3.0, "percent change", "+3.0%"),
+])
+def test_release_values_read_as_bls_prints_them(value, unit, shown):
+    assert formatted(dict(value=value, unit=unit)) == shown
+
+
+def tuesday_page(family="empsit", page=EMPSIT_PAGE, events=()):
+    """The sample fixture's Tuesday premarket with the real release joined to it, rendered from an accepted response."""
+    rows, record, event = tuesday_release(family, page)
+    upcoming = [dict(id="bls-event-1", title="Real Earnings", source_id="bls", published_at=None,
+                     checked_at=PREMARKET_TUE, scheduled_at=TUESDAY_RELEASE, status="SCHEDULED"), *events]
+    packet = run_packet(PREMARKET_TUE, "sample-premarket-tue", sources=[record], observations=rows,
+                        events=[event, *upcoming])
+    profile = edition_profile("PREMARKET")
+    context = analyst_context(packet, profile)
+    value = edition_response(profile, context)
+    return packet, value, context, render(packet, value, context)
+
+
+def macro(page):
+    return page.split("<h2>Macro &amp; rates</h2>", 1)[1].split("</section>", 1)[0]
+
+
+def card_lines(html_text):
+    """The card's measures as (label, [value lines])."""
+    block = re.search(r'<dl class="release-values">(.*?)</dl>', html_text, re.S).group(1)
+    return [(label, re.findall(r"<span>(.*?)</span>", values))
+            for label, values in re.findall(r"<dt>(.*?)</dt><dd>(.*?)</dd>", block, re.S)]
+
+
+def test_the_employment_situation_card_leads_macro_and_rates():
+    _, _, _, (markdown, page) = tuesday_page()
+    section = macro(page)
+    card = section.split('<div class="release">', 1)[1].split("</dl>", 1)[0] + "</dl>"
+    assert section.index('<div class="release">') < section.index("U.S. Treasury par curve")
+    assert re.search(r'<div class="caption">Economic release<span>5:30 AM PT</span></div>', card)
+    assert "<b>Employment Situation</b> · September 2026" in card
+    assert card_lines(card) == [
+        ("Payrolls", ["+29k"]), ("Unemployment", ["4.2%"]), ("Avg hourly earnings", ["+0.1% m/m · +3.0% y/y"]),
+        ("Revisions", ["Jul +21k → −10k", "Aug +162k → +133k", "Combined −60k"])]
+    assert "direction-" not in card  # official values are never coloured as good or bad
+    assert page.count('<div class="release">') == 1
+
+
+def test_the_card_reads_the_same_in_markdown():
+    _, _, _, (markdown, _) = tuesday_page()
+    section = markdown.split("## Macro & rates", 1)[1].split("\n## ", 1)[0]
+    assert ("**ECONOMIC RELEASE** · 5:30 AM PT · Employment Situation · September 2026\n\n"
+            "- Payrolls · +29k\n- Unemployment · 4.2%\n- Avg hourly earnings · +0.1% m/m · +3.0% y/y\n"
+            "- Revisions · Jul +21k → −10k · Aug +162k → +133k · Combined −60k\n") in section
+    assert section.index("ECONOMIC RELEASE") < section.index("U.S. TREASURY PAR CURVE")
+
+
+def test_the_cpi_card_reads_headline_and_core():
+    _, _, _, (markdown, page) = tuesday_page("cpi", CPI_PAGE)
+    assert "<b>Consumer Price Index</b> · August 2026" in macro(page)
+    assert card_lines(macro(page)) == [("CPI", ["+0.4% m/m · +3.4% y/y"]), ("Core CPI", ["+0.3% m/m · +2.4% y/y"])]
+    assert "- CPI · +0.4% m/m · +3.4% y/y\n- Core CPI · +0.3% m/m · +2.4% y/y" in markdown
+
+
+def test_a_released_event_leaves_what_matters_next_and_others_stay():
+    _, _, _, (markdown, page) = tuesday_page()
+    upcoming = page.split('<section class="next">', 1)[1].split("</section>", 1)[0]
+    assert "<b>Employment Situation</b>" not in upcoming and "<b>Real Earnings</b>" in upcoming
+    assert "**Event** — Employment Situation" not in markdown and "**Event** — Real Earnings" in markdown
+
+
+def test_every_card_value_is_in_the_evidence_ledger_with_its_source():
+    _, _, _, (_, page) = tuesday_page()
+    ledger = drawer(page, "Evidence ledger")
+    for ident in EMPSIT_ACTUALS:
+        assert f'id="evidence-{ident}"' in ledger
+    assert "BLS Employment Situation" in ledger
+    proof = macro(page).split('<div class="release">', 1)[1].split("</div></div>", 1)[0]
+    assert "View exact values" in proof and 'href="#evidence-bls-empsit-payrolls"' in proof
+
+
+def test_without_admitted_actuals_the_event_stays_and_no_card_shows():
+    packet = run_packet(PREMARKET_TUE, "sample-premarket-tue", events=[tuesday_release()[2]])
+    profile = edition_profile("PREMARKET")
+    context = analyst_context(packet, profile)
+    markdown, page = render(packet, edition_response(profile, context), context)
+    assert '<div class="release">' not in page and "ECONOMIC RELEASE" not in markdown
+    assert "<b>Employment Situation</b>" in page.split('<section class="next">', 1)[1].split("</section>", 1)[0]
+
+
+# --- The production day: refreshes improve the observed record under an older interpretation ------------------------
+
+FRIDAY, MONDAY = "2026-10-02", "2026-10-05"
+
+
+class ReleaseDay(Day):
+    """A production day through the CLI whose BLS records come from the real `bls_collection` at each run's clock,
+    answered offline: the calendar file, and the Employment Situation page as `page` (a body, or the error fetching it
+    raises). `fetcher=collect.fetch` sends the requests through the real request path instead."""
+
+    def __init__(self, monkeypatch, root):
+        super().__init__(monkeypatch, root)
+        self.requests = []
+
+    def release_run(self, now, checkpoint, page, fetcher=None, session=FRIDAY, **kwargs):
+        history = "2026-10-01" if session == FRIDAY else FRIDAY
+
+        def bls(raw, fixed):
+            frozen(self.monkeypatch, now)
+            for row in raw["observations"]:
+                if row["frequency"] == "daily":  # the fixture's dated yields move onto the prior session too
+                    row["observed_at"] = history
+
+            def offline(url, deadline):
+                self.requests.append((checkpoint, url))
+                answer = {BLS: ICS, EMPLOYMENT_SITUATION: page}.get(url, FORBIDDEN)
+                if isinstance(answer, Exception):
+                    raise answer
+                return answer
+            sources, events, rows = collect.bls_collection(fixed, time.monotonic() + 60, fetcher or offline)
+            raw["sources"] = [source for source in raw["sources"] if source["id"] != "bls"] + sources
+            raw["events"] = events
+            raw["observations"] += rows
+        return self.run(now, checkpoint, collect=bls, last_history_date=history, **kwargs)
+
+    def evidence(self, checkpoint, session=FRIDAY):
+        return json.loads((self.folder(checkpoint, session) / "evidence.json").read_text())
+
+    def actuals(self, checkpoint, session=FRIDAY):
+        """The run's admitted release rows as (id, value, official time, reference month)."""
+        return sorted((row["id"], row["value"], row["observed_at"], row["reference_period"])
+                      for row in self.evidence(checkpoint, session)["observations"]
+                      if row["frequency"] == "release" and row["status"] == "AVAILABLE")
+
+
+def upcoming(page):
+    return page.split('<section class="next">', 1)[1].split("</section>", 1)[0]
+
+
+SEPTEMBER_CARD = [("Payrolls", ["+29k"]), ("Unemployment", ["4.2%"]),
+                  ("Avg hourly earnings", ["+0.1% m/m · +3.0% y/y"]),
+                  ("Revisions", ["Jul +21k → −10k", "Aug +162k → +133k", "Combined −60k"])]
+
+
+@pytest.mark.parametrize("premarket_at,premarket_page", [
+    ("2026-10-02T12:15:00+00:00", EMPSIT_PAGE),  # a premarket before the 8:30 release: the page is not even read
+    ("2026-10-02T13:00:00+00:00", FORBIDDEN),  # the scheduled 9:00 premarket, with the page refused
+], ids=["premarket before the release", "page refused at the premarket"])
+def test_a_release_morning_from_the_premarket_to_the_close(monkeypatch, tmp_path, premarket_at, premarket_page):
+    day = ReleaseDay(monkeypatch, tmp_path)
+    assert day.release_run(premarket_at, "PREMARKET", premarket_page, intraday=False) == 0
+    premarket = day.page("PREMARKET", FRIDAY)
+    assert day.calls == ["PREMARKET"] and day.actuals("PREMARKET") == []
+    assert '<div class="release">' not in premarket and "<b>Employment Situation</b>" in upcoming(premarket)
+    context = json.loads((day.folder("PREMARKET", FRIDAY) / "analyst_context.json").read_text())
+    assert not set(EMPSIT_ACTUALS) & supplied_ids(context)
+    if premarket_page is EMPSIT_PAGE:
+        assert (("PREMARKET", EMPLOYMENT_SITUATION)) not in day.requests
+    interpretation = day.bundle()["interpretation"]["content_hash"]
+
+    # 6:31 AM PT: the deterministic refresh reads the page, and the release shows at once under the premarket analysis.
+    assert day.release_run("2026-10-02T13:31:00+00:00", "OPEN_1M", EMPSIT_PAGE) == 0
+    opening = day.page("OPEN_1M", FRIDAY)
+    assert day.calls == ["PREMARKET"] and day.metadata("OPEN_1M", FRIDAY)["synthesis"] == dict(kind="refresh", calls=0)
+    assert card_lines(macro(opening)) == SEPTEMBER_CARD
+    assert "<b>Employment Situation</b>" not in upcoming(opening)
+    assert interpretation_fragments(opening)[0] == interpretation_fragments(premarket)[0]
+    assert clock_lines(opening)[1].startswith("Analysis · ") and clock_lines(opening)[1].endswith("premarket")
+    assert day.bundle()["interpretation"]["content_hash"] == interpretation  # the refresh never rewrites it
+    released = day.actuals("OPEN_1M")
+    assert {row[0] for row in released} == set(EMPSIT_ACTUALS)
+
+    # 7:00 AM PT: the one light synthesis after the open reads the release whole; still one call.
+    assert day.release_run("2026-10-02T14:01:00+00:00", "OPEN_30M", EMPSIT_PAGE) == 0
+    assert day.calls == ["PREMARKET", "OPEN_30M"]
+    context = json.loads((day.folder("OPEN_30M", FRIDAY) / "analyst_context.json").read_text())
+    assert context["edition"]["profile"] == "light" and set(EMPSIT_ACTUALS) <= supplied_ids(context)
+    assert card_lines(macro(day.page("OPEN_30M", FRIDAY))) == SEPTEMBER_CARD
+
+    # Hourly refreshes and the close: no calls, the same release, the same values, the same card.
+    for now, checkpoint in (("2026-10-02T15:00:00+00:00", "HOURLY_1100"), ("2026-10-02T18:00:00+00:00", "HOURLY_1400")):
+        assert day.release_run(now, checkpoint, EMPSIT_PAGE) == 0
+        assert card_lines(macro(day.page(checkpoint, FRIDAY))) == SEPTEMBER_CARD
+        assert day.actuals(checkpoint) == released
+    assert day.release_run("2026-10-02T20:03:00+00:00", "CLOSE_1M", EMPSIT_PAGE,
+                           print_at="2026-10-02T19:59:58+00:00") == 0
+    assert card_lines(macro(day.page("CLOSE_1M", FRIDAY))) == SEPTEMBER_CARD and day.actuals("CLOSE_1M") == released
+    assert day.calls == ["PREMARKET", "OPEN_30M"]
+    assert day.metadata("CLOSE_1M", FRIDAY)["continuity"]["handoff"] == "written"
+
+    # Monday: no release is scheduled, so none is read, admitted or shown; Friday's print is not Monday's.
+    assert day.release_run("2026-10-05T13:00:00+00:00", "PREMARKET", EMPSIT_PAGE, session=MONDAY, intraday=False) == 0
+    monday = day.page("PREMARKET", MONDAY)
+    assert day.actuals("PREMARKET", MONDAY) == [] and '<div class="release">' not in monday
+    assert ("PREMARKET", EMPLOYMENT_SITUATION) not in day.requests[-3:]
+    assert not any(source["id"] == "bls-empsit" for source in day.evidence("PREMARKET", MONDAY)["sources"])
+
+
+def test_a_rejected_opening_synthesis_keeps_the_release_card_and_is_not_retried(monkeypatch, tmp_path):
+    day = ReleaseDay(monkeypatch, tmp_path)
+    assert day.release_run("2026-10-02T13:00:00+00:00", "PREMARKET", EMPSIT_PAGE, intraday=False) == 0
+    assert card_lines(macro(day.page("PREMARKET", FRIDAY))) == SEPTEMBER_CARD  # the 9:00 premarket reads it itself
+    assert day.release_run("2026-10-02T13:31:00+00:00", "OPEN_1M", EMPSIT_PAGE) == 0
+    assert day.release_run("2026-10-02T14:01:00+00:00", "OPEN_30M", EMPSIT_PAGE, fail_synthesis=True) == 2
+    assert day.release_run("2026-10-02T15:00:00+00:00", "HOURLY_1100", EMPSIT_PAGE) == 0
+    hourly = day.page("HOURLY_1100", FRIDAY)
+    assert day.calls == ["PREMARKET", "OPEN_30M"]  # the rejection was the one attempt; the refresh never retries
+    assert card_lines(macro(hourly)) == SEPTEMBER_CARD
+    assert day.bundle()["interpretation"]["origin"]["checkpoint"] == "PREMARKET"
+    assert clock_lines(hourly)[1].endswith("premarket")
+
+
+def test_a_page_that_changes_between_refreshes_is_read_again_as_the_same_release_or_not_at_all(monkeypatch, tmp_path):
+    corrected = EMPSIT_PAGE.replace("(+29,000)", "(+31,000)")  # a corrected print, still September's release
+    moved = damaged(EMPSIT_PAGE, "8:30 a.m. (ET) Friday, October 2, 2026", "8:30 a.m. (ET) Friday, September 4, 2026")
+    day = ReleaseDay(monkeypatch, tmp_path)
+    assert day.release_run("2026-10-02T13:00:00+00:00", "PREMARKET", EMPSIT_PAGE, intraday=False) == 0
+    for now, checkpoint, page in (("2026-10-02T15:00:00+00:00", "HOURLY_1100", EMPSIT_PAGE),
+                                  ("2026-10-02T16:00:00+00:00", "HOURLY_1200", corrected),
+                                  ("2026-10-02T17:00:00+00:00", "HOURLY_1300", moved)):
+        assert day.release_run(now, checkpoint, page) == 0
+    assert card_lines(macro(day.page("HOURLY_1100", FRIDAY)))[0] == ("Payrolls", ["+29k"])
+    assert card_lines(macro(day.page("HOURLY_1200", FRIDAY)))[0] == ("Payrolls", ["+31k"])
+    assert dict((row[0], row[3]) for row in day.actuals("HOURLY_1200"))["bls-empsit-payrolls"] == "2026-09"
+    later = day.page("HOURLY_1300", FRIDAY)
+    assert day.actuals("HOURLY_1300") == [] and '<div class="release">' not in later
+    assert "<b>Employment Situation</b>" in upcoming(later)
+    assert "the page still shows the September 4, 2026 release" in drawer(later, "Coverage limitations")
+    assert day.calls == ["PREMARKET"]
+
+
+def test_a_page_missed_at_the_open_is_added_by_a_later_refresh(monkeypatch, tmp_path):
+    day = ReleaseDay(monkeypatch, tmp_path)
+    assert day.release_run("2026-10-02T13:00:00+00:00", "PREMARKET", FORBIDDEN, intraday=False) == 0
+    assert day.release_run("2026-10-02T13:31:00+00:00", "OPEN_1M", SourceError("network unavailable or timeout")) == 0
+    missed = day.page("OPEN_1M", FRIDAY)  # still published: the event stands and the limitation says why
+    assert '<div class="release">' not in missed and "<b>Employment Situation</b>" in upcoming(missed)
+    assert "BLS Employment Situation: network unavailable or timeout" in drawer(missed, "Coverage limitations")
+    assert day.release_run("2026-10-02T15:00:00+00:00", "HOURLY_1100", EMPSIT_PAGE) == 0
+    assert card_lines(macro(day.page("HOURLY_1100", FRIDAY))) == SEPTEMBER_CARD
+    assert day.calls == ["PREMARKET"] and day.published == ["PREMARKET", "OPEN_1M", "HOURLY_1100"]
+
+
+def test_the_owner_contact_identifies_the_requests_and_appears_in_nothing_the_runs_keep(monkeypatch, tmp_path, capsys):
+    contact = "owner-contact@example.org"
+    monkeypatch.setenv("BLS_CONTACT", contact)
+    sent = network(monkeypatch, {BLS: ICS, EMPLOYMENT_SITUATION: EMPSIT_PAGE})
+    day = ReleaseDay(monkeypatch, tmp_path)
+    assert day.release_run("2026-10-02T13:00:00+00:00", "PREMARKET", None, fetcher=fetch, intraday=False) == 0
+    assert day.release_run("2026-10-02T13:31:00+00:00", "OPEN_1M", None, fetcher=fetch) == 0
+    assert day.release_run("2026-10-02T14:01:00+00:00", "OPEN_30M", None, fetcher=fetch) == 0
+    assert card_lines(macro(day.page("OPEN_30M", FRIDAY))) == SEPTEMBER_CARD
+    assert {request.get_header("User-agent") for request in sent} == {f"MarketBrief/0.1 ({contact})"}
+    kept = [path for path in tmp_path.rglob("*") if path.is_file()]
+    assert {path.name for path in kept} >= {"evidence.json", "analyst_context.json", "metadata.json", "brief.html",
+                                            "brief.md", "narrative.json", "edition_state.json", "bundle.json"}
+    assert not [path for path in kept if "owner-contact" in path.read_text(errors="replace")]
+    output = capsys.readouterr()
+    assert "owner-contact" not in output.out + output.err

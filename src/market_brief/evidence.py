@@ -26,6 +26,10 @@ PLACEHOLDER = re.compile(r"\{\{([a-zA-Z][\w-]*(?::[a-zA-Z][\w-]*)?)\}\}")
 # It is never an official closing bar; the provider's completed daily bar arrives the next day.
 NEAR_CLOSE_WINDOW = timedelta(minutes=15)
 NEAR_CLOSE_GRACE = timedelta(minutes=90)
+# An official release value (`actuals.py`) also names the month it measures, and a payroll revision the month it revises
+# and that month's previous and revised estimates. Only release rows carry these fields.
+RELEASE_FIELDS = ("reference_period", "revised_month", "revised_from", "revised_to")
+REFERENCE_MONTH = re.compile(r"\d{4}-(?:0[1-9]|1[0-2])")
 
 
 def timestamp(value):
@@ -132,6 +136,21 @@ def normalize_observation(raw, now, near_close=None):
                 return reject("STALE", "intraday observation older than twenty minutes")
             row["status"] = "DELAYED" if age > 60 else "AVAILABLE"
             row["freshness"] = "DELAYED" if age > 60 else "LIVE"
+        elif row["frequency"] == "release":
+            # Dated by its official publication time and current only in the session that published it, so no earlier
+            # release can ever read as today's.
+            observed = timestamp(row["observed_at"])
+            if observed > now or observed > retrieved:
+                return reject("INVALID", "release published after collection")
+            if observed.astimezone(ET).date() != now.astimezone(ET).date():
+                return reject("STALE", "release published in an earlier session")
+            fields = {key: raw[key] for key in RELEASE_FIELDS if raw.get(key) is not None}
+            if not REFERENCE_MONTH.fullmatch(str(fields.get("reference_period", ""))):
+                return reject("INVALID", "release without a reference month")
+            if (not all(finite(fields[key]) for key in ("revised_from", "revised_to") if key in fields)
+                    or not REFERENCE_MONTH.fullmatch(str(fields.get("revised_month", "0000-01")))):
+                return reject("INVALID", "malformed release revision")
+            row.update(fields, status="AVAILABLE", freshness="DATED")
         else:
             return reject("INVALID", "unsupported frequency")
     except (TypeError, ValueError):
@@ -335,7 +354,7 @@ def evidence_catalog(packet):
 
 MODEL_RECORD_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at",
                        "source_id", "status", "reason", "frequency", "freshness",
-                       "expected_freshness", "magnitude", "identity")
+                       "expected_freshness", "magnitude", "identity", *RELEASE_FIELDS)
 
 
 # A scheduled release is not a measurement: the analyst needs what it is, when it is and where it falls in the

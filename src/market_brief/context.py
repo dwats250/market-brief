@@ -7,7 +7,7 @@ which facts were supplied so that references can be checked against the exact co
 
 import re
 
-from .evidence import MODEL_EVENT_FIELDS, ROOT, digest, evidence_catalog, model_packet, read_json
+from .evidence import MODEL_EVENT_FIELDS, RELEASE_FIELDS, ROOT, digest, evidence_catalog, model_packet, read_json
 
 CONTEXT_SCHEMA = "market-brief.analyst-context.v1"
 ANCHOR_TOPICS = ("SPY", "QQQ", "GLD", "US 2Y", "US 5Y", "US 10Y", "US 30Y", "US 2s10s", "US 5s30s")
@@ -36,7 +36,8 @@ def edition_profile(checkpoint, config=None):
     return dict(checkpoint=checkpoint, profile=edition["profile"], words=edition["words"],
                 guidance=edition["guidance"], **profile)
 HISTORY_ERROR = re.compile(r"^(?P<symbol>[A-Z][\w.-]*): invalid/incomplete historical context \((?P<reason>.*)\)$")
-FACT_FIELDS = ("id", "metric", "value", "unit", "magnitude", "status", "observed_at")
+# A release value adds the month it measures (and a revision its month and estimates); no other row has those fields.
+FACT_FIELDS = ("id", "metric", "value", "unit", "magnitude", "status", "observed_at", *RELEASE_FIELDS)
 
 
 def history_error_summary(packet, errors):
@@ -79,6 +80,8 @@ def _selected_ids(packet, catalog, profile, comparisons, prior):
                        and row.get("metric") in {"daily return", "premarket return", "intraday return"}}
     keep |= {ident for ident, row in catalog.items()
              if row.get("magnitude") == "LARGE" and row.get("metric") in CURRENT_METRICS}
+    # Today's official release values are never background: every edition that synthesizes reads them all.
+    keep |= {ident for ident, row in catalog.items() if row.get("frequency") == "release"}
     return keep
 
 

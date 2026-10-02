@@ -18,7 +18,8 @@ from urllib.request import build_opener as real_build_opener
 from urllib.response import addinfourl
 
 import pytest
-from test_pipeline import NOW, narrative
+from test_light_context import OPEN_30M_TUE, light_edition
+from test_pipeline import NOW, fixture_packet, narrative
 from test_provenance import drawer
 
 from market_brief import collect
@@ -32,10 +33,11 @@ from market_brief.collect import (
     cuttingboard_record,
     fetch,
 )
-from market_brief.evidence import ROOT, finalize_coverage, normalize_packet, read_json
+from market_brief.context import analyst_context, edition_profile
+from market_brief.evidence import ROOT, finalize_coverage, model_packet, normalize_packet, read_json
 from market_brief.metrics import derive
 from market_brief.render import render
-from market_brief.synthesize import validate_narrative
+from market_brief.synthesize import construct_prompt, validate_narrative
 
 FIXTURES = ROOT / "tests/fixtures"
 ICS = (FIXTURES / "bls.2026-09-11.ics").read_text()
@@ -295,9 +297,13 @@ def test_a_watch_can_be_timed_to_a_collected_release():
     raw["events"][0]["id"] = "bls-event-0"
     raw["cuttingboard"] = cuttingboard_record(raw["cuttingboard"], NOW, NOW)
     packet = finalize_coverage(derive(normalize_packet(raw, NOW, "SAMPLE"), read_json(ROOT / "config/universe.json")))
+    context = analyst_context(packet, edition_profile("PREMARKET"))
+    assert context["events"] == [dict(id="bls-event-0", title="Fictional manufacturing survey",
+                                      scheduled_at="2026-09-08T14:00:00+00:00", session_relation="DURING SESSION",
+                                      source_id="bls", status="SCHEDULED")]
     value = json.loads(json.dumps(narrative()).replace("sample-event", "bls-event-0"))
     value["watches"][0]["horizon"] = "EVENT(bls-event-0)"
-    assert validate_narrative(value, packet)
+    assert validate_narrative(value, packet) and validate_narrative(value, packet, context)
     value["watches"][0]["horizon"] = "EVENT(bls-event-9)"
     with pytest.raises(ValueError, match="unknown event horizon"):
         validate_narrative(value, packet)
@@ -305,6 +311,81 @@ def test_a_watch_can_be_timed_to_a_collected_release():
     value["watches"][0]["condition"] = "Whether SPY holds 8 handles"
     with pytest.raises(ValueError, match="literal numeric claim"):
         validate_narrative(value, packet)
+
+
+# --- What the analyst reads -----------------------------------------------------------------------------------------
+
+RELEASE_FIELDS = {"id", "title", "scheduled_at", "session_relation", "source_id", "status"}
+NFP_EVENT = dict(id="bls-event-0", title="Employment Situation for September 2026",
+                 scheduled_at="2026-10-02T12:30:00+00:00", session_relation="BEFORE OPEN", source_id="bls",
+                 status="SCHEDULED")
+FED_RSS = ("<rss><channel><item><title>Federal Reserve Board announces approval of an application</title>"
+           "<pubDate>Fri, 02 Oct 2026 11:00:00 GMT</pubDate></item></channel></rss>")
+
+
+def nfp_edition(monkeypatch, checkpoint, now):
+    """NFP morning through the real collector (calendar file refused, the October List View read, one Fed item),
+    normalization, derivation and the edition's analyst context. The collector's clock is the run's, as in
+    production; normalization drops an event checked hours after the run."""
+    fixed = utc(now)
+
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed if tz else fixed.replace(tzinfo=None)
+    monkeypatch.setattr(collect, "datetime", Frozen)
+    raw, _, _ = collected(fixed, {BLS: FORBIDDEN, LIST[10]: PAGES[10], FED: FED_RSS})
+    packet = finalize_coverage(derive(normalize_packet(raw, fixed, "LIVE", checkpoint),
+                                      read_json(ROOT / "config/universe.json")))
+    return packet, analyst_context(packet, edition_profile(checkpoint))
+
+
+def test_the_rich_analyst_reads_what_and_when_each_admitted_release_is(monkeypatch):
+    packet, context = nfp_edition(monkeypatch, "PREMARKET", "2026-10-02T13:00:00+00:00")
+    assert context["selection"] is None
+    assert model_packet(packet)["events"] == context["events"] == [NFP_EVENT]
+
+
+def test_the_light_context_keeps_the_release_whole(monkeypatch):
+    # 10:00 AM ET, the opening-structure update: the release is out, and it is still the day's release.
+    packet, context = nfp_edition(monkeypatch, "OPEN_30M", "2026-10-02T14:00:00+00:00")
+    assert context["selection"]["mode"] == "changed"
+    assert context["events"] == [NFP_EVENT]
+
+
+def test_only_the_release_record_changes_shape_for_the_analyst(monkeypatch):
+    packet, context = nfp_edition(monkeypatch, "PREMARKET", "2026-10-02T13:00:00+00:00")
+    stored = packet["events"][0]
+    assert {"checked_at", "published_at", "scheduled_at_et", "session_date", "freshness",
+            "expected_freshness"} <= set(stored)  # collection plumbing the record keeps and the analyst never reads
+    assert set(model_packet(packet)["events"][0]) == set(context["events"][0]) == RELEASE_FIELDS
+    # Context items and measurements keep their compact records: nothing else the analyst reads widens.
+    assert model_packet(packet)["context_items"] == [dict(id="fed-item-0", source_id="fed", status="AVAILABLE",
+                                                         freshness="DATED", expected_freshness="DATED")]
+    assert context["context_items"] == [dict(id="fed-item-0")]
+    assert set(model_packet(fixture_packet())["observations"][0]) == {
+        "baseline", "expected_freshness", "frequency", "freshness", "id", "identity", "metric", "observed_at",
+        "reason", "source_id", "status", "topic", "unit", "value"}
+
+
+BUSY_DAY = [dict(id=f"bls-event-{n}", title=title, source_id="bls", published_at=None, scheduled_at=at,
+                 status="SCHEDULED") for n, (title, at) in enumerate([
+                     ("Consumer Price Index for August 2026", "2026-09-08T12:30:00+00:00"),
+                     ("Real Earnings for August 2026", "2026-09-08T12:30:00+00:00"),
+                     ("Metropolitan Area Employment and Unemployment (Monthly) for July 2026",
+                      "2026-09-08T14:00:00+00:00"),
+                     ("Quarterly Data Series on Business Employment Dynamics for First Quarter 2026",
+                      "2026-09-08T14:00:00+00:00")])]
+
+
+def test_a_busy_release_day_keeps_the_light_request_well_inside_its_budget():
+    quiet = light_edition(OPEN_30M_TUE, "OPEN_30M", "sample-open_30m-tue", intraday_value=0.21)
+    busy = light_edition(OPEN_30M_TUE, "OPEN_30M", "sample-open_30m-tue", intraday_value=0.21, events=BUSY_DAY)
+    assert {event["id"] for event in busy[3]["events"]} >= {event["id"] for event in BUSY_DAY}
+    size = {name: len(construct_prompt(edition[0], context=edition[3])[1].encode())
+            for name, edition in (("quiet", quiet), ("busy", busy))}
+    assert size["busy"] - size["quiet"] < 1_000  # four whole releases, each well under 250 bytes
+    assert size["busy"] <= 34_000  # the light editions' own headroom bound, 6,000 bytes inside the 40,000 limit
 
 
 def test_the_fallback_shares_the_calendar_files_time_budget():

@@ -338,9 +338,18 @@ MODEL_RECORD_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "ob
                        "expected_freshness", "magnitude", "identity")
 
 
+# A scheduled release is not a measurement: the analyst needs what it is, when it is and where it falls in the
+# session (to read it, or to time a watch to it with EVENT(<id>)), and none of its collection plumbing.
+MODEL_EVENT_FIELDS = ("id", "title", "scheduled_at", "session_relation", "source_id", "status")
+
+
 def compact_model_record(row):
     """Keep editorial facts and freshness while dropping repeated collection plumbing."""
     return {key: row[key] for key in MODEL_RECORD_FIELDS if key in row}
+
+
+def compact_model_event(row):
+    return {key: row[key] for key in MODEL_EVENT_FIELDS if key in row}
 
 
 def model_packet(packet):
@@ -349,7 +358,8 @@ def model_packet(packet):
     allowed = {s["id"] for s in packet["sources"] if s["llm_allowed"] is True}
     result.pop("history", None)
     for field in ("observations", "derived", "events", "context_items"):
-        result[field] = [compact_model_record(r) for r in result[field]
+        compact = compact_model_event if field == "events" else compact_model_record
+        result[field] = [compact(r) for r in result[field]
                          if r.get("source_id") in allowed and r.get("status") in USABLE | {"SCHEDULED"}
                          and not stale_movement(packet, r)]
     result["sector_leadership"] = dict(

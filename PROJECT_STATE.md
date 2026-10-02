@@ -153,7 +153,12 @@ the `BLS_CONTACT` secret (used only for that identity), and when the calendar fi
 collector falls back to the official monthly List View pages for today's and the next session's months, which count
 only when each proves its month, its columns and its Eastern clock. A recovered calendar is AVAILABLE with the page it
 read as its URL. The file's own `US-Eastern` time zone, which would have stopped the whole collection on the first
-successful fetch, now reads as New York time. Release values (issue #23's larger gap) are not in this slice.
+successful fetch, now reads as New York time. Two latent faults the first real events would have met are fixed with
+it: both paths number releases by time and release name (so `bls-event-<n>` names one release whichever path a run
+read), and a watch timed `EVENT(bls-event-0)` is no longer rejected as a literal number after the paid call. Release
+values (issue #23's larger gap) are not in this slice. Known limits, unchanged: a release on a market holiday (the
+Employment Situation on Good Friday) falls between today and the next session and is not admitted, and the analyst
+context still projects events as `{id, status}` (titles are stripped by `compact_model_record`, as for Fed items).
 
 ## Next
 

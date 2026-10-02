@@ -1,0 +1,152 @@
+<!DOCTYPE HTML>
+<html lang="en-us">
+
+<head>
+
+	<title>Schedule of Selected Releases for December 2026</title>
+</head>
+<body>
+<table id="main-content-table">
+	<tr>
+		<td id="secondary-nav-td">
+			<div id="secondary-nav">
+<script>
+const currentMonth = new Date().getMonth()
+const currentYear = new Date().getFullYear()
+
+$('#secondary-nav .secondary-nav:nth-child(1) a[href$="sched.htm"]').map(function () {
+    let link = $(this).attr("href").split("/");
+	let mo = Number(link[3]?.split("_")[0])
+
+	if ((link[2] == currentYear && mo < currentMonth) || (link[2] == currentYear-1 && currentMonth >= 1)) {
+		$(this).parent().remove()
+	}
+
+})
+
+
+// temporary
+$(document).ready(function() {
+for (const [id, value] of Object.entries({'d0205': 'Productivity and Costs (P)', 'd0212': 'Producer Price Index', 'd0218': 'U.S. Import and Export Price Indexes'})) {
+    $('#'+id).find('p:not(.day)').each(function(){
+        if ($(this).find('strong').text() == value) {
+            if (!$(this).next().length) {
+                $(this).html('')
+            } else {
+                $(this).remove()
+            }
+        }
+    })
+}
+
+$('.release-list tr').attr('class', '')
+
+$('.release-list tr').each(function() {
+    for (const [date, value] of Object.entries({'Thursday, February 5, 2026': 'Productivity and Costs (P)', 'Thursday, February 12, 2026': 'Producer Price Index', 'Wednesday, February 18, 2026': 'U.S. Import and Export Price Indexes'})) {
+        if ($(this).find('td strong').text() == value && $(this).find('td:nth-child(1) p').text() == date) {
+            $(this).remove()
+        }
+    }
+})
+
+$('.release-list tr:even').addClass('release-list-odd-row')
+$('.release-list tr:odd').addClass('release-list-even-row')
+})
+
+</script>
+<!-- SECONDARY NAV END -->
+
+<!-- 2COL LAYOUT COL2 BEGIN -->
+			</div>
+		</td>
+		<td id="main-content-td" class="main-content">
+			<div id="bodytext" class="verdana md">
+
+
+<!-- 2COL LAYOUT COL2 END -->
+
+<!--no_index_end-->
+<!-- MAIN CONTENT BEGIN -->
+
+
+	<h1 style="float:left;">December 2026</h1>
+<p style="float:right;"><a href="/schedule/2026/12_sched.htm">Month View</a> | List View </p>
+<br clear="all">
+<table class="release-list">
+<thead>
+<tr>
+<th scope="col"><p>Date</p></th>
+<th scope="col"><p>Time</p></th>
+<th scope="col"><p>Release</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="release-list-odd-row">
+<td class="date-cell"><p>Tuesday, December 1, 2026</p></td>
+<td class="time-cell"><p>10:00 AM</p></td>
+<td class="desc-cell"><p><strong>Job Openings and Labor Turnover Survey</strong> for October 2026</p></td></tr>
+<tr class="release-list-even-row">
+<td class="date-cell"><p>Wednesday, December 2, 2026</p></td>
+<td class="time-cell"><p>10:00 AM</p></td>
+<td class="desc-cell"><p><strong>County Employment and Wages</strong> for Second Quarter 2026</p></td></tr>
+<tr class="release-list-odd-row">
+<td class="date-cell"><p>Wednesday, December 2, 2026</p></td>
+<td class="time-cell"><p>10:00 AM</p></td>
+<td class="desc-cell"><p><strong>Metropolitan Area Employment and Unemployment (Monthly)</strong> for October 2026</p></td></tr>
+<tr class="release-list-even-row">
+<td class="date-cell"><p>Friday, December 4, 2026</p></td>
+<td class="time-cell"><p>08:30 AM</p></td>
+<td class="desc-cell"><p><strong>Employment Situation</strong> for November 2026</p></td></tr>
+<tr class="release-list-odd-row">
+<td class="date-cell"><p>Tuesday, December 8, 2026</p></td>
+<td class="time-cell"><p>08:30 AM</p></td>
+<td class="desc-cell"><p><strong>Productivity and Costs (R)</strong> for Third Quarter 2026</p></td></tr>
+<tr class="release-list-even-row">
+<td class="date-cell"><p>Thursday, December 10, 2026</p></td>
+<td class="time-cell"><p>08:30 AM</p></td>
+<td class="desc-cell"><p><strong>Consumer Price Index</strong> for November 2026</p></td></tr>
+<tr class="release-list-odd-row">
+<td class="date-cell"><p>Thursday, December 10, 2026</p></td>
+<td class="time-cell"><p>08:30 AM</p></td>
+<td class="desc-cell"><p><strong>Real Earnings</strong> for November 2026</p></td></tr>
+<tr class="release-list-even-row">
+<td class="date-cell"><p>Tuesday, December 15, 2026</p></td>
+<td class="time-cell"><p>08:30 AM</p></td>
+<td class="desc-cell"><p><strong>Producer Price Index</strong> for November 2026</p></td></tr>
+<tr class="release-list-odd-row">
+<td class="date-cell"><p>Wednesday, December 16, 2026</p></td>
+<td class="time-cell"><p>10:00 AM</p></td>
+<td class="desc-cell"><p><strong>Census of Fatal Occupational Injuries</strong> for Annual 2025</p></td></tr>
+<tr class="release-list-even-row">
+<td class="date-cell"><p>Wednesday, December 16, 2026</p></td>
+<td class="time-cell"><p>10:00 AM</p></td>
+<td class="desc-cell"><p><strong>Employer Costs for Employee Compensation</strong> for September 2026</p></td></tr>
+<tr class="release-list-odd-row">
+<td class="date-cell"><p>Thursday, December 17, 2026</p></td>
+<td class="time-cell"><p>08:30 AM</p></td>
+<td class="desc-cell"><p><strong>U.S. Import and Export Price Indexes</strong> for November 2026</p></td></tr>
+<tr class="release-list-even-row">
+<td class="date-cell"><p>Friday, December 18, 2026</p></td>
+<td class="time-cell"><p>10:00 AM</p></td>
+<td class="desc-cell"><p><strong>State Employment and Unemployment (Monthly)</strong> for November 2026</p></td></tr>
+<tr class="release-list-odd-row">
+<td class="date-cell"><p>Friday, December 18, 2026</p></td>
+<td class="time-cell"><p>10:00 AM</p></td>
+<td class="desc-cell"><p><strong>Work Experience of the Population (Annual)</strong> for 2025</p></td></tr>
+<tr class="release-list-even-row">
+<td class="date-cell"><p>Friday, December 25, 2026</p></td>
+<td class="time-cell"><p>&nbsp;</p></td>
+<td class="desc-cell"><p><strong>Christmas Day</strong></p></td></tr>
+<tr class="release-list-odd-row">
+<td class="date-cell"><p>Wednesday, December 30, 2026</p></td>
+<td class="time-cell"><p>10:00 AM</p></td>
+<td class="desc-cell"><p><strong>Metropolitan Area Employment and Unemployment (Monthly)</strong> for November 2026</p></td></tr>
+</tbody>
+</table>
+<p> </p><p><strong>NOTE: All times on calendar are Eastern Time.</strong></p><p class="update"><strong>Last Modified Date: </strong>February 18, 2026
+</div>
+		</td>
+	</tr>
+</table>
+</body>
+</html>

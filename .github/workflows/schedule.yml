@@ -102,6 +102,8 @@ jobs:
       APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
       APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # The owner's contact address: BLS refuses robots it cannot contact. It only builds the BLS request identity.
+      BLS_CONTACT: ${{ secrets.BLS_CONTACT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -213,7 +213,9 @@ def test_fetch_failures_are_bounded_and_cb_optional():
         calls.append(url)
         raise SourceError("HTTP 403")
     raw = collect_live(NOW, True, fetcher=unavailable)
-    assert len(calls) == 4 and calls[-1] == CB
+    # Treasury, the BLS calendar file, then its one official fallback page (September holds today and the next
+    # session), the Fed, and Cuttingboard.
+    assert len(calls) == 5 and calls[2] == "https://www.bls.gov/schedule/2026/09_sched_list.htm" and calls[-1] == CB
     assert raw["cuttingboard"]["status"] == "UNAVAILABLE"
     assert raw["sources"][0]["reason"] == "HTTP 403"
     assert not raw["observations"]

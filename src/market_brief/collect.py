@@ -5,8 +5,9 @@ import os
 import re
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -18,6 +19,8 @@ from .schedule import next_session_date
 
 TREASURY = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml"
 BLS = "https://www.bls.gov/schedule/news_release/bls.ics"
+# The calendar file's fallback, BLS's official monthly List View. On BLS only these two forms are ever requested.
+BLS_LIST = re.compile(r"https://www\.bls\.gov/schedule/\d{4}/(0[1-9]|1[0-2])_sched_list\.htm")
 FED = "https://www.federalreserve.gov/feeds/press_all.xml"
 CB = "https://dwats250.github.io/cuttingboard/contract.json"
 ALPACA_DATA = "https://data.alpaca.markets"
@@ -28,10 +31,32 @@ ALPACA_UNIVERSE = (
     "SPY", "QQQ", "XLK", "XLF", "XLE", "XLI", "XLY", "XLP", "XLV", "XLU",
     "XLB", "XLRE", "XLC", "GLD", "GDX", "AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG",
 )
+USER_AGENT = "MarketBrief/0.1 personal research"
+# BLS blocks robots that carry no way to contact their owner (www.bls.gov/bls/pss.htm), and its firewall also refuses
+# an agent containing a URL. BLS_CONTACT, an email address, identifies BLS requests only and is never recorded.
+CONTACT = re.compile(r"[\w.!#$%&'*+/=?^`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+                     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+", re.ASCII)
 
 
 class SourceError(ValueError):
     pass
+
+
+def allowed(url):
+    """An allowlisted host over HTTPS; on BLS, only the calendar file and the monthly List View pages."""
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.hostname not in HOSTS:
+        return False
+    return parts.hostname != urlsplit(BLS).hostname or url == BLS or bool(BLS_LIST.fullmatch(url))
+
+
+def user_agent(url):
+    contact = os.environ.get("BLS_CONTACT", "").strip()
+    if urlsplit(url).hostname != urlsplit(BLS).hostname or not contact:
+        return USER_AGENT
+    if not CONTACT.fullmatch(contact):
+        raise SourceError("BLS_CONTACT is not a plain email address")  # never echo the value
+    return f"MarketBrief/0.1 ({contact})"
 
 
 class SameHostRedirect(HTTPRedirectHandler):
@@ -39,19 +64,22 @@ class SameHostRedirect(HTTPRedirectHandler):
         old, new = urlsplit(req.full_url), urlsplit(newurl)
         if new.scheme != "https" or new.hostname != old.hostname:
             raise SourceError("cross-host redirect rejected")
+        if not allowed(newurl):
+            raise SourceError("redirect outside allowlist")
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def fetch(url, deadline):
-    if urlsplit(url).hostname not in HOSTS or urlsplit(url).scheme != "https":
+    if not allowed(url):
         raise SourceError("source outside allowlist")
+    agent = user_agent(url)
     opener = build_opener(SameHostRedirect())
     for attempt in range(2):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise SourceError("collection deadline exceeded")
         try:
-            request = Request(url, headers={"User-Agent": "MarketBrief/0.1 personal research"})
+            request = Request(url, headers={"User-Agent": agent})
             with opener.open(request, timeout=min(15, remaining)) as response:
                 data = response.read(1_000_001)
                 if len(data) > 1_000_000:
@@ -147,19 +175,222 @@ def calendar_events(text, now, retrieved):
         if not start_key or "SUMMARY" not in fields:
             raise SourceError("calendar event lacks time/title")
         value = fields[start_key]
-        zone = timezone.utc if value.endswith("Z") else ZoneInfo(
+        zone = timezone.utc if value.endswith("Z") else ics_zone(
             start_key.split("TZID=")[-1] if "TZID=" in start_key else "America/New_York")
         when = datetime.strptime(value.rstrip("Z"), "%Y%m%dT%H%M%S").replace(tzinfo=zone)
         dates.append(when.astimezone(EASTERN).date())
         if dates[-1].isoformat() not in admitted_dates:
             continue
-        events.append(dict(id=f"bls-event-{len(events)}", title=fields["SUMMARY"].replace("\\,", ","),
-            source_id="bls", published_at=None, checked_at=retrieved.isoformat(),
-            scheduled_at=when.astimezone(timezone.utc).isoformat(), status="SCHEDULED"))
+        scheduled_release(events, fields["SUMMARY"].replace("\\,", ","), when, retrieved)
     today = now.astimezone(EASTERN).date()
     if not dates or not min(dates) <= today <= max(dates):
         raise SourceError("calendar does not establish coverage for target date")
     return events
+
+
+# BLS's calendar file names its own VTIMEZONE `US-Eastern` (New York's rules), which is not an IANA key; ZoneInfo's
+# KeyError for it escaped collection, so any successful fetch of the file would have stopped the whole run.
+ICS_ZONES = {"US-Eastern": "America/New_York"}
+
+
+def ics_zone(key):
+    try:
+        return ZoneInfo(ICS_ZONES.get(key, key))
+    except (LookupError, ValueError, OSError):
+        raise SourceError("unsupported calendar time zone") from None
+
+
+def scheduled_release(events, title, when, retrieved):
+    """Append one scheduled BLS release, once: the same title at the same time listed twice is one event."""
+    scheduled_at = when.astimezone(timezone.utc).isoformat()
+    if any(event["title"] == title and event["scheduled_at"] == scheduled_at for event in events):
+        return
+    events.append(dict(id=f"bls-event-{len(events)}", title=title, source_id="bls", published_at=None,
+                       checked_at=retrieved.isoformat(), scheduled_at=scheduled_at, status="SCHEDULED"))
+
+
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December")
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+LIST_DATE = re.compile(rf"({'|'.join(WEEKDAYS)}), ({'|'.join(MONTHS)}) (\d{{1,2}}), (\d{{4}})")
+LIST_TIME = re.compile(r"(0?[1-9]|1[0-2]):([0-5]\d) (AM|PM)")
+LIST_HEADER = [("th", "Date"), ("th", "Time"), ("th", "Release")]
+EASTERN_NOTE = re.compile(r"\bAll times\b[^<.]{0,40}\bEastern Time\b", re.I)
+# BLS withdraws a listed release in the browser with a site-wide script, `Object.entries({'<date>': '<release>'})`
+# (it did so for three February 2026 releases). Every entry must be one this reader understands, or the page fails.
+WITHDRAWALS = re.compile(r"Object\.entries\(\{(.*?)\}\)", re.S)
+WITHDRAWAL = re.compile(r"\s*'((?:[^'\\]|\\.)*)'\s*:\s*'((?:[^'\\]|\\.)*)'\s*(?:,|$)")
+MONTH_VIEW_CELL = re.compile(r"d\d{4}")  # the Month View's cell IDs; the List View carries its own dated entries
+BLS_SECONDS = 30  # the calendar file and its fallback share one source's time: two fifteen-second attempts
+
+
+def schedule_url(year, month):
+    return f"https://www.bls.gov/schedule/{year}/{month:02d}_sched_list.htm"
+
+
+def list_date(text):
+    """`Friday, October 2, 2026` (BLS also zero-pads the day) as a date whose weekday agrees."""
+    match = LIST_DATE.fullmatch(text)
+    if not match:
+        raise SourceError("schedule row lacks a date")
+    weekday, month, day, year = match.groups()
+    try:
+        value = date(int(year), MONTHS.index(month) + 1, int(day))
+    except ValueError:
+        raise SourceError("schedule date does not exist") from None
+    if WEEKDAYS[value.weekday()] != weekday:
+        raise SourceError("schedule date and weekday disagree")
+    return value
+
+
+def withdrawals(text):
+    """The rows BLS's own script removes from its List View, as `(date, release name)`."""
+    withdrawn = set()
+    for entries in WITHDRAWALS.findall(text):
+        if WITHDRAWAL.sub("", entries).strip():
+            raise SourceError("unrecognized schedule withdrawal")
+        for key, name in WITHDRAWAL.findall(entries):
+            if MONTH_VIEW_CELL.fullmatch(key):
+                continue
+            try:
+                withdrawn.add((list_date(key), " ".join(name.replace("\\'", "'").split())))
+            except SourceError:
+                raise SourceError("unrecognized schedule withdrawal") from None
+    return withdrawn
+
+
+class ReleaseTable(HTMLParser):
+    """The `release-list` table of a BLS List View page: each row's cells as `(tag, text, release name)`, the name
+    being the cell's `<strong>` text, and the page's `<h1>` headings, which name its month."""
+
+    def __init__(self):
+        super().__init__()
+        self.tables, self.lists, self.closed, self.headings = [], 0, 0, []
+        self.rows, self.row, self.cell, self.heading = [], None, None, None
+
+    def handle_starttag(self, tag, attrs):
+        listing = bool(self.tables) and self.tables[-1]
+        if tag == "table":
+            if listing:
+                raise SourceError("schedule table nests a table")
+            self.tables.append("release-list" in (dict(attrs).get("class") or "").split())
+            self.lists += self.tables[-1]
+        elif tag == "h1" and not listing:
+            self.heading = []
+        elif listing and tag == "tr":
+            self.end_row()
+            self.row = []
+        elif listing and tag in ("td", "th") and self.row is not None:
+            self.end_cell()
+            self.cell = dict(tag=tag, text=[], name=[], strong=0)
+        elif listing and tag == "strong" and self.cell is not None:
+            self.cell["strong"] += 1
+
+    def handle_endtag(self, tag):
+        listing = bool(self.tables) and self.tables[-1]
+        if tag == "table" and self.tables:
+            self.end_row()
+            self.closed += self.tables.pop()
+        elif tag == "h1" and self.heading is not None:
+            self.headings.append(" ".join("".join(self.heading).split()))
+            self.heading = None
+        elif listing and tag in ("td", "th"):
+            self.end_cell()
+        elif listing and tag == "tr":
+            self.end_row()
+        elif listing and tag == "strong" and self.cell is not None and self.cell["strong"]:
+            self.cell["strong"] -= 1
+
+    def handle_data(self, data):
+        if self.heading is not None:
+            self.heading.append(data)
+        if self.cell is not None:
+            self.cell["text"].append(data)
+            if self.cell["strong"]:
+                self.cell["name"].append(data)
+        elif self.tables and self.tables[-1] and data.strip():
+            raise SourceError("schedule table holds text outside its cells")
+
+    def end_cell(self):
+        if self.cell is not None:
+            text, name = (" ".join("".join(self.cell[key]).split()) for key in ("text", "name"))
+            self.row.append((self.cell["tag"], text, name))
+            self.cell = None
+
+    def end_row(self):
+        self.end_cell()
+        if self.row:
+            self.rows.append(self.row)
+        self.row = None
+
+
+def list_releases(text, year, month):
+    """The timed releases on one official List View page as `(New York time, title)`, once the page proves it is
+    that month's schedule: a heading names the month, its one release table has the Date, Time and Release columns
+    and closes, every row is dated inside the month on a weekday that agrees, and the page states that its times are
+    Eastern. A row without a time (a holiday) is no release; a row the page's own script withdraws is skipped."""
+    table = ReleaseTable()
+    table.feed(text)
+    table.close()
+    if table.lists != 1 or table.closed != 1 or not table.rows:
+        raise SourceError("schedule page lacks one complete release table")
+    if f"{MONTHS[month - 1]} {year}" not in table.headings:
+        raise SourceError("schedule page is not the requested month")
+    if not EASTERN_NOTE.search(" ".join(text.split())):
+        raise SourceError("schedule page does not state Eastern Time")
+    (header, *rows), withdrawn = table.rows, withdrawals(text)
+    if [cell[:2] for cell in header] != LIST_HEADER:
+        raise SourceError("schedule table lacks the Date, Time and Release columns")
+    releases = []
+    for row in rows:
+        if [cell[0] for cell in row] != ["td", "td", "td"]:
+            raise SourceError("schedule row is not a date, a time and a release")
+        (_, day_text, _), (_, clock_text, _), (_, title, name) = row
+        day = list_date(day_text)
+        if (day.year, day.month) != (year, month) or not title:
+            raise SourceError("schedule row lies outside its month or names no release")
+        if not clock_text or (day, name) in withdrawn:
+            continue
+        clock = LIST_TIME.fullmatch(clock_text)
+        if not clock:
+            raise SourceError("schedule row has no readable time")
+        hour = int(clock[1]) % 12 + (12 if clock[3] == "PM" else 0)
+        releases.append((datetime(day.year, day.month, day.day, hour, int(clock[2]), tzinfo=EASTERN), title))
+    if not releases:
+        raise SourceError("schedule page lists no releases")
+    return releases
+
+
+def failure(exc):
+    return str(exc) if isinstance(exc, SourceError) else f"malformed {type(exc).__name__}"
+
+
+def bls_calendar(now, deadline, fetcher):
+    """BLS releases scheduled today and at the next session: from the calendar file, else from the official monthly
+    List View pages covering both dates. Returns `(events, url, reason, retrieved)`, the URL being the one actually
+    read and the reason, on the fallback, why the file was not. When both fail, one SourceError names both."""
+    deadline = min(deadline, time.monotonic() + BLS_SECONDS)
+    try:
+        body = fetcher(BLS, deadline)
+        retrieved = datetime.now(timezone.utc)
+        return calendar_events(body, now, retrieved), BLS, "", retrieved
+    except (SourceError, ValueError, LookupError, UnicodeError, OverflowError) as exc:
+        file_failure = failure(exc)
+    days = (now.astimezone(EASTERN).date(), date.fromisoformat(next_session_date(now)))
+    months = list(dict.fromkeys((day.year, day.month) for day in days))
+    try:
+        listed = [release for year, month in months
+                  for release in list_releases(fetcher(schedule_url(year, month), deadline), year, month)]
+    # HTMLParser can still assert on input it was never meant to see; that is a malformed page, not a crash.
+    except (SourceError, ValueError, LookupError, UnicodeError, OverflowError, AssertionError) as exc:
+        raise SourceError(f"{file_failure}; monthly schedule: {failure(exc)}") from None
+    retrieved = datetime.now(timezone.utc)
+    events = []
+    for when, title in listed:
+        if when.date() in days:
+            scheduled_release(events, title, when, retrieved)
+    label = ", ".join(f"{year}-{month:02d}" for year, month in months)
+    return events, schedule_url(*months[0]), f"monthly schedule {label}; calendar file: {file_failure}", retrieved
 
 
 def fed_context(text, now):
@@ -365,6 +596,13 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
     for ident, name, kind, url, request_url in jobs:
         record = source(ident, name, kind, url, now)
         try:
+            if ident == "bls":  # the calendar file, else its official fallback pages: one source record either way
+                events, record["url"], record["reason"], retrieved = bls_calendar(now, deadline, fetcher)
+                record.update(retrieved_at=retrieved.isoformat(),
+                              coverage_date=now.astimezone(EASTERN).date().isoformat())
+                raw["events"].extend(events)
+                raw["sources"].append(record)
+                continue
             body = fetcher(request_url, deadline)
             if ident == "treasury":
                 entries = treasury_entries(body, now)
@@ -379,14 +617,10 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
             record["retrieved_at"] = retrieved.isoformat()
             if ident == "treasury":
                 raw["observations"].extend(yield_rows(entries, retrieved))
-            elif ident == "bls":
-                raw["events"].extend(calendar_events(body, now, retrieved))
-                record["coverage_date"] = now.astimezone(EASTERN).date().isoformat()
             else:
                 raw["context_items"].extend(fed_context(body, now))
         except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:
-            reason = str(exc) if isinstance(exc, SourceError) else f"malformed {type(exc).__name__}"
-            record.update(status="UNAVAILABLE", reason=reason)
+            record.update(status="UNAVAILABLE", reason=failure(exc))
         raw["sources"].append(record)
     for ident, name, url in (
         ("bea", "BEA calendar", "https://www.bea.gov/news/schedule"),

@@ -11,6 +11,8 @@ _real_which = shutil.which
 def no_live_synthesis(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("MARKET_BRIEF_MODEL", raising=False)
+    # A developer's own BLS contact must neither change the request identity tests expect nor reach a fixture.
+    monkeypatch.delenv("BLS_CONTACT", raising=False)
     # Actions sets this for the test job too; without it the scheduler never lists real attempt records.
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
 

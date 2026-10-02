@@ -20,7 +20,7 @@ from .schedule import next_session_date
 TREASURY = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml"
 BLS = "https://www.bls.gov/schedule/news_release/bls.ics"
 # The calendar file's fallback, BLS's official monthly List View. On BLS only these two forms are ever requested.
-BLS_LIST = re.compile(r"https://www\.bls\.gov/schedule/\d{4}/(0[1-9]|1[0-2])_sched_list\.htm")
+BLS_LIST = re.compile(r"https://www\.bls\.gov/schedule/[0-9]{4}/(0[1-9]|1[0-2])_sched_list\.htm")
 FED = "https://www.federalreserve.gov/feeds/press_all.xml"
 CB = "https://dwats250.github.io/cuttingboard/contract.json"
 ALPACA_DATA = "https://data.alpaca.markets"
@@ -164,7 +164,7 @@ def calendar_events(text, now, retrieved):
     if "BEGIN:VCALENDAR" not in text or "END:VCALENDAR" not in text:
         raise SourceError("malformed calendar")
     text = re.sub(r"\r?\n[ \t]", "", text)
-    events, dates = [], []
+    releases, dates = [], []
     admitted_dates = {now.astimezone(EASTERN).date().isoformat(), next_session_date(now)}
     for block in text.split("BEGIN:VEVENT")[1:]:
         if "END:VEVENT" not in block or "RRULE:" in block:
@@ -181,11 +181,12 @@ def calendar_events(text, now, retrieved):
         dates.append(when.astimezone(EASTERN).date())
         if dates[-1].isoformat() not in admitted_dates:
             continue
-        scheduled_release(events, fields["SUMMARY"].replace("\\,", ","), when, retrieved)
+        title = fields["SUMMARY"].replace("\\,", ",")
+        releases.append((when, title, title))
     today = now.astimezone(EASTERN).date()
     if not dates or not min(dates) <= today <= max(dates):
         raise SourceError("calendar does not establish coverage for target date")
-    return events
+    return release_events(releases, retrieved)
 
 
 # BLS's calendar file names its own VTIMEZONE `US-Eastern` (New York's rules), which is not an IANA key; ZoneInfo's
@@ -200,13 +201,18 @@ def ics_zone(key):
         raise SourceError("unsupported calendar time zone") from None
 
 
-def scheduled_release(events, title, when, retrieved):
-    """Append one scheduled BLS release, once: the same title at the same time listed twice is one event."""
-    scheduled_at = when.astimezone(timezone.utc).isoformat()
-    if any(event["title"] == title and event["scheduled_at"] == scheduled_at for event in events):
-        return
-    events.append(dict(id=f"bls-event-{len(events)}", title=title, source_id="bls", published_at=None,
-                       checked_at=retrieved.isoformat(), scheduled_at=scheduled_at, status="SCHEDULED"))
+def release_events(releases, retrieved):
+    """`(time, title, release name)` as scheduled BLS events, one per title and time, numbered by time and then
+    release name: the calendar file and the List View order a shared time differently (Real Earnings before CPI, or
+    after), and a frozen `bls-event-<n>` must name the same release whichever path the next run read."""
+    events = []
+    for when, title, _ in sorted(releases, key=lambda release: (release[0], RELEASE_MARK.sub("", release[2]),
+                                                                release[1])):
+        scheduled_at = when.astimezone(timezone.utc).isoformat()
+        if not any(event["title"] == title and event["scheduled_at"] == scheduled_at for event in events):
+            events.append(dict(id=f"bls-event-{len(events)}", title=title, source_id="bls", published_at=None,
+                               checked_at=retrieved.isoformat(), scheduled_at=scheduled_at, status="SCHEDULED"))
+    return events
 
 
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -221,6 +227,7 @@ EASTERN_NOTE = re.compile(r"\bAll times\b[^<.]{0,40}\bEastern Time\b", re.I)
 WITHDRAWALS = re.compile(r"Object\.entries\(\{(.*?)\}\)", re.S)
 WITHDRAWAL = re.compile(r"\s*'((?:[^'\\]|\\.)*)'\s*:\s*'((?:[^'\\]|\\.)*)'\s*(?:,|$)")
 MONTH_VIEW_CELL = re.compile(r"d\d{4}")  # the Month View's cell IDs; the List View carries its own dated entries
+RELEASE_MARK = re.compile(r"\s*\((?:P|R)\)$")  # the List View marks preliminary and revised releases; the file does not
 BLS_SECONDS = 30  # the calendar file and its fallback share one source's time: two fifteen-second attempts
 
 
@@ -244,16 +251,20 @@ def list_date(text):
 
 
 def withdrawals(text):
-    """The rows BLS's own script removes from its List View, as `(date, release name)`."""
+    """The dates on which BLS's own script removes List View rows in the browser. Which rows it removes depends on
+    script semantics this reader does not run, so a date named here is never read; an entry in any other form fails."""
+    blocks = WITHDRAWALS.findall(text)
+    if len(blocks) != text.count("Object.entries"):
+        raise SourceError("unrecognized schedule withdrawal")
     withdrawn = set()
-    for entries in WITHDRAWALS.findall(text):
+    for entries in blocks:
         if WITHDRAWAL.sub("", entries).strip():
             raise SourceError("unrecognized schedule withdrawal")
-        for key, name in WITHDRAWAL.findall(entries):
+        for key, _ in WITHDRAWAL.findall(entries):
             if MONTH_VIEW_CELL.fullmatch(key):
                 continue
             try:
-                withdrawn.add((list_date(key), " ".join(name.replace("\\'", "'").split())))
+                withdrawn.add(list_date(key))
             except SourceError:
                 raise SourceError("unrecognized schedule withdrawal") from None
     return withdrawn
@@ -261,16 +272,20 @@ def withdrawals(text):
 
 class ReleaseTable(HTMLParser):
     """The `release-list` table of a BLS List View page: each row's cells as `(tag, text, release name)`, the name
-    being the cell's `<strong>` text, and the page's `<h1>` headings, which name its month."""
+    being the cell's `<strong>` text, and the page's `<h1>` headings, which name its month. The page's visible text
+    is kept (scripts and comments are not visible); a schedule date in it outside the release table, or a table end
+    tag with no table open, means the table the reader sees is not the one parsed, and fails the page."""
 
     def __init__(self):
         super().__init__()
-        self.tables, self.lists, self.closed, self.headings = [], 0, 0, []
-        self.rows, self.row, self.cell, self.heading = [], None, None, None
+        self.tables, self.lists, self.closed, self.headings, self.visible = [], 0, 0, [], []
+        self.rows, self.row, self.cell, self.heading, self.script = [], None, None, None, None
 
     def handle_starttag(self, tag, attrs):
         listing = bool(self.tables) and self.tables[-1]
-        if tag == "table":
+        if tag in ("script", "style"):
+            self.script = tag
+        elif tag == "table":
             if listing:
                 raise SourceError("schedule table nests a table")
             self.tables.append("release-list" in (dict(attrs).get("class") or "").split())
@@ -288,7 +303,11 @@ class ReleaseTable(HTMLParser):
 
     def handle_endtag(self, tag):
         listing = bool(self.tables) and self.tables[-1]
-        if tag == "table" and self.tables:
+        if tag == self.script:
+            self.script = None
+        elif tag == "table":
+            if not self.tables:
+                raise SourceError("schedule page closes a table it never opened")
             self.end_row()
             self.closed += self.tables.pop()
         elif tag == "h1" and self.heading is not None:
@@ -302,6 +321,9 @@ class ReleaseTable(HTMLParser):
             self.cell["strong"] -= 1
 
     def handle_data(self, data):
+        if self.script:
+            return
+        self.visible.append(data)
         if self.heading is not None:
             self.heading.append(data)
         if self.cell is not None:
@@ -310,6 +332,8 @@ class ReleaseTable(HTMLParser):
                 self.cell["name"].append(data)
         elif self.tables and self.tables[-1] and data.strip():
             raise SourceError("schedule table holds text outside its cells")
+        elif LIST_DATE.search(" ".join(data.split())):
+            raise SourceError("schedule dates appear outside the release table")
 
     def end_cell(self):
         if self.cell is not None:
@@ -325,20 +349,20 @@ class ReleaseTable(HTMLParser):
 
 
 def list_releases(text, year, month):
-    """The timed releases on one official List View page as `(New York time, title)`, once the page proves it is
-    that month's schedule: a heading names the month, its one release table has the Date, Time and Release columns
-    and closes, every row is dated inside the month on a weekday that agrees, and the page states that its times are
-    Eastern. A row without a time (a holiday) is no release; a row the page's own script withdraws is skipped."""
+    """The timed releases on one official List View page as `(New York time, title, release name)`, once the page
+    proves it is that month's schedule: a heading names the month, its one release table has the Date, Time and
+    Release columns and closes, every row is dated inside the month on a weekday that agrees, and the page states that
+    its times are Eastern. A row without a time (a holiday) is no release."""
     table = ReleaseTable()
     table.feed(text)
     table.close()
-    if table.lists != 1 or table.closed != 1 or not table.rows:
+    if table.lists != 1 or table.closed != 1 or table.tables or not table.rows:
         raise SourceError("schedule page lacks one complete release table")
     if f"{MONTHS[month - 1]} {year}" not in table.headings:
         raise SourceError("schedule page is not the requested month")
-    if not EASTERN_NOTE.search(" ".join(text.split())):
+    if not EASTERN_NOTE.search(" ".join("".join(table.visible).split())):
         raise SourceError("schedule page does not state Eastern Time")
-    (header, *rows), withdrawn = table.rows, withdrawals(text)
+    header, *rows = table.rows
     if [cell[:2] for cell in header] != LIST_HEADER:
         raise SourceError("schedule table lacks the Date, Time and Release columns")
     releases = []
@@ -349,13 +373,13 @@ def list_releases(text, year, month):
         day = list_date(day_text)
         if (day.year, day.month) != (year, month) or not title:
             raise SourceError("schedule row lies outside its month or names no release")
-        if not clock_text or (day, name) in withdrawn:
+        if not clock_text:
             continue
         clock = LIST_TIME.fullmatch(clock_text)
         if not clock:
             raise SourceError("schedule row has no readable time")
         hour = int(clock[1]) % 12 + (12 if clock[3] == "PM" else 0)
-        releases.append((datetime(day.year, day.month, day.day, hour, int(clock[2]), tzinfo=EASTERN), title))
+        releases.append((datetime(day.year, day.month, day.day, hour, int(clock[2]), tzinfo=EASTERN), title, name))
     if not releases:
         raise SourceError("schedule page lists no releases")
     return releases
@@ -379,16 +403,18 @@ def bls_calendar(now, deadline, fetcher):
     days = (now.astimezone(EASTERN).date(), date.fromisoformat(next_session_date(now)))
     months = list(dict.fromkeys((day.year, day.month) for day in days))
     try:
-        listed = [release for year, month in months
-                  for release in list_releases(fetcher(schedule_url(year, month), deadline), year, month)]
+        listed = []
+        for year, month in months:
+            text = fetcher(schedule_url(year, month), deadline)
+            withdrawn = sorted(withdrawals(text).intersection(days))
+            if withdrawn:
+                raise SourceError(f"the page withdraws a release on {withdrawn[0].isoformat()}")
+            listed += list_releases(text, year, month)
     # HTMLParser can still assert on input it was never meant to see; that is a malformed page, not a crash.
     except (SourceError, ValueError, LookupError, UnicodeError, OverflowError, AssertionError) as exc:
         raise SourceError(f"{file_failure}; monthly schedule: {failure(exc)}") from None
     retrieved = datetime.now(timezone.utc)
-    events = []
-    for when, title in listed:
-        if when.date() in days:
-            scheduled_release(events, title, when, retrieved)
+    events = release_events([release for release in listed if release[0].date() in days], retrieved)
     label = ", ".join(f"{year}-{month:02d}" for year, month in months)
     return events, schedule_url(*months[0]), f"monthly schedule {label}; calendar file: {file_failure}", retrieved
 

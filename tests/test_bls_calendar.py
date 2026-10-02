@@ -6,21 +6,36 @@ script that removes withdrawn rows in the browser. Production received HTTP 403 
 anonymous client carried no owner contact; BLS_CONTACT now identifies BLS requests (and only those).
 """
 
+import io
 import json
 import re
 import time
 from datetime import datetime
+from email.message import Message
 from urllib.error import HTTPError
+from urllib.request import HTTPSHandler
+from urllib.request import build_opener as real_build_opener
+from urllib.response import addinfourl
 
 import pytest
 from test_pipeline import NOW, narrative
 from test_provenance import drawer
 
 from market_brief import collect
-from market_brief.collect import BLS, FED, SourceError, calendar_events, collect_live, cuttingboard_record, fetch
+from market_brief.collect import (
+    BLS,
+    FED,
+    TREASURY,
+    SourceError,
+    calendar_events,
+    collect_live,
+    cuttingboard_record,
+    fetch,
+)
 from market_brief.evidence import ROOT, finalize_coverage, normalize_packet, read_json
 from market_brief.metrics import derive
 from market_brief.render import render
+from market_brief.synthesize import validate_narrative
 
 FIXTURES = ROOT / "tests/fixtures"
 ICS = (FIXTURES / "bls.2026-09-11.ics").read_text()
@@ -77,7 +92,7 @@ def test_ics_success_is_unchanged_and_requests_no_fallback():
 def test_bls_us_eastern_zone_is_new_york_time():
     events = calendar_events(ICS, utc("2026-09-11T13:00:00+00:00"), utc("2026-09-11T13:00:00+00:00"))
     assert [(event["title"], event["scheduled_at"]) for event in events] == [
-        ("Real Earnings", "2026-09-11T12:30:00+00:00"), ("Consumer Price Index", "2026-09-11T12:30:00+00:00")]
+        ("Consumer Price Index", "2026-09-11T12:30:00+00:00"), ("Real Earnings", "2026-09-11T12:30:00+00:00")]
 
 
 def test_an_unknown_ics_zone_falls_back_instead_of_crashing_collection():
@@ -109,7 +124,7 @@ def test_ics_403_recovers_the_employment_situation_from_the_official_list_page()
      [("Consumer Price Index for September 2026", "2026-10-14T12:30:00+00:00"),
       ("Real Earnings for September 2026", "2026-10-14T12:30:00+00:00")]),
     ("2026-10-14T12:00:00+00:00", {BLS: ICS},
-     [("Real Earnings", "2026-10-14T12:30:00+00:00"), ("Consumer Price Index", "2026-10-14T12:30:00+00:00")]),
+     [("Consumer Price Index", "2026-10-14T12:30:00+00:00"), ("Real Earnings", "2026-10-14T12:30:00+00:00")]),
 ])
 def test_cpi_day_emits_cpi_at_0830_eastern(now, responses, expected):
     raw, bls, _ = collected(utc(now), responses)
@@ -211,6 +226,13 @@ MALFORMED = {
     "two release tables": lambda: PAGES[10].replace("</table>\n<p> </p>", "</table>\n" + PAGES[10][
         PAGES[10].index('<table class="release-list">'):PAGES[10].index("</tbody>")] + "</tbody>\n</table>\n<p> </p>"),
     "unreadable removal": lambda: PAGES[10].replace("'Thursday, February 5, 2026'", "'feb5'"),
+    "removal in another form": lambda: PAGES[10].replace("Object.entries({'Thursday", "Object.entries( {'Thursday"),
+    # A browser would still show every later row in these three; the parser must not quietly lose them.
+    "stray table close": lambda: PAGES[10].replace(NFP_ROW, NFP_ROW + "</table>\n"),
+    "comment over the rest": lambda: PAGES[10].replace(NFP_ROW, NFP_ROW + "<!--\n").replace(
+        "Last Modified Date: </strong>February 18, 2026\n", "Last Modified Date: </strong>February 18, 2026\n-->\n"),
+    "list split in two": lambda: PAGES[10].replace(
+        NFP_ROW, NFP_ROW + '</tbody>\n</table>\n<table class="later">\n<tbody>\n'),
     "not a page": lambda: "Access Denied",
 }
 
@@ -229,13 +251,18 @@ def test_the_list_page_reads_through_crlf_line_endings():
     assert releases(raw) == [("Employment Situation for September 2026", "2026-10-02T12:30:00+00:00")]
 
 
-def test_rows_the_page_itself_withdraws_are_not_scheduled():
-    # BLS withdraws a listed release with its site-wide script, as it did for three February 2026 releases. The
-    # browser compares the row's date text; this copy names the date zero-padded, as BLS's own February page does.
-    withdrawn = PAGES[10].replace("'Thursday, February 5, 2026': 'Productivity and Costs (P)'",
-                                  "'Friday, October 02, 2026': 'Employment Situation'")
+@pytest.mark.parametrize("entry", ["'Friday, October 2, 2026': 'Employment Situation'",
+                                   "'Friday, October 02, 2026': 'Employment\\x20Situation'"])
+def test_a_page_that_withdraws_a_release_on_a_target_date_fails_closed(entry):
+    # BLS withdraws a listed release in the browser with its site-wide script (it did so for three February 2026
+    # releases). What a reader then sees on a target date depends on script semantics, so the page is not read.
+    withdrawn = PAGES[10].replace("'Thursday, February 5, 2026': 'Productivity and Costs (P)'", entry)
     raw, bls, _ = collected(utc(NFP_MORNING), {BLS: FORBIDDEN, LIST[10]: withdrawn})
-    assert bls["status"] == "AVAILABLE" and raw["events"] == []
+    assert bls["status"] == "UNAVAILABLE" and "withdraws a release on 2026-10-02" in bls["reason"]
+    assert not raw["events"]
+    # The same entry on another date is not this run's concern: October 14 reads normally.
+    raw, bls, _ = collected(utc("2026-10-14T12:00:00+00:00"), {BLS: FORBIDDEN, LIST[10]: withdrawn})
+    assert bls["status"] == "AVAILABLE" and len(raw["events"]) == 2
 
 
 def test_one_event_per_release():
@@ -248,6 +275,36 @@ def test_one_event_per_release():
     block = block[:block.index("END:VEVENT") + len("END:VEVENT\n")]
     raw, _, _ = collected(utc(NFP_MORNING), {BLS: ICS.replace(block, block * 2)})
     assert releases(raw) == [("Employment Situation", "2026-10-02T12:30:00+00:00")]
+
+
+def test_a_release_keeps_its_id_whichever_path_read_it():
+    # CPI day: the calendar file lists Real Earnings before CPI, the List View the reverse. Both number by time, then
+    # release name, so a frozen bls-event-<n> names the same release on a later refresh that read the other path.
+    now = utc("2026-10-14T12:00:00+00:00")
+    from_file, _, _ = collected(now, {BLS: ICS})
+    from_page, _, _ = collected(now, {BLS: FORBIDDEN, LIST[10]: PAGES[10]})
+    assert [(event["id"], event["title"]) for event in from_file["events"]] == [
+        ("bls-event-0", "Consumer Price Index"), ("bls-event-1", "Real Earnings")]
+    assert [(event["id"], event["title"]) for event in from_page["events"]] == [
+        ("bls-event-0", "Consumer Price Index for September 2026"), ("bls-event-1", "Real Earnings for September 2026")]
+
+
+def test_a_watch_can_be_timed_to_a_collected_release():
+    # Collected IDs carry a digit (bls-event-0); a structured EVENT(<id>) horizon is a reference, not a numeric claim.
+    raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
+    raw["events"][0]["id"] = "bls-event-0"
+    raw["cuttingboard"] = cuttingboard_record(raw["cuttingboard"], NOW, NOW)
+    packet = finalize_coverage(derive(normalize_packet(raw, NOW, "SAMPLE"), read_json(ROOT / "config/universe.json")))
+    value = json.loads(json.dumps(narrative()).replace("sample-event", "bls-event-0"))
+    value["watches"][0]["horizon"] = "EVENT(bls-event-0)"
+    assert validate_narrative(value, packet)
+    value["watches"][0]["horizon"] = "EVENT(bls-event-9)"
+    with pytest.raises(ValueError, match="unknown event horizon"):
+        validate_narrative(value, packet)
+    value["watches"][0]["horizon"] = "OPENING_HOUR"
+    value["watches"][0]["condition"] = "Whether SPY holds 8 handles"
+    with pytest.raises(ValueError, match="literal numeric claim"):
+        validate_narrative(value, packet)
 
 
 def test_the_fallback_shares_the_calendar_files_time_budget():
@@ -344,8 +401,56 @@ def test_the_contact_never_reaches_the_record(monkeypatch):
     assert "example.org" not in json.dumps(raw)
 
 
+class Scripted(HTTPSHandler):
+    """HTTPS answered from a script, URL -> (status, Location or None, body), so the real redirect chain runs."""
+
+    def __init__(self, script, requests):
+        super().__init__()
+        self.script, self.requests = script, requests
+
+    def https_open(self, request):
+        self.requests.append((request.full_url, request.get_header("User-agent")))
+        status, location, body = self.script[request.full_url]
+        headers = Message()
+        if location:
+            headers["Location"] = location
+        response = addinfourl(io.BytesIO(body.encode()), headers, request.full_url, status)
+        response.msg = "Found" if location else "OK"
+        return response
+
+
+@pytest.mark.parametrize("start,location,outcome", [
+    (BLS, "https://evil.example/calendar.ics", "cross-host redirect rejected"),
+    (BLS, "https://www.bls.gov/cpi/", "redirect outside allowlist"),
+    (LIST[10], "https://www.bls.gov/schedule/2026/10_sched.htm", "redirect outside allowlist"),
+])
+def test_a_bls_redirect_off_the_two_schedule_forms_is_refused_before_it_is_followed(monkeypatch, start, location,
+                                                                                    outcome):
+    monkeypatch.setenv("BLS_CONTACT", "owner@example.org")
+    requests = []
+    monkeypatch.setattr(collect, "build_opener", lambda *handlers: real_build_opener(
+        *handlers, Scripted({start: (302, location, "")}, requests)))
+    with pytest.raises(SourceError, match=outcome):
+        fetch(start, time.monotonic() + 30)
+    assert requests == [(start, "MarketBrief/0.1 (owner@example.org)")]
+
+
+def test_redirects_inside_the_allowlist_are_followed_with_the_same_identity(monkeypatch):
+    monkeypatch.setenv("BLS_CONTACT", "owner@example.org")
+    moved = f"{TREASURY}?moved"
+    requests = []
+    monkeypatch.setattr(collect, "build_opener", lambda *handlers: real_build_opener(*handlers, Scripted({
+        BLS: (301, LIST[10], ""), LIST[10]: (200, None, PAGES[10]),
+        TREASURY: (302, moved, ""), moved: (200, None, "<feed/>")}, requests)))
+    assert fetch(BLS, time.monotonic() + 30) == PAGES[10]
+    assert fetch(TREASURY, time.monotonic() + 30) == "<feed/>"
+    assert requests == [(BLS, "MarketBrief/0.1 (owner@example.org)"), (LIST[10], "MarketBrief/0.1 (owner@example.org)"),
+                        (TREASURY, "MarketBrief/0.1 personal research"), (moved, "MarketBrief/0.1 personal research")]
+
+
 @pytest.mark.parametrize("url", [
     "https://www.bls.gov/cpi/", "https://www.bls.gov/schedule/2026/10_sched.htm",
+    "https://www.bls.gov/schedule/٢٠٢٦/10_sched_list.htm",
     "https://www.bls.gov/schedule/2026/13_sched_list.htm", "https://www.bls.gov/schedule/2026/10_sched_list.htm?x=1",
     "https://www.bls.gov/schedule/news_release/bls.ics#x", "http://www.bls.gov/schedule/2026/10_sched_list.htm",
     "https://data.bls.gov/schedule/2026/10_sched_list.htm"])

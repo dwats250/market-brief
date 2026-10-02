@@ -145,7 +145,23 @@ page (`NOT DEPLOYED / … / this checkout's page is behind main`), and Workers L
 Unchanged: the group, checkpoint windows, paid-attempt dedupe, continuity and the validator
 (`docs/2026-09-30-scheduler-liveness.md`).
 
+**BLS release calendar (2026-10-02).** The BLS calendar had been unavailable (HTTP 403) on every production run, so
+CPI (2026-09-11) and the Employment Situation (2026-10-02) never appeared as scheduled releases. The cause was BLS's
+robot policy, not the file: its firewall refused the anonymous client on every BLS page, the monthly List View
+included, and served the same request once it carried the owner's contact. BLS requests now identify the owner from
+the `BLS_CONTACT` secret (used only for that identity), and when the calendar file cannot be fetched or read the
+collector falls back to the official monthly List View pages for today's and the next session's months, which count
+only when each proves its month, its columns and its Eastern clock. A recovered calendar is AVAILABLE with the page it
+read as its URL. The file's own `US-Eastern` time zone, which would have stopped the whole collection on the first
+successful fetch, now reads as New York time. Release values (issue #23's larger gap) are not in this slice.
+
 ## Next
+
+BLS release calendar: set the `BLS_CONTACT` repository secret to the owner's address before merging (unset, BLS
+requests stay anonymous and the calendar stays visibly unavailable). After merge, the next run's Sources drawer should
+read `BLS calendar · Available` linked to the calendar file, Technical details `Calendar: checked`, and a release day
+lists its releases under Events; a reason reading `monthly schedule …; calendar file: …` means the List View carried
+the run and names why the file did not. Issue #23 stays open for current release values.
 
 Scheduler liveness (L1): merging deploys the Worker. Before merging, record the deployed Worker version
 (`wrangler versions list --config cloudflare/wrangler.toml`) for a rollback, and confirm `GH_DISPATCH_TOKEN` still

@@ -55,7 +55,7 @@ class Day:
 
     def run(self, now, checkpoint, *, intraday=True, value=None, mutate=None, last_history_date="2026-09-04",
             print_at=None, fail_synthesis=False, command="premarket", scale_last_close=None,
-            prints=(("SPY", -0.53), ("QQQ", -0.61), ("XLI", 0.4)), wire=False):
+            prints=(("SPY", -0.53), ("QQQ", -0.61), ("XLI", 0.4)), wire=False, collect=None):
         freeze_clock(self.monkeypatch, now)
         raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
         raw["mode"] = "LIVE"
@@ -78,6 +78,9 @@ class Day:
                     baseline="latest trade versus previous regular close", frequency="intraday",
                     observed_at=print_at or now, retrieved_at=now, source_id="sample-prices",
                     status="AVAILABLE", reason=""))
+        if collect:
+            # A part of the real collector, run at this run's clock, replaces the fixture's matching records.
+            collect(raw, utc(now))
         self.monkeypatch.setattr(cli, "collect_live", lambda target, include_cuttingboard=False: raw)
 
         def synthesize(packet, full=False, context=None, **kwargs):

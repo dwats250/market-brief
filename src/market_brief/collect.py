@@ -1,5 +1,6 @@
 """GET-only official sources. No account discovery, arbitrary crawling, or trading routes."""
 
+import http.client
 import json
 import os
 import re
@@ -13,13 +14,25 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
+from .actuals import (
+    FAMILIES,
+    MONTHS,
+    RELEASE_PAGES,
+    WEEKDAYS,
+    ReleaseError,
+    check_release,
+    due_releases,
+    read_release,
+    release_rows,
+)
 from .evidence import ET as EASTERN
 from .evidence import timestamp
 from .schedule import next_session_date
 
 TREASURY = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml"
 BLS = "https://www.bls.gov/schedule/news_release/bls.ics"
-# The calendar file's fallback, BLS's official monthly List View. On BLS only these two forms are ever requested.
+# The calendar file's fallback, BLS's official monthly List View. On BLS only these two forms and the two fixed
+# current-edition release pages (`actuals.RELEASE_PAGES`) are ever requested.
 BLS_LIST = re.compile(r"https://www\.bls\.gov/schedule/[0-9]{4}/(0[1-9]|1[0-2])_sched_list\.htm")
 FED = "https://www.federalreserve.gov/feeds/press_all.xml"
 CB = "https://dwats250.github.io/cuttingboard/contract.json"
@@ -43,11 +56,13 @@ class SourceError(ValueError):
 
 
 def allowed(url):
-    """An allowlisted host over HTTPS; on BLS, only the calendar file and the monthly List View pages."""
+    """An allowlisted host over HTTPS; on BLS, only the calendar file, the monthly List View pages and the two
+    current-edition release pages."""
     parts = urlsplit(url)
     if parts.scheme != "https" or parts.hostname not in HOSTS:
         return False
-    return parts.hostname != urlsplit(BLS).hostname or url == BLS or bool(BLS_LIST.fullmatch(url))
+    return (parts.hostname != urlsplit(BLS).hostname or url == BLS or url in RELEASE_PAGES
+            or bool(BLS_LIST.fullmatch(url)))
 
 
 def user_agent(url):
@@ -89,7 +104,8 @@ def fetch(url, deadline):
             if attempt == 0 and exc.code in {500, 502, 503, 504}:
                 continue
             raise SourceError(f"HTTP {exc.code}") from None
-        except (URLError, TimeoutError, OSError):
+        # A malformed response (a cut chunked body, a garbled status line) is the network failing, never a crash.
+        except (URLError, TimeoutError, OSError, http.client.HTTPException):
             if attempt:
                 raise SourceError("network unavailable or timeout") from None
     raise SourceError("unavailable")
@@ -215,9 +231,6 @@ def release_events(releases, retrieved):
     return events
 
 
-MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
-          "November", "December")
-WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 LIST_DATE = re.compile(rf"({'|'.join(WEEKDAYS)}), ({'|'.join(MONTHS)}) (\d{{1,2}}), (\d{{4}})")
 LIST_TIME = re.compile(r"(0?[1-9]|1[0-2]):([0-5]\d) (AM|PM)")
 LIST_HEADER = [("th", "Date"), ("th", "Time"), ("th", "Release")]
@@ -229,6 +242,7 @@ WITHDRAWAL = re.compile(r"\s*'((?:[^'\\]|\\.)*)'\s*:\s*'((?:[^'\\]|\\.)*)'\s*(?:
 MONTH_VIEW_CELL = re.compile(r"d\d{4}")  # the Month View's cell IDs; the List View carries its own dated entries
 RELEASE_MARK = re.compile(r"\s*\((?:P|R)\)$")  # the List View marks preliminary and revised releases; the file does not
 BLS_SECONDS = 30  # the calendar file and its fallback share one source's time: two fifteen-second attempts
+RELEASE_SECONDS = 20  # one release page: a fifteen-second attempt and a short retry
 
 
 def schedule_url(year, month):
@@ -386,7 +400,7 @@ def list_releases(text, year, month):
 
 
 def failure(exc):
-    return str(exc) if isinstance(exc, SourceError) else f"malformed {type(exc).__name__}"
+    return str(exc) if isinstance(exc, (SourceError, ReleaseError)) else f"malformed {type(exc).__name__}"
 
 
 def bls_calendar(now, deadline, fetcher):
@@ -417,6 +431,49 @@ def bls_calendar(now, deadline, fetcher):
     events = release_events([release for release in listed if release[0].date() in days], retrieved)
     label = ", ".join(f"{year}-{month:02d}" for year, month in months)
     return events, schedule_url(*months[0]), f"monthly schedule {label}; calendar file: {file_failure}", retrieved
+
+
+def release_actuals(events, now, deadline, fetcher):
+    """The official values of each BLS release on today's admitted calendar whose scheduled time has passed: one read
+    of its family's fixed current-edition page, admitted only as that scheduled release. Returns `(rows, records)`,
+    one source record per release read (or refused); a page that cannot be admitted leaves the event to stand alone."""
+    rows, records = [], []
+    for family, event, period in due_releases(events, now):
+        spec = FAMILIES[family]
+        record = source(spec["source"], spec["name"], "release", spec["url"], now)
+        record["coverage_date"] = now.astimezone(EASTERN).date().isoformat()
+        try:
+            if event is None:
+                raise ReleaseError("the calendar lists this release more than once today")
+            page = fetcher(spec["url"], min(deadline, time.monotonic() + RELEASE_SECONDS))
+            retrieved = datetime.now(timezone.utc)
+            release = read_release(family, page)
+            check_release(release, event, period)
+        # Whatever a page holds, it costs the run this release, never the run.
+        except (SourceError, ValueError, LookupError, UnicodeError, ArithmeticError) as exc:
+            record.update(status="UNAVAILABLE", reason=failure(exc))
+        else:
+            rows += release_rows(release, retrieved)
+            # Revisions the release states but that did not read cleanly are left out; the record says so.
+            record.update(retrieved_at=retrieved.isoformat(), **(dict(status="DEGRADED", reason=release["note"])
+                                                                   if release["note"] else {}))
+        records.append(record)
+    return rows, records
+
+
+def bls_collection(now, deadline, fetcher):
+    """BLS for one run: the calendar (the file, else its official fallback pages; one source record either way), then
+    the official values of today's releases whose time has passed. The admitted calendar is the only trigger for a
+    release page: no calendar, no release read. Returns `(sources, events, observations)`."""
+    record = source("bls", "BLS calendar", "calendar", BLS, now)
+    try:
+        events, record["url"], record["reason"], retrieved = bls_calendar(now, deadline, fetcher)
+    except (SourceError, ValueError, LookupError, UnicodeError, OverflowError) as exc:
+        record.update(status="UNAVAILABLE", reason=failure(exc))
+        return [record], [], []
+    record.update(retrieved_at=retrieved.isoformat(), coverage_date=now.astimezone(EASTERN).date().isoformat())
+    rows, records = release_actuals(events, now, deadline, fetcher)
+    return [record, *records], events, rows
 
 
 def fed_context(text, now):
@@ -622,12 +679,11 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
     for ident, name, kind, url, request_url in jobs:
         record = source(ident, name, kind, url, now)
         try:
-            if ident == "bls":  # the calendar file, else its official fallback pages: one source record either way
-                events, record["url"], record["reason"], retrieved = bls_calendar(now, deadline, fetcher)
-                record.update(retrieved_at=retrieved.isoformat(),
-                              coverage_date=now.astimezone(EASTERN).date().isoformat())
+            if ident == "bls":
+                sources, events, rows = bls_collection(now, deadline, fetcher)
+                raw["sources"].extend(sources)
                 raw["events"].extend(events)
-                raw["sources"].append(record)
+                raw["observations"].extend(rows)
                 continue
             body = fetcher(request_url, deadline)
             if ident == "treasury":

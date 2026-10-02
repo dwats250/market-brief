@@ -20,6 +20,8 @@ from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from .actuals import CHANGE as PERCENT_CHANGE
+from .actuals import COMBINED, EVENT_TITLE, JOBS, PERCENT, REVISION, period_name
 from .continuity import CARRY_LIMIT, interpretation_record
 from .curve import (
     CHANGE,
@@ -86,6 +88,17 @@ SOURCE_STATUS_LABELS = {"AVAILABLE": "Available", "UNAVAILABLE": "Unavailable", 
 SIGNED_METRICS = {"daily return", "premarket return", "intraday return", "distance from 50DMA"}
 MINUS = "\u2212"
 RATE_UNITS = {"% yield", "bp", SPREAD_UNIT}
+RELEASE_UNITS = {JOBS, PERCENT, PERCENT_CHANGE}
+# The economic release card (Macro & rates): one line per measure in the release's own order. A change pair reads
+# `+0.1% m/m · +3.0% y/y`; payroll revisions read `Jul +21k → −10k` per month and then `Combined −60k`.
+RELEASE_LINES = (("Payrolls", ("nonfarm payroll change",)), ("Unemployment", ("unemployment rate",)),
+                 ("Avg hourly earnings", ("average hourly earnings, monthly change",
+                                          "average hourly earnings, 12-month change")),
+                 ("CPI", ("CPI-U all items, monthly change", "CPI-U all items, 12-month change")),
+                 ("Core CPI", ("CPI-U all items less food and energy, monthly change",
+                               "CPI-U all items less food and energy, 12-month change")))
+PAIR_WORDS = {"monthly change": "m/m", "12-month change": "y/y"}
+SHORT_MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 RATE_METRICS = {LEVEL, CHANGE, SPREAD_LEVEL, SPREAD_CHANGE}
 # The rates module (R9): Treasury's official daily par curve, its spreads, the named move, and a small inline chart.
 CURVE_TITLE = "U.S. Treasury par curve"
@@ -208,8 +221,13 @@ def metric_label(row, session=None):
 
 
 def reader_metric_label(row, session=None):
-    """`twenty-session return` → `20-session return`; `relative to SPY` → `vs SPY · 20 sessions`."""
+    """`twenty-session return` → `20-session return`; `relative to SPY` → `vs SPY · 20 sessions`; a payroll revision
+    names its month and estimates: `Payroll revision, July 2026 (+21k → −10k)`."""
     metric = row.get("metric", "")
+    if metric == REVISION and row.get("revised_month") and "revised_from" in row and "revised_to" in row:
+        return (f"Payroll revision, {period_name(row['revised_month'])} "
+                f"({formatted(dict(row, value=row['revised_from']))} \u2192 "
+                f"{formatted(dict(row, value=row['revised_to']))})")
     if metric.startswith("relative to "):
         return f"vs {metric.removeprefix('relative to ')} · 20 sessions"
     if current_print(row):
@@ -253,9 +271,11 @@ def source_rows(sources):
         reason = s.get("reason") or ""
         if reason.startswith("not automated"):
             reason = NOT_COLLECTED
+        # Degraded is available with a stated gap (a release whose revisions did not read): its values are shown.
         rows.append(dict(s, kind_label="" if redundant else kind,
                          status_label=SOURCE_STATUS_LABELS.get(status, status.title()),
-                         unavailable=status != "AVAILABLE", reason=reason,
+                         unavailable=status not in ("AVAILABLE", "DEGRADED"), degraded=status == "DEGRADED",
+                         reason=reason,
                          retrieved=compact_clock(s.get("retrieved_at", "")),
                          detail=" · ".join(filter(None, (s.get("provider"), s.get("feed"), s.get("data_delay"))))))
     return rows
@@ -265,6 +285,15 @@ def observed_label(value):
     if isinstance(value, str) and "T" in value:
         return pacific_time(value, True)
     return short_date(value) if isinstance(value, str) and value else value
+
+
+def release_clock(row, session):
+    """A release value's official time: `5:30 AM PT` in the session that published it, dated in any other (a carried
+    Friday print on Monday's page never reads as this morning's)."""
+    value = row.get("observed_at") or ""
+    if "T" in value and timestamp(value).astimezone(ET).date().isoformat() != (session or {}).get("date"):
+        return pacific_time(value, True)
+    return compact_clock(value)
 
 
 def compact_clock(value):
@@ -295,14 +324,29 @@ def rate_display(value, unit):
     return f"{sign}{abs(whole)} bp"
 
 
+def release_display(value, unit):
+    """An official release value as BLS prints it: payrolls in whole thousands `+29k`, a rate `4.2%`, a change
+    `+0.1%`, each to its published precision. Presentation only; the row keeps its number."""
+    if unit == JOBS:
+        whole = round(value)
+        return f"{MINUS if whole < 0 else '+' if whole > 0 else ''}{abs(whole):,}k"
+    if unit == PERCENT:
+        return f"{value:.1f}%"
+    tenth = round(value, 1)
+    return f"{MINUS if tenth < 0 else '+' if tenth > 0 else ''}{abs(tenth):.1f}%"
+
+
 def formatted(row):
-    """One number style everywhere: `+0.53%`, `−5.30 pp`, `−6 bp`, `90.02 USD`. A percentage keeps no space
-    before its sign; a unit word keeps one. Negatives carry a true minus, as rates always have."""
+    """One number style everywhere: `+0.53%`, `−5.30 pp`, `−6 bp`, `90.02 USD`, and release values as BLS prints them
+    (`+29k`, `4.2%`, `+0.1%`). A percentage keeps no space before its sign; a unit word keeps one. Negatives carry a
+    true minus, as rates always have."""
     if row.get("value") is None:
         return NO_PRINT
     value, unit = row["value"], row["unit"]
     if unit in RATE_UNITS:
         return rate_display(value, unit)
+    if unit in RELEASE_UNITS:
+        return release_display(value, unit)
     signed = unit in {"pp", "%"}
     # A value that rounds to zero is shown as zero: no sign, no colour.
     if signed and round(value, 2) == 0:
@@ -537,6 +581,42 @@ def rates_module(packet, facts, catalog):
                            notes=notes))
 
 
+def release_cards(rows, events, sources=()):
+    """One card per admitted release, from this run's rows (the observed clock): its official time, family, reference
+    month and values, and the IDs of the calendar events it has now happened for, which leave What matters next."""
+    groups = {}
+    for row in rows:
+        groups.setdefault((row["observed_at"], row["topic"], row["reference_period"]), []).append(row)
+    cards = []
+    for (released, title, period), members in sorted(groups.items()):
+        by_metric = {row["metric"]: row for row in members}
+        lines = []
+        for label, metrics in RELEASE_LINES:
+            present = [by_metric[metric] for metric in metrics if metric in by_metric]
+            if present:
+                lines.append(dict(label=label, values=[" · ".join(
+                    f"{formatted(row)} {PAIR_WORDS[row['metric'].rsplit(', ', 1)[1]]}" if len(metrics) > 1
+                    else formatted(row) for row in present)]))
+        revisions = sorted((row for row in members if row["metric"] == REVISION), key=lambda row: row["revised_month"])
+        combined = [row for row in members if row["metric"] == COMBINED]
+        unread = any(source.get("status") == "DEGRADED" for source in sources
+                     if source["id"] in {row["source_id"] for row in members})
+        if unread and not (revisions or combined):
+            # The release states revisions that did not read cleanly; the card says so instead of looking complete.
+            lines.append(dict(label="Revisions", values=["not read from the release"]))
+        if revisions or combined:
+            lines.append(dict(label="Revisions", values=[
+                *(f"{SHORT_MONTH_NAMES[int(row['revised_month'][5:]) - 1]} "
+                  f"{formatted(dict(row, value=row['revised_from']))} \u2192 "
+                  f"{formatted(dict(row, value=row['revised_to']))}" for row in revisions),
+                *(f"Combined {formatted(row)}" for row in combined)]))
+        happened = [event["id"] for event in events if event.get("scheduled_at") == released
+                    and (EVENT_TITLE.fullmatch(event.get("title") or "") or [None, None])[1] == title]
+        cards.append(dict(time=pacific_time(released), title=title, period=period_name(period), lines=lines,
+                          ids=[row["id"] for row in members], events=happened))
+    return cards
+
+
 def next_update(info, session_date):
     """The scheduler's next checkpoint in reader words, its PT display time, and its absolute scheduled time."""
     clock = pacific_time(info["scheduled_at"])
@@ -612,7 +692,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
             else:
                 label = row.get("title") or row.get("topic") or ref
             result.append(dict(id=ref, label=label, display=formatted(row) if "value" in row else "",
-                               when=compact_clock(row.get("observed_at") or row.get("published_at") or ""),
+                               when=(release_clock(row, session) if row.get("frequency") == "release" else
+                                     compact_clock(row.get("observed_at") or row.get("published_at") or "")),
                                anchor=ref in catalog))
         return result
 
@@ -635,7 +716,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     history_symbols = {h["symbol"] for h in packet["history"]}
     equity = [r for r in facts if r["topic"] in history_symbols or r["frequency"] == "intraday"]
     treasuries = [r for r in facts if r["topic"].startswith("US ") and r["metric"] in RATE_METRICS]
-    other_macro = [r for r in facts if r not in equity and r not in treasuries]
+    releases = [r for r in facts if r["frequency"] == "release"]
+    other_macro = [r for r in facts if r not in equity and r not in treasuries and r not in releases]
     # After a close whose daily bar is not yet published, the retained daily return is two
     # sessions old relative to the completed session and must not pose as today.
     daily_today = not packet.get("history_lag")
@@ -697,9 +779,14 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     retired_watches = [c for c in carried_watches if c not in live_carried and c not in verdicts]
     # A live watch that was also adjudicated keeps its question here and its verdict in What changed.
     live_carried = [dict(c, assessment="", reason="") if c["assessment"] in VERDICTS else c for c in live_carried]
+    # A release whose official values are admitted has happened: its card in Macro & rates is its one home, so it is no
+    # longer listed among the events that matter next.
+    cards = [dict(card, proof=refs(card["ids"], catalog))
+             for card in release_cards(releases, packet["events"], packet["sources"])]
+    happened = {ident for card in cards for ident in card["events"]}
     events = [{**event, "scheduled_label": pacific_time(event["scheduled_at"], True),
                "relation_label": event.get("session_relation", "").lower(), "refs": refs([event["id"]], catalog)}
-              for event in packet["events"][:4]]
+              for event in packet["events"] if event["id"] not in happened][:4]
 
     # What changed: adjudication of the prior accepted state, frozen with the interpretation. Watch verdicts
     # first, then carried relationships with a verdict, then deterministic changes the analyst interpreted. A
@@ -771,7 +858,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     # Market sections this edition could not fill. Cuttingboard is optional context, not market coverage,
     # so its absence is stated in Technical details rather than listed here.
     omitted = []
-    rates_present = bool(yields or module["curve"] or other_macro or narrative["sections"]["macro"])
+    rates_present = bool(yields or module["curve"] or other_macro or narrative["sections"]["macro"] or cards)
     if not rates_present:
         # Metals share the section; when they still render, only the rates half is missing.
         omitted.append("Treasury rates" if metal_rows else "Macro & rates")
@@ -829,7 +916,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     evidence_rows = [dict(r, display=formatted(r) if "value" in r else r["title"],
                           metric_label=(reader_metric_label(r, session) if r.get("metric")
                                         else "Published / scheduled item"),
-                          when=compact_clock(r.get("observed_at") or r.get("published_at") or ""),
+                          when=(release_clock(r, session) if r.get("frequency") == "release" else
+                                compact_clock(r.get("observed_at") or r.get("published_at") or "")),
                           source_name=source_names.get(r.get("source_id"), r.get("source_id", "")),
                           status_label=SOURCE_STATUS_LABELS.get(r.get("status", ""), (r.get("status") or "").title()))
                      for r in catalog.values()]
@@ -912,7 +1000,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
                       rows=mega_rows, change_label=mega_change, asof=mega_asof, proof=proof(mega_rows),
                       spread_label="20-session return spread vs QQQ",
                       lookback={s: v for s, v in packet.get("lookback", {}).items() if v["r20"] != "available"}),
-        macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]],
+        macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]], releases=cards,
                    yields=yields, yields_asof=module["asof"], curve=module["curve"], facts=other_macro,
                    yields_proof=refs(module["proof_ids"], catalog),
                    facts_proof=refs([row["id"] for row in other_macro], catalog)),
@@ -1005,8 +1093,13 @@ def markdown(view):
     lines.append("")
     mac = view["macro"]
     cross = view["cross_asset"]
-    if mac["paragraphs"] or mac["curve"] or mac["facts"] or cross["rows"]:
+    if mac["paragraphs"] or mac["releases"] or mac["curve"] or mac["facts"] or cross["rows"]:
         lines += ["## Macro & rates", ""]
+        for card in mac["releases"]:
+            lines += [f"**ECONOMIC RELEASE** · {card['time']} · {esc(card['title'])} · {esc(card['period'])}", ""]
+            # One `·` between a label and its values; months and their estimates are separated by `;`.
+            lines += [f"- {line['label']} · " + "; ".join(line["values"]) for line in card["lines"]]
+            lines.append("")
         if mac["curve"]:
             curve = mac["curve"]
             dated = not mac["yields_asof"]

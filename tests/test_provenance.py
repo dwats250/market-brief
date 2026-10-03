@@ -85,7 +85,7 @@ def test_each_instrument_group_is_independently_disclosed():
     assert not any("open" in tag for tag in re.findall(r'<details class="ledger-group"[^>]*>', ledger))
     # A ledger row lives inside exactly one instrument group.
     for group_html in re.findall(r'<details class="ledger-group".*?</details>', ledger, re.S):
-        assert group_html.count('class="ledger"') >= 1
+        assert len(re.findall(r'class="ledger(?: item)?"', group_html)) >= 1  # a headline row is `ledger item`
 
 
 def test_table_provenance_is_a_local_summary_not_a_dump():

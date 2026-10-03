@@ -172,7 +172,9 @@ def test_a_flag_renders_only_when_its_instrument_is_not_already_in_the_story():
     _, page = render(packet, value)
     flags = re.findall(r'<ul class="flags">.*?</ul>', page, re.S)
     assert flags and "<b>NVDA</b>" not in flags[0]  # the summary cites NVDA's row
-    assert "<b>Industrials · XLI</b>" in flags[0]
+    # The flag names its instrument on its own line, as the tables do: the name, then the muted ticker.
+    named = '<b>Industrials</b><span class="ticker">XLI</span>'
+    assert f'<li><span class="instrument">{named}</span>' in flags[0] and f"<td>{named}" in page
     # Cite the industrials row in the lead and nothing is left to flag: the eyebrow goes too.
     value["summary"][0]["evidence_ids"].append("XLI-daily")
     _, page = render(packet, value)
@@ -182,6 +184,16 @@ def test_a_flag_renders_only_when_its_instrument_is_not_already_in_the_story():
     value["summary"][0]["text"] = "Industrials led the fictional day while growth kept its lead."
     _, page = render(packet, value)
     assert 'class="flags"' not in page
+    # A metals flag takes the Metals table's name, never the bare ticker; Markdown keeps `Name · TICKER`.
+    value = narrative()
+    value["attention"] = [{"id": "attention-GDX-spread", "why": "The spread tests any gold-led story."}]
+    value["summary"], value["watches"] = value["summary"][:1], value["watches"][:1]
+    value["take"] = dict(value["take"], text="", evidence_ids=[])
+    md, page = render(packet, value)
+    named = '<b>Gold miners</b><span class="ticker">GDX</span>'
+    assert f'<li><span class="instrument">{named}</span>' in page and f"<td>{named}" in page
+    assert "- **Gold miners · GDX** — " in md
+    value = narrative()
     # The frozen selection is untouched: attention is still recorded in full.
     view = presentation(packet, value)
     assert view["technical"] and len(narrative()["attention"]) == 2

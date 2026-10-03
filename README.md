@@ -74,6 +74,7 @@ Rendered fictional examples live in `examples/editions/`. They are replays of th
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Brief schema](docs/BRIEF_SCHEMA.md)
+- [Visual language](docs/VISUAL_LANGUAGE.md)
 - [Data sources](docs/DATA_SOURCES.md)
 - [Cuttingboard boundary](docs/CUTTINGBOARD_BOUNDARY.md)
 - [Project state](PROJECT_STATE.md)

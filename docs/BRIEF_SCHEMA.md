@@ -104,6 +104,8 @@ consensus only when both observations have sources.
 
 ## Visual direction
 
+The standing visual grammar is `docs/VISUAL_LANGUAGE.md`; this section is the original brief it grew from.
+
 Use an editorial note layout: warm off-white paper, dark charcoal body text, one
 muted teal accent, amber for limitations, fine rules, and generous line-height
 within a compact page. Serif headline, system sans-serif body, tabular numerals

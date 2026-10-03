@@ -74,7 +74,9 @@ def test_populated_sections_still_render_in_reading_order():
     # Attention items and today's event live inside What matters next, not in their own sections. NVDA is
     # already the summary's and a watch's subject, so only the industrials trigger earns a flag.
     matters = page.split("<h2>What matters next</h2>", 1)[1].split("</section>", 1)[0]
-    assert '<li><b>Industrials · XLI</b>' in matters and '<li><b>NVDA</b>' not in matters
+    flagged = '<li><span class="instrument"><b>{}</b>'
+    assert flagged.format('Industrials') + '<span class="ticker">XLI</span></span>' in matters
+    assert flagged.format('NVDA') not in matters
     assert "Fictional manufacturing survey" in matters
     assert "On the attention list" not in page and "Event risk" not in page
 

@@ -56,7 +56,7 @@ MISMATCH = "take text and evidence must be both present or both empty"
 # The template's <style> block after the editorial compression pass (no pill, no figure strip, no-wrap numbers,
 # flexible tables up to 767 px, the retired-watch drawer); The Take adds no CSS of its own. The economic release card
 # (Macro & rates) adds one rule set: `.release`, `.release-title`, `.release-values` (labels stack below 360 px).
-STYLE_SHA256 = "eb38eef1ab28d08de2a86efa167772aeb5bc0da609c25a1a24676cb40cad7382"
+STYLE_SHA256 = "06f81dd58c0cd1f70a47e7b30ffc3edd1818e87d76f21cdfbe1c2820cef004a9"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):
@@ -382,6 +382,26 @@ def test_the_take_renders_last_in_the_read():
     assert lines[index - 1] == "" and lines[index + 1] == ""
     assert lines[index + 2] == "Missing: current prints unavailable."
     assert lines[index - 2].startswith(view["summary"][-1]["text"][:40])
+
+
+@pytest.mark.parametrize("written,shown", [
+    # The published 2026-10-02 take: a bare label glued to the last sentence.
+    ("QQQ falling back to SPY's pace would show it wrong.(QQQ lead)",
+     "QQQ falling back to SPY's pace would show it wrong."),
+    ("Growth stays in charge this session. (QQQ lead)", "Growth stays in charge this session."),
+    # Prose in brackets, an aside with its own full stop, and a cited figure are the analyst's words: they stay.
+    ("Growth leads (narrowly) this session.", "Growth leads (narrowly) this session."),
+    ("Growth leads. (It did on Monday too.)", "Growth leads. (It did on Monday too.)"),
+    ("Growth leads SPY. ({{QQQ-spread20}})", "Growth leads SPY. (+1.87 pp)"),
+])
+def test_a_bare_label_after_the_takes_last_sentence_is_not_shown(written, shown):
+    """Presentation only: the saved narrative keeps what the analyst wrote, and no synthesis rule changes."""
+    packet, value = fixture_packet(), with_take(text=written)
+    assert presentation(packet, value)["take"]["text"] == shown
+    md, page = render(packet, value)
+    assert f"**The take:** {shown.replace(chr(39), '&#x27;')} [evidence]" in md
+    assert f"<b>The take:</b> {shown.replace(chr(39), '&#39;')} <details" in page
+    assert value["take"]["text"] == written
 
 
 @pytest.mark.parametrize("empty", ["missing", "blank", "whitespace"])

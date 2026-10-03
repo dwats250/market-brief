@@ -189,6 +189,22 @@ release that has already happened (unchanged behaviour for past events; rejectin
 a shutdown-delayed release that revises other than the two prior months shows its values without revisions; and
 `fetch` checks its deadline between attempts, not while a slow body arrives.
 
+**Visual planes pass (2026-10-03, branch `feat/visual-planes`; review and proof in the Market Brief project:
+`visual-design-review-2026-10-03`).** Presentation only; the information architecture, content, prompt, schema,
+validator and cadence are unchanged. Four kinds of content had one look (ink on paper, a hairline between). Each
+now has one signature, recorded in `docs/VISUAL_LANGUAGE.md`: narrative stays on the page; checkable facts (the
+release card, opened `§` evidence, a targeted ledger row) sit on one inset surface that bleeds into the gutter
+while the text holds the column edge; live watches carry a 2px teal gutter rule in place of hairlines (grey once
+retired); the rates table, spreads and caption share the chart's 560 px. Hairlines between flags and events, the
+line over "Earlier watches" and the guide's bottom line are gone; What changed uses square gutter markers; every
+drawer uses the ledger's ▸/▾; spacing has three tiers (inside a component, 24 px between components, 32 px between
+subsections); a flag names its instrument as the tables do. Tokens: `--surface` (light = the `--notice` value,
+dark `#1b2224`), `--hang` (16 px, 12 px on phones), and a light `--paper` one step darker (`#e2dac6`). Three
+defects fixed with it: a headline evidence row no longer overflows a phone, a bare label after the take's last
+sentence is not shown, and a targeted ledger row in dark sits on the surface (faint text 4.2:1 → 5.5:1). Checked at
+320, 390 and 1280 px in both themes with every drawer open. `examples/` and `publish/index.html` are not
+regenerated here: the scheduler's next run renders the page under the new template.
+
 ## Next
 
 BLS release actuals: after merge, the next run on a release day (the next is the CPI, Wednesday 2026-10-14, 8:30 AM ET)

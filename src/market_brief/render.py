@@ -136,6 +136,9 @@ GUIDE_MOVES = (*SENTENCES.items(),
 # `—`: structurally not applicable. `not collected`: the source or input is not automated.
 NO_PRINT = "no print"
 NOT_APPLICABLE = "—"
+# A bare label left after the take's last sentence ("…would show it wrong.(QQQ lead)") is not reader prose. Only
+# a short run of words with no figure and no sentence of its own qualifies; a cited value or an aside stays.
+TRAILING_TAG = re.compile(r"(?<=[.!?])\s*\([A-Za-z][A-Za-z '’&/-]{0,39}\)\s*$")
 NOT_COLLECTED = "not collected"
 # Rows whose print is this far behind the table's shared clock carry their own clock.
 SHARED_CLOCK_TOLERANCE = timedelta(minutes=5)
@@ -834,8 +837,9 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
 
     attention_why = {item["id"]: item["why"] for item in narrative.get("attention", [])}
     attention = [{**a, "why": attention_why.get(a["id"], ""), "trigger": trigger_tag(a["reason"]),
-                  "display_symbol": (f"{SECTOR_LABELS[a['symbol']]} · {a['symbol']}"
-                                     if a["symbol"] in SECTOR_LABELS else a["symbol"]),
+                  # The table's naming: the name, then the ticker; Markdown keeps `Name · TICKER` in one string.
+                  "label": SECTOR_LABELS.get(a["symbol"]) or INSTRUMENT_LABELS.get(a["symbol"], a["symbol"]),
+                  "display_symbol": instrument_label(a["symbol"]),
                   "date_label": short_date(a.get("date")), "refs": refs(a["evidence_ids"])}
                  for a in interpretation["attention"] if not covered(a["symbol"])]
     since_note = ""
@@ -913,7 +917,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
         truth = (f"LIVE COMMISSIONING RUN — collected {pacific_time(actual_started_at)}{phase}, "
                  "not a scheduled checkpoint.")
     source_names = {s["id"]: s["name"] for s in packet["sources"]}
-    evidence_rows = [dict(r, display=formatted(r) if "value" in r else r["title"],
+    # A row with no measurement shows its headline as the value: `item` lets the page stack and wrap it.
+    evidence_rows = [dict(r, display=formatted(r) if "value" in r else r["title"], item="value" not in r,
                           metric_label=(reader_metric_label(r, session) if r.get("metric")
                                         else "Published / scheduled item"),
                           when=(release_clock(r, session) if r.get("frequency") == "release" else
@@ -937,7 +942,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
     # The take is interpretation-clock prose, so a carried page shows it at the values its analyst saw. An empty
     # take, or a narrative frozen before the take existed, renders nothing at all.
     take = narrative.get("take") or {}
-    take = (dict(text=expand(take["text"].strip()), evidence_ids=take["evidence_ids"],
+    take = (dict(text=TRAILING_TAG.sub("", expand(take["text"].strip())), evidence_ids=take["evidence_ids"],
                  refs=refs(take["evidence_ids"])) if take.get("text", "").strip() else None)
     # Three clocks, each saying what it measures. Prices: the latest current equity print across the page's tables
     # (the latest of their own "as of" clocks), else the prior close they are dated to. Analysis: when the carried

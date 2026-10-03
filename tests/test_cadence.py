@@ -600,11 +600,20 @@ def test_secondary_text_keeps_readable_contrast_in_both_themes():
         assert contrast(tokens["faint"], paper) < contrast(tokens["muted"], paper)  # still the quieter tone
         for token in ("teal", "positive", "negative", "amber", "neutral"):
             assert contrast(tokens[token], paper) >= 4.5, token
-    # Light text also sits on the notice ground (notices, a targeted ledger row): every text token clears 4.5:1 there.
-    for token in ("ink", "muted", "faint", "teal", "positive", "negative", "amber", "neutral"):
+    text_tokens = ("ink", "muted", "faint", "teal", "positive", "negative", "amber", "neutral")
+    # Light text also sits on the notice ground: every text token clears 4.5:1 there.
+    for token in text_tokens:
         assert contrast(light[token], light["notice"]) >= 4.5, token
-    # The retuned light set (R4) and its muted-teal accent, not the #35 brown.
-    assert light["paper"] == "#e6dfcc" and light["teal"] == "#3f6660"
+    # The inset surface holds checkable facts (the release card, opened evidence, a targeted ledger row). It moves
+    # away from the ink in both themes, lighter in light and darker in dark, so text on it never loses contrast,
+    # and it stays distinguishable from the page.
+    for tokens in (light, dark):
+        for token in text_tokens:
+            assert contrast(tokens[token], tokens["surface"]) >= contrast(tokens[token], tokens["paper"]), token
+        assert contrast(tokens["surface"], tokens["paper"]) >= 1.07
+    # The retuned light set (R4) and its muted-teal accent, not the #35 brown. The paper is one step darker than
+    # R4's #e6dfcc (2026-10-03): it read as near white on a phone. It is the darkest the 4.5:1 floors allow.
+    assert light["paper"] == "#e2dac6" and light["teal"] == "#3f6660"
 
 
 def phone_layout_width(page, tmp_path, width=390):
@@ -629,6 +638,22 @@ def phone_layout_width(page, tmp_path, width=390):
     found = re.search(r"RIGHT=(\d+)", result.stdout)
     assert found, result.stderr[-500:]
     return int(found.group(1))
+
+
+def test_a_headline_evidence_row_wraps_inside_a_phone(tmp_path):
+    """A row with no measurement shows its headline as the value. Opened on a phone it stacks under its label and
+    wraps; as a no-wrap cell beside the label it pushed the page 460 px past the screen (2026-10-02)."""
+    packet = fixture_packet()
+    packet["events"][0]["title"] = ("Federal Reserve Board announces it will extend, until November 4, the comment "
+                                    "period on its proposal to modernize Regulation O")
+    _, page = render(packet, narrative())
+    assert '<div class="ledger item" id="evidence-sample-event">' in page
+    assert '<div class="ledger" id="evidence-QQQ-daily">' in page  # a measured row keeps its one-line form
+    opened = page.replace("<details", "<details open")
+    for width in (390, 320):
+        assert phone_layout_width(opened, tmp_path, width) <= width
+    # The probe sees the old failure: the same row without its class overflows.
+    assert phone_layout_width(opened.replace('class="ledger item"', 'class="ledger"'), tmp_path) > 390
 
 
 def test_phone_width_has_no_horizontal_overflow(tmp_path):

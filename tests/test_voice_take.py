@@ -56,7 +56,9 @@ MISMATCH = "take text and evidence must be both present or both empty"
 # The template's <style> block after the editorial compression pass (no pill, no figure strip, no-wrap numbers,
 # flexible tables up to 767 px, the retired-watch drawer); The Take adds no CSS of its own. The economic release card
 # (Macro & rates) adds one rule set: `.release`, `.release-title`, `.release-values` (labels stack below 360 px).
-STYLE_SHA256 = "06f81dd58c0cd1f70a47e7b30ffc3edd1818e87d76f21cdfbe1c2820cef004a9"
+# A Degraded source status wraps like an Unavailable one (2026-10-12: `.source-status.degraded`, no colour or weight),
+# so a reason that names missing symbols cannot push the Sources drawer past a phone's width.
+STYLE_SHA256 = "4bd45659c3361040f43e2bbeac92bbc5aaac6e519b8e2a636ebe80c7c4c9eec6"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):

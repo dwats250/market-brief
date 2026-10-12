@@ -586,7 +586,10 @@ def _alpaca_intraday(payload, histories, now, retrieved_at, source_id):
         if symbol not in by_symbol or not finite_number(price) or not finite_number(close) or not observed_at:
             continue
         when = timestamp(observed_at)
-        if when.date() != now.date() or when > now:
+        # Bounded by the response that reported the trade, not the run's start: the snapshot is requested seconds
+        # after the run begins, and the busiest tickers almost always trade in that gap (W41: SPY absent on 20 of
+        # 35 in-session pages, none at the close). A trade later than its own response is a clock fault.
+        if when.date() != now.date() or when > retrieved_at:
             continue
         value = 100 * (price / close - 1) if close else None
         if value is None or not finite_number(value):
@@ -613,13 +616,14 @@ def alpaca_probe(now, symbols=("SPY", "QQQ"), key_id=None, secret_key=None, fetc
         "end": now.date().isoformat(), "limit": 10000 if len(symbols) > 2 else 200,
         "adjustment": "split", "feed": "iex", "sort": "asc",
     }, deadline, key_id, secret_key)
+    snapped = datetime.now(timezone.utc)
     histories = _alpaca_history(bars, now, retrieved, "alpaca-daily")
     return dict(authenticated=True, provider="Alpaca Trading API", plan="Basic", feed="IEX",
                 snapshot_symbols=sorted(snapshots), historical_symbols=sorted(h["symbol"] for h in histories),
                 historical_sessions={h["symbol"]: len(h["dates"]) for h in histories},
                 historical_ranges={h["symbol"]: [h["dates"][0], h["dates"][-1]] for h in histories},
                 intraday_symbols=sorted(r["topic"] for r in _alpaca_intraday(
-                    snapshots, histories, now, retrieved, "alpaca-iex")),
+                    snapshots, histories, now, snapped, "alpaca-iex")),
                 retrieved_at=retrieved.isoformat())
 
 
@@ -657,7 +661,7 @@ def alpaca_collect(now, symbols=ALPACA_UNIVERSE, key_id=None, secret_key=None):
         snapshots = _alpaca_request("/v2/stocks/snapshots", {
             "symbols": ",".join(symbols), "feed": "iex",
         }, deadline, key_id, secret_key)
-        observations = _alpaca_intraday(snapshots, histories, now, retrieved, "alpaca-iex")
+        observations = _alpaca_intraday(snapshots, histories, now, datetime.now(timezone.utc), "alpaca-iex")
         intraday["coverage_symbols"] = len(observations)
         if not observations:
             intraday.update(status="UNAVAILABLE", reason="no current IEX trade timestamps returned")

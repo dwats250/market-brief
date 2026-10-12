@@ -205,7 +205,11 @@ sentence is not shown, and a targeted ledger row in dark sits on the surface (fa
 320, 390 and 1280 px in both themes with every drawer open. `examples/` and `publish/index.html` are not
 regenerated here: the scheduler's next run renders the page under the new template.
 
+**Evidence cutoff after collection (2026-10-11, branch `fix/evidence-cutoff-after-collection`).** The W41 reconciliation counted a mean of 14.6 of 21 current prints on 35 in-session pages. NVDA was missing on 25, AAPL on 22, SPY on 20 and XLRE on 2, and every close page had 21. The cause was the cutoff, not the provider. `cli.run` used the run's start as the evidence cutoff, and `_alpaca_intraday` dropped any trade stamped after it. The IEX snapshot is requested seconds later, after Treasury, BLS, Fed and the daily bars, so the busiest tickers' latest trade was nearly always "future" and was discarded without a coverage note. Now the cutoff is when collection finished, and a trade is bounded by its own snapshot response, which becomes its `retrieved_at`. Collection still runs on the start time, and `collection_started_at` and "Generated UTC" keep it. No source, admission rule, schema, prompt or cadence change. `tests/test_evidence_cutoff.py` reproduces the drop and the rejection.
+
 ## Next
+
+Evidence cutoff after collection: after merge, in-session pages should carry 21 of 21 current prints (or name a stale or missing one in Coverage limitations). Technical details should read an evidence cutoff a few seconds after Generated UTC. If SPY, NVDA or AAPL still go missing at mid-session, the cause is elsewhere: reopen with the run archive's `evidence.json`.
 
 BLS release actuals: after merge, the next run on a release day (the next is the CPI, Wednesday 2026-10-14, 8:30 AM ET)
 should show the `Economic release` card at the top of Macro & rates from the premarket on, `BLS Consumer Price Index ·

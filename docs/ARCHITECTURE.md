@@ -82,8 +82,11 @@ UCO is a leveraged fund, not crude oil.
 
 ## Freshness and source failures
 
-Set one `target_time` at run start. Collect within five minutes. Intraday
-observations after that cutoff are excluded or require a new target/run. For
+Set one `target_time` when collection finishes; the run's start stays
+`collection_started_at`, and collection runs on it. Collect within five minutes.
+Intraday observations after that cutoff are excluded or require a new target/run.
+(Until 2026-10-11 the cutoff was the run's start, which made a trade reported
+during collection "future" and dropped the busiest tickers' current prints.) For
 premarket v0, accept timestamped delayed prices up to 20 minutes old, visibly
 labeled DELAYED; this is a design tolerance, not an assertion of real-time access.
 Quotes of unknown age are UNKNOWN, not current. Baseline spreads need compatible

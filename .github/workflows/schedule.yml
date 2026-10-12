@@ -212,7 +212,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
       - name: Publish latest successful brief
+        # GitHub can refuse a push server-side with main unmoved (2026-10-12 OPEN_1M: "fatal error in commit_refs";
+        # the next run's push, unchanged, landed). Only this run's own commit is pushed again, never forced: up to three
+        # attempts, 10 s then 20 s apart, while main is still the commit this run checked out. If main has moved (anything
+        # else was pushed), the step stops at once and the newer main stands. If main is already this commit (a refusal
+        # reported after the ref moved), it is published. Any failure lands after the continuity upload, so the run stays
+        # restorable; the step timeout fails the run rather than letting the job be cancelled (not restorable).
         if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true
+        timeout-minutes: 3
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
@@ -221,7 +228,23 @@ jobs:
             echo "No publishable changes"
           else
             git commit -m "Publish ${{ steps.checkpoint.outputs.label }} brief"
-            git push
+            base=$(git rev-parse HEAD^)
+            own=$(git rev-parse HEAD)
+            for attempt in 1 2 3; do
+              if git push; then exit 0; fi
+              remote=$(git ls-remote origin refs/heads/main | cut -f1) || remote=""
+              if [ "$remote" = "$own" ]; then
+                echo "Published: main is this run's commit despite the refusal"
+                exit 0
+              fi
+              if [ -n "$remote" ] && [ "$remote" != "$base" ]; then
+                echo "NOT PUBLISHED / main moved to $remote after this run's checkout; it is not overwritten"
+                exit 1
+              fi
+              if [ "$attempt" -lt 3 ]; then sleep $((attempt * 10)); fi
+            done
+            echo "NOT PUBLISHED / push refused three times; main keeps the page it had"
+            exit 1
           fi
       - name: Deploy only the page main holds
         # The checkout is main as it was at dispatch. A run that skipped a checkpoint an earlier run published (a

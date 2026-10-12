@@ -636,17 +636,20 @@ def next_update_label(info, session_date):
     return next_update(info, session_date)["text"]
 
 
-def since_caption(anchors):
-    """`vs the previous close · Fri, Sep 11` or `vs premarket and the 7:00 AM update`."""
+def since_caption(anchors, unpublished=()):
+    """`vs the previous close · Fri, Sep 11` or `vs premarket and the 7:00 AM update`. An anchor that was collected
+    but never published reads `the unpublished 6:32 AM PT refresh`: readers never saw it, though it is still what
+    the comparison was made against."""
     if "previous_close" in anchors:
         return f"vs the previous close · {short_date(anchors['previous_close']['session_date'])}"
     parts = []
     for name, anchor in anchors.items():
+        hidden = "unpublished " if name in unpublished else ""
         if name == "premarket":
-            parts.append("premarket")
+            parts.append(f"the {hidden}premarket" if hidden else "premarket")
         else:
             noun = "refresh" if CHECKPOINT_KINDS.get(anchor.get("checkpoint")) == "refresh" else "update"
-            parts.append(f"the {pacific_time(anchor['evidence_cutoff'])} {noun}")
+            parts.append(f"the {hidden}{pacific_time(anchor['evidence_cutoff'])} {noun}")
     return "vs " + " and ".join(parts) if parts else None
 
 
@@ -967,7 +970,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
         clocks = [dict(label="Prices", text=prices, anchor=True), dict(label="Analysis", text=analysis)]
     clocks.append(dict(label="Next", text=next_label, next_at=upcoming["at"], next_when=upcoming["when"],
                        grace_minutes=int(OVERDUE_GRACE.total_seconds() // 60)))
-    since_label = since_caption(anchors)
+    since_label = since_caption(anchors, prior.get("unpublished", ()) if available else ())
     if since_label and carried:
         # A carried page's comparisons end where its analysis was written, not at this refresh.
         since_label += f" · through the {interpretation_clock} analysis"

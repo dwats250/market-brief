@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -296,8 +297,11 @@ def run(args):
     if bundle_note and prior["status"] != "available":
         prior["reason"] = f"{prior['reason']}; {bundle_note}" if prior["reason"] else bundle_note
     comparisons = compare_all(prior, packet)
+    page = Path(RUN_ROOT) / "publish" / "index.html"
     packet["continuity"] = dict(status=prior["status"], reason=prior["reason"], anchors=prior["anchors"],
-                                comparisons=comparisons)
+                                comparisons=comparisons,
+                                unpublished=unpublished_anchors(prior["anchors"],
+                                                                page.read_text() if page.is_file() else ""))
     write_json(folder / "evidence.json", packet)
     evidence_hash = digest(packet)
     context, interpretation, interpretation_note = None, None, ""
@@ -501,6 +505,28 @@ def restore_continuity(args, runner=subprocess.run):
         print(f"Continuity: restore failed ({type(exc).__name__}); stopping before collection.")
         return 2
     return 0
+
+
+EVIDENCE_CUTOFF_ATTRIBUTE = re.compile(r'<html[^>]*\sdata-evidence-cutoff="([^"]+)"')
+
+
+def unpublished_anchors(anchors, page):
+    """The same-session anchors that were collected and accepted but never reached readers.
+
+    `page` is the page main holds in this run's checkout (`publish/index.html`), the newest one published. An anchor
+    whose evidence cutoff is later than that page's was accepted (its continuity upload proves it) and then not
+    published, for example when the push was refused (2026-10-12 OPEN_1M). The anchor stays the analytical
+    comparison; only its reader wording changes. A page without the attribute, or no page, decides nothing.
+    """
+    match = EVIDENCE_CUTOFF_ATTRIBUTE.search(page or "")
+    if not match:
+        return []
+    try:
+        published = timestamp(match.group(1))
+        return [slot for slot, anchor in anchors.items() if slot != "previous_close"
+                and timestamp(anchor["evidence_cutoff"]) > published]
+    except (KeyError, TypeError, ValueError):
+        return []
 
 
 def completed_in_bundle(root, session_date, checkpoint):

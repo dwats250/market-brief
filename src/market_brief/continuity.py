@@ -830,6 +830,9 @@ def interpretation_record(packet, narrative, context=None, app_version="", conte
         narrative=narrative, evidence=evidence,
         prior_state=dict(status=prior.get("status", "cold_start"), reason=prior.get("reason", ""),
                          anchors=prior.get("anchors", {}),
+                         # Anchors accepted but never published (cli.unpublished_anchors): reader wording only, frozen
+                         # here so every refresh under this interpretation says the same. Not in the analyst context.
+                         unpublished=list(packet.get("continuity", {}).get("unpublished", [])),
                          # A carried watch keeps its question and the criteria that test it; a record frozen
                          # before the criteria were kept renders the question alone.
                          watches=[{key: watch[key] for key in ("id", "lifecycle", "evaluability", "hypothesis",

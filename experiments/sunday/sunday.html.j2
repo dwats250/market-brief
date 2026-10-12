@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en" data-edition="WEEK_AHEAD" data-snapshot="{{ snapshot }}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>{{ edition.headline }} · Market Brief · Week ahead</title>
+<style>{{ css|safe }}
+/* Week ahead prototype: additions only, in the production tokens. */
+.prototype{border-left:2px solid var(--amber);padding:2px 0 2px 12px;margin:14px 0 0 calc(-1 * var(--hang));color:var(--muted);font-size:13px;line-height:1.45}
+.day{display:block;font-size:11px;font-weight:650;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:28px 0 6px}
+.event{margin:0 0 18px}.event .when{display:block;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;margin-bottom:2px}
+.event .title{font-weight:650}.event .consensus{font-size:13px;color:var(--muted);margin:3px 0 0}.event .consensus span{display:block}
+.event dl.tests{margin-top:6px}
+.outcomes{margin:2px 0 0;padding:0;list-style:none;font-size:14.5px;line-height:1.5}.outcomes li{margin:0 0 3px}
+.spot h3,.lab h3,.scenario h3{font:600 20px/1.25 Georgia,"Iowan Old Style",Charter,"Times New Roman",serif;margin:26px 0 8px}
+.lab .meta,.scenario .meta{display:block;font-size:12px;color:var(--muted);margin:-4px 0 6px}
+.since-chart{max-width:560px;padding:0 16px;margin:14px 0 4px}.since-chart>svg{display:block;overflow:visible}
+.since-chart .real line{stroke:var(--teal);stroke-width:2;stroke-linecap:round}
+.since-chart .be line{stroke:var(--faint);stroke-width:1.5;stroke-dasharray:4 4}
+.since-chart .grid line{stroke:var(--rule);stroke-width:1}.since-chart .grid line.zero{stroke:var(--rule-strong)}
+.since-chart text{font-size:11px;fill:var(--muted);font-variant-numeric:tabular-nums}
+</style></head><body><main>
+{% macro proof_lines(refs) -%}<span class="refs">{% for r in refs %}<span class="ref"><a href="#evidence-{{ r.id }}">{{ r.label }}</a><b>{{ r.display }}</b><small>{{ r.when }}</small></span>{% endfor %}<span class="more"><a href="#evidence-ledger">Full evidence ledger</a></span></span>{%- endmacro %}
+{% set cite = namespace(labelled=false) %}
+{% macro marker(refs) -%}{% if refs %}<details class="cite"><summary aria-label="Supporting evidence" title="Supporting evidence">{% if not cite.labelled %}{% set cite.labelled = true %}§ evidence{% else %}§{% endif %}</summary>{{ proof_lines(refs) }}</details>{% endif %}{%- endmacro %}
+{% macro paragraph(p) -%}<div class="para">{{ p.text }} {{ marker(p.refs) }}</div>{% if p.uncertainty %}<p class="fine">Caveat: {{ p.uncertainty }}</p>{% endif %}{% if p.alternative %}<p class="fine">Could also be: {{ p.alternative }}</p>{% endif %}{%- endmacro %}
+{% macro num(row, klass='') -%}<td class="number {{ klass }} direction-{{ row.direction }}">{{ row.display }}</td>{%- endmacro %}
+<div class="masthead"><b class="masthead-title">Market Brief</b><span>Week of Oct 12–16</span></div>
+<div class="status-line">Week ahead · prototype · not published</div>
+<dl class="clocks">
+<div class="clock anchor"><dt>Prices</dt><dd>Fri, Oct 9 close</dd></div>
+<div class="clock"><dt>Curve</dt><dd>Fri, Oct 9 · official daily · next Tue evening (bond holiday)</dd></div>
+<div class="clock"><dt>Futures</dt><dd>Not collected · no timestamped print after the reopen</dd></div>
+<div class="clock"><dt>Analysis</dt><dd>Mon, Oct 12, 1:00 AM PT · prototype (target Sun 4:00 PM PT)</dd></div>
+<div class="clock"><dt>Next</dt><dd>Mon, Oct 12, 6:00 AM PT · premarket</dd></div>
+</dl>
+<p class="prototype">Prototype edition built from a one-time evidence snapshot ({{ evidence_count }} rows, collected {{ collected_utc }}). Interpretation written in a working session, not by Market Brief's scheduled analyst; no paid model call. Not published to the production page.</p>
+<h1>{{ edition.headline }}</h1>
+<div class="dek">{{ edition.dek.text }} {{ marker(edition.dek.refs) }}</div>
+<div class="read">{% for p in edition.thesis %}<div class="entry{% if not loop.first %} apart{% endif %}">{{ paragraph(p) }}</div>{% endfor %}<div class="para"><b>The take:</b> {{ edition.take.text }} {{ marker(edition.take.refs) }}</div></div>
+
+<section><h2>The week's calendar</h2>
+<p class="sub">Selected for exposure, not by an aggregator's impact flag. Times ET, then Vancouver (UTC−7). Consensus is not an official figure: FF is Forex Factory's own aggregation and TE is Trading Economics, both read Oct 11.</p>
+{% for day in days %}<span class="day">{{ day.day }}</span>
+{% for e in day.events %}<div class="event"><span class="when">{{ e.clock }}</span><div class="title">{{ e.item.title }}</div>
+{% if e.item.consensus %}<div class="consensus">{% for c in e.item.consensus %}<span>Consensus: {{ c.label }} <small>· {{ c.source }}</small></span>{% endfor %}{% if e.item.prior %}<span>Prior: {{ e.item.prior }}</span>{% endif %}</div>{% endif %}
+<dl class="tests"><dt>Exposed</dt><dd>{{ e.exposed }}</dd><dt>Why</dt><dd>{{ e.why }}</dd></dl>{% if e.outcomes %}<ul class="outcomes">{% for o in e.outcomes %}<li><b>{{ o.case }}:</b> {{ o.implies }}</li>{% endfor %}</ul>{% endif %}</div>
+{% endfor %}{% endfor %}
+</section>
+
+<section><h2>Rates &amp; cross-market</h2>
+<p class="sub">{{ edition.rates_note }}</p>
+<div class="caption">U.S. Treasury par curve<span>Fri, Oct 9 vs Fri, Oct 2 · official daily observations</span></div>
+<table class="narrow-first rates"><thead><tr><th>Maturity</th><th class="number">Yield</th><th class="number">Week change</th></tr></thead><tbody>
+{% for y in yields %}<tr><td><b>{{ y.maturity }}</b></td><td class="number primary direction-neutral">{{ y.level.display }}</td><td class="number direction-neutral">{{ y.change.display }}</td></tr>{% endfor %}
+</tbody></table>
+<dl class="spreads">{% for s in spreads %}<dt>{{ s.name }}<br><small>{{ s.definition }}</small></dt><dd>{{ s.level.display }} · {{ s.change.display }} on the week</dd>{% endfor %}</dl>
+<p class="curve-move"><b>{{ move.label }}</b> — {{ move.sentence }}{% if move.note %} {{ move.note }}{% endif %} (the curve module's daily classifier, applied to the week.)</p>
+{% if nominal_chart %}{% set chart = nominal_chart %}<div class="curve-chart"><svg width="100%" height="{{ chart.height }}" aria-hidden="true" focusable="false">{% if chart.ghost %}<g class="ghost">{% for g in chart.ghost.segments %}<line x1="{{ g.x1 }}" y1="{{ g.y1 }}" x2="{{ g.x2 }}" y2="{{ g.y2 }}" vector-effect="non-scaling-stroke"/>{% endfor %}{% for d in chart.ghost.points %}<circle cx="{{ d.x }}" cy="{{ d.y }}" r="3.5" vector-effect="non-scaling-stroke"/>{% endfor %}</g>{% endif %}<g class="current">{% for g in chart.current.segments %}<line x1="{{ g.x1 }}" y1="{{ g.y1 }}" x2="{{ g.x2 }}" y2="{{ g.y2 }}" vector-effect="non-scaling-stroke"/>{% endfor %}{% for d in chart.current.points %}<circle cx="{{ d.x }}" cy="{{ d.y }}" r="4" vector-effect="non-scaling-stroke"/>{% endfor %}</g><g class="tenors">{% for label in chart.labels %}<text x="{{ label.x }}" y="{{ chart.label_y }}" text-anchor="middle">{{ label.text }}</text>{% endfor %}</g></svg>{% if chart.legend %}<div class="curve-legend"><span><svg aria-hidden="true" focusable="false"><line class="key-current" x1="1" y1="5" x2="21" y2="5"/></svg>{{ chart.legend.current }}</span><span><svg aria-hidden="true" focusable="false"><line class="key-ghost" x1="1" y1="5" x2="21" y2="5"/></svg>{{ chart.legend.prior }} (week start)</span></div>{% endif %}</div>{% endif %}
+
+<div class="caption">Real yields and breakevens<span>Treasury real (TIPS) par curve · breakeven = nominal − real par yield</span></div>
+<table class="narrow-first rates"><thead><tr><th>Maturity</th><th class="number">Real yield</th><th class="number">Breakeven</th></tr></thead><tbody>
+{% for r in real %}<tr><td><b>{{ r.maturity }}</b></td><td class="number primary direction-neutral">{{ r.level.display }}<small>{{ r.change.display }} week</small></td><td class="number direction-neutral">{{ r.be.display }}<small>{{ r.be_change.display }} week</small></td></tr>{% endfor %}
+</tbody></table>
+<p class="fine">A par-curve breakeven includes inflation-risk and liquidity premia; it is not a pure inflation expectation.</p>
+
+{% set c = since %}<div class="caption">10Y since Sep 1<span>Change in the real yield and the breakeven, bp · daily official observations</span></div>
+<div class="since-chart"><svg width="100%" height="{{ c.height }}" role="img" aria-label="Since Sep 1 the 10Y real yield rose {{ c.real_end.text }} and the 10Y breakeven changed {{ c.be_end.text }}." focusable="false">
+<g class="grid">{% for t in c.ticks %}<line x1="0" x2="72%" y1="{{ t.y }}" y2="{{ t.y }}"{% if t.text == '0' %} class="zero"{% endif %}/><text x="0" y="{{ t.y - 3 }}">{{ t.text }}</text>{% endfor %}</g>
+<g class="be">{% for g in c.be %}<line x1="{{ g.x1 }}" y1="{{ g.y1 }}" x2="{{ g.x2 }}" y2="{{ g.y2 }}" vector-effect="non-scaling-stroke"/>{% endfor %}</g>
+<g class="real">{% for g in c.real %}<line x1="{{ g.x1 }}" y1="{{ g.y1 }}" x2="{{ g.x2 }}" y2="{{ g.y2 }}" vector-effect="non-scaling-stroke"/>{% endfor %}</g>
+<text x="{{ c.real_end.x }}" y="{{ c.real_end.y + 4 }}">Real {{ c.real_end.text }}</text><text x="{{ c.be_end.x }}" y="{{ c.be_end.y + 4 }}">Breakeven {{ c.be_end.text }}</text>
+<text x="0" y="{{ c.bottom_label }}">{{ c.start }}</text><text x="72%" y="{{ c.bottom_label }}" text-anchor="end">{{ c.end }}</text></svg>
+<div class="curve-legend"><span><svg aria-hidden="true" focusable="false"><line class="key-current" x1="1" y1="5" x2="21" y2="5"/></svg>Real 10Y</span><span><svg aria-hidden="true" focusable="false"><line class="key-ghost" x1="1" y1="5" x2="21" y2="5"/></svg>10Y breakeven</span></div></div>
+
+
+
+<div class="caption">Long-end yields elsewhere<span>One-time readings, Friday Oct 9 (secondary source) · U.S. from Treasury</span></div>
+<table class="narrow-first"><thead><tr><th>Market</th><th class="number">Yield</th><th>Source · time</th></tr></thead><tbody>
+<tr><td><b>U.S. 10Y</b></td>{{ num(us10, 'primary') }}<td><small>Treasury par · {{ us10.when }}</small></td></tr>
+{% for r in intl %}<tr><td><b>{{ r.label }}</b></td>{{ num(r, 'primary') }}<td><small>Trading Economics · {{ r.when }}</small></td></tr>{% if r.id == 'intl-ca-10y' %}<tr><td><b>U.S. 30Y</b></td>{{ num(us30, 'primary') }}<td><small>Treasury par · {{ us30.when }}</small></td></tr>{% endif %}{% endfor %}
+</tbody></table>
+
+<div class="caption">Equities, week<span>Close Oct 2 → close Oct 9 · strongest to weakest after the four benchmarks</span></div>
+<table><thead><tr><th>Instrument</th><th class="number">Week</th><th class="number">vs SPY</th><th class="number secondary">20 sessions vs SPY</th></tr></thead><tbody>
+{% for r in equity %}<tr><td><b>{{ r.label }}</b><span class="ticker">{{ r.symbol }}</span></td>{{ num(r.week, 'primary') }}{% if r.vs %}{{ num(r.vs) }}{% else %}<td class="number direction-neutral absent">—</td>{% endif %}{% if r.r20 %}{{ num(r.r20, 'secondary') }}{% else %}<td class="number secondary direction-neutral absent">—</td>{% endif %}</tr>{% endfor %}
+</tbody></table>
+<p class="fine">KRE, SMH and XHB have no 20-session figure in this snapshot (two closes collected). A 20-session spread includes sessions leaving the window.</p>
+
+<div class="caption">Duration, credit, dollar, commodities<span>Close Oct 2 → close Oct 9</span></div>
+<table><thead><tr><th>Instrument</th><th class="number">Week</th><th class="number">vs SPY</th></tr></thead><tbody>
+{% for r in cross %}<tr><td><b>{{ r.label }}</b><span class="ticker">{{ r.symbol }}</span></td>{{ num(r.week, 'primary') }}{{ num(r.vs) }}</tr>{% endfor %}
+</tbody></table>
+<table class="narrow-first"><thead><tr><th>Level</th><th class="number">Value</th><th>What it is</th></tr></thead><tbody>
+{% for r in levels %}<tr><td><b>{{ r.label }}</b></td>{{ num(r, 'primary') }}<td><small>{{ r.metric }} · {{ r.when }}</small></td></tr>{% endfor %}
+</tbody></table>
+<div class="caption">Treasury auctions, last week<span>High yield vs the September auction of the same security</span></div>
+<table class="narrow-first"><thead><tr><th>Security</th><th class="number">High yield</th><th>Detail</th></tr></thead><tbody>
+{% for r in auctions %}<tr><td><b>{{ r.label }}</b></td>{{ num(r, 'primary') }}<td><small>{{ r.when }} · {{ r.note }}</small></td></tr>{% endfor %}
+</tbody></table>
+<p class="fine">No when-issued yield is published officially, so no tail is shown. No coupon auctions this week.</p>
+</section>
+
+<section><h2>Spotlights</h2>
+{% for s in edition.spotlights %}<div class="spot"><h3>{{ s.title }}</h3>{% for p in s.paragraphs %}{{ paragraph(p) }}{% endfor %}<p class="fine">{{ s.why }}</p></div>{% endfor %}
+</section>
+
+<section><h2>From the lab</h2>
+<p class="sub">Hypotheses kept in market-review, shown with their current status. None is validated; each week's evidence is scored there, not here.</p>
+{% for h in edition.lab %}<div class="lab"><h3>{{ h.id }} · {{ h.statement }}</h3><span class="meta">Status: {{ h.status }} · {{ h.measure }} · <a href="#evidence-{{ h.source_id }}">source</a></span>
+<dl class="tests"><dt>This week's test</dt><dd>{{ h.test }} {{ marker(h.refs[1:]) }}</dd><dt>Would weaken it</dt><dd>{{ h.weaken }}</dd></dl></div>{% endfor %}
+</section>
+
+<section><h2>Scenarios</h2>
+<p class="sub">No probabilities. Each scenario names where it would show first.</p>
+{% for s in edition.scenarios %}<div class="scenario"><h3>{{ s.name }}</h3><span class="meta">{{ s.tone|capitalize }}</span><dl class="tests"><dt>Looks like</dt><dd>{{ s.looks }}</dd><dt>Seen first</dt><dd>{{ s.first }}</dd><dt>Breaks if</dt><dd>{{ s.breaks }}</dd></dl></div>{% endfor %}
+</section>
+
+<section class="next"><h2>What to watch</h2>
+{% for w in edition.watches %}<div class="watch"><div class="question">{{ w.question }} {{ marker(w.refs) }}</div><span class="meta">{{ w.horizon }}</span><dl class="tests"><dt>Confirm</dt><dd>{{ w.confirm }}</dd><dt>Changes it</dt><dd>{{ w.changes }}</dd></dl></div>{% endfor %}
+</section>
+
+<section><h2>Sources &amp; coverage</h2>
+<details class="drawer"><summary>Not collected</summary><ul>{% for item in not_collected %}<li>{{ item }}</li>{% endfor %}</ul></details>
+<details class="drawer"><summary>Sources · {{ sources|length }}</summary><ul class="sources">{% for s in sources %}<li><span class="source-name">{% if s.url %}<a href="{{ s.url }}">{{ s.name }}</a>{% else %}{{ s.name }}{% endif %}</span><small>{{ s.kinds }}</small></li>{% endfor %}</ul></details>
+<details class="drawer" id="evidence-ledger"><summary>Evidence ledger <span>· {{ evidence_count }} rows</span></summary>{% for group in evidence_groups %}<details class="ledger-group"><summary>{{ group.label }} <span>· {{ group.rows|length }}</span></summary>{% for row in group.rows %}<div class="ledger{% if row.unit == 'status' %} item{% endif %}" id="evidence-{{ row.id }}"><span>{{ row.label }} · {{ row.metric }}</span><span class="value">{{ row.display }}</span><span class="when">{{ row.when }}</span><small>{{ row.kind }} · {{ row.source_name }}{% if row.note %} · {{ row.note }}{% endif %} · <span class="rid">{{ row.id }}</span></small></div>{% endfor %}</details>{% endfor %}</details>
+<details class="drawer"><summary>Technical details</summary><ul><li>Edition: WEEK_AHEAD prototype · snapshot {{ snapshot }}</li><li>Evidence collected: {{ collected_utc }} · built {{ built_utc }}</li><li>Synthesis: none; editorial written in a working session, every figure through a resolved evidence placeholder</li><li>Reused: production stylesheet, collector Treasury rows, curve spreads and move classifier, curve chart</li></ul></details>
+</section>
+<footer><span>Market Brief · Week ahead prototype · Interpretation is model-assisted; observed rows are sourced and dated.</span><span class="theme-control"><label for="theme-choice">Theme</label><select id="theme-choice" aria-label="Theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></span></footer>
+<script>
+(() => {
+  const root = document.documentElement;
+  const select = document.getElementById('theme-choice');
+  const key = 'market-brief-theme';
+  let saved = '';
+  try { saved = localStorage.getItem(key) || ''; } catch (error) {}
+  if (saved === 'light' || saved === 'dark') root.dataset.theme = saved;
+  select.value = saved || 'system';
+  select.addEventListener('change', () => {
+    const value = select.value;
+    if (value === 'system') delete root.dataset.theme;
+    else root.dataset.theme = value;
+    try { localStorage.setItem(key, value); } catch (error) {}
+  });
+  const reveal = () => {
+    let target = null;
+    try { target = location.hash.length > 1 ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null; } catch (error) {}
+    if (!target) return;
+    for (let node = target.parentElement; node; node = node.parentElement) { if (node.tagName === 'DETAILS') node.open = true; }
+    target.scrollIntoView();
+  };
+  window.addEventListener('hashchange', reveal);
+  reveal();
+})();
+</script>
+</main></body></html>

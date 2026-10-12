@@ -1,0 +1,627 @@
+{
+ "snapshot": "2026-10-11",
+ "collected_utc": "2026-10-12T07:30:00Z",
+ "facts": [
+  {
+   "id": "wti-settle",
+   "group": "Oil, gold, dollar",
+   "label": "WTI crude, Nov",
+   "metric": "NYMEX settle",
+   "value": 91.85,
+   "unit": "USD",
+   "observed_at": "2026-10-09",
+   "kind": "settle",
+   "source_name": "FinancialJuice headline in market-review lab/2026-10-09.md (18:31 UTC); Macroglide agrees",
+   "source_url": "https://github.com/dwats250/market-review/blob/main/lab/2026-10-09.md"
+  },
+  {
+   "id": "wti-settle-prior-week",
+   "group": "Oil, gold, dollar",
+   "label": "WTI crude",
+   "metric": "close, week start",
+   "value": 91.11,
+   "unit": "USD",
+   "observed_at": "2026-10-02",
+   "kind": "secondary",
+   "source_name": "Investrade via market-review daily 2026-10-02 (time not stated)",
+   "source_url": "https://github.com/dwats250/market-review/blob/main/daily/2026/2026-10-02.md"
+  },
+  {
+   "id": "brent-settle",
+   "group": "Oil, gold, dollar",
+   "label": "Brent crude",
+   "metric": "ICE settle",
+   "value": 104.72,
+   "unit": "USD",
+   "observed_at": "2026-10-09",
+   "kind": "settle",
+   "source_name": "FinancialJuice headline in market-review lab/2026-10-09.md (18:50 UTC)",
+   "source_url": "https://github.com/dwats250/market-review/blob/main/lab/2026-10-09.md"
+  },
+  {
+   "id": "gold-fut",
+   "group": "Oil, gold, dollar",
+   "label": "Gold futures",
+   "metric": "last, 5:00 PM ET",
+   "value": 4216.3,
+   "unit": "USD",
+   "observed_at": "2026-10-09",
+   "kind": "secondary",
+   "source_name": "Macroglide daily recap of Oct 9 (email, received 2026-10-10 09:30 UTC)",
+   "source_url": "https://www.macroglide.com"
+  },
+  {
+   "id": "dxy",
+   "group": "Oil, gold, dollar",
+   "label": "Dollar index (DXY)",
+   "metric": "4:00 PM ET",
+   "value": 102.23,
+   "unit": "index",
+   "observed_at": "2026-10-09",
+   "kind": "secondary",
+   "source_name": "Macroglide daily recap of Oct 9 (email, received 2026-10-10 09:30 UTC)",
+   "source_url": "https://www.macroglide.com",
+   "note": "Macroglide's day changes do not reconcile across issues; level only"
+  },
+  {
+   "id": "dxy-prior-week",
+   "group": "Oil, gold, dollar",
+   "label": "Dollar index (DXY)",
+   "metric": "4:00 PM ET, week start",
+   "value": 101.92,
+   "unit": "index",
+   "observed_at": "2026-10-02",
+   "kind": "secondary",
+   "source_name": "Macroglide recap of Oct 2 via market-review daily 2026-10-02",
+   "source_url": "https://github.com/dwats250/market-review/blob/main/daily/2026/2026-10-02.md"
+  },
+  {
+   "id": "usdjpy",
+   "group": "Oil, gold, dollar",
+   "label": "USD/JPY",
+   "metric": "Friday last quote (bid), not a close",
+   "value": 158.25,
+   "unit": "JPY",
+   "observed_at": "2026-10-09",
+   "kind": "last_quote",
+   "source_name": "investing.com majors page, stamped 09/10, read 2026-10-12 07:30 UTC",
+   "source_url": "https://www.investing.com/currencies/streaming-forex-rates-majors",
+   "note": "No post-reopen print reached"
+  },
+  {
+   "id": "eurusd",
+   "group": "Oil, gold, dollar",
+   "label": "EUR/USD",
+   "metric": "Friday last quote (bid), not a close",
+   "value": 1.12,
+   "unit": "fx4",
+   "observed_at": "2026-10-09",
+   "kind": "last_quote",
+   "source_name": "investing.com majors page, stamped 09/10, read 2026-10-12 07:30 UTC",
+   "source_url": "https://www.investing.com/currencies/streaming-forex-rates-majors"
+  },
+  {
+   "id": "spx-close",
+   "group": "Equity",
+   "label": "S&P 500 index",
+   "metric": "close",
+   "value": 7811.54,
+   "unit": "index",
+   "observed_at": "2026-10-09",
+   "kind": "secondary",
+   "source_name": "Macroglide daily recap of Oct 9 (email, received 2026-10-10 09:30 UTC)",
+   "source_url": "https://www.macroglide.com"
+  },
+  {
+   "id": "intl-de-10y",
+   "group": "Long-end yields elsewhere",
+   "label": "Germany 10Y",
+   "metric": "10Y yield, last",
+   "value": 3.486,
+   "unit": "% yield",
+   "observed_at": "2026-10-09",
+   "kind": "secondary",
+   "source_name": "Trading Economics bonds page, read 2026-10-12 07:30 UTC",
+   "source_url": "https://tradingeconomics.com/bonds"
+  },
+  {
+   "id": "intl-uk-10y",
+   "group": "Long-end yields elsewhere",
+   "label": "UK 10Y",
+   "metric": "10Y yield, last",
+   "value": 5.42,
+   "unit": "% yield",
+   "observed_at": "2026-10-09",
+   "kind": "secondary",
+   "source_name": "Trading Economics bonds page, read 2026-10-12 07:30 UTC",
+   "source_url": "https://tradingeconomics.com/bonds"
+  },
+  {
+   "id": "intl-fr-10y",
+   "group": "Long-end yields elsewhere",
+   "label": "France 10Y",
+   "metric": "10Y yield, last",
+   "value": 4.867,
+   "unit": "% yield",
+   "observed_at": "2026-10-09",
+   "kind": "secondary",
+   "source_name": "Trading Economics bonds page, read 2026-10-12 07:30 UTC (stamped Oct 11, a Sunday: taken as Friday's)",
+   "source_url": "https://tradingeconomics.com/bonds"
+  },
+  {
+   "id": "intl-it-10y",
+   "group": "Long-end yields elsewhere",
+   "label": "Italy 10Y",
+   "metric": "10Y yield, last",
+   "value": 4.588,
+   "unit": "% yield",
+   "observed_at": "2026-10-09",
+   "kind": "secondary",
+   "source_name": "Trading Economics bonds page, read 2026-10-12 07:30 UTC",
+   "source_url": "https://tradingeconomics.com/bonds"
+  },
+  {
+   "id": "intl-jp-10y",
+   "group": "Long-end yields elsewhere",
+   "label": "Japan 10Y",
+   "metric": "10Y yield, last",
+   "value": 3.016,
+   "unit": "% yield",
+   "observed_at": "2026-10-09",
+   "kind": "secondary",
+   "source_name": "Trading Economics bonds page, read 2026-10-12 07:30 UTC (stamped Oct 11, a Sunday: taken as Friday's)",
+   "source_url": "https://tradingeconomics.com/bonds"
+  },
+  {
+   "id": "intl-ca-10y",
+   "group": "Long-end yields elsewhere",
+   "label": "Canada 10Y",
+   "metric": "10Y yield, last",
+   "value": 3.878,
+   "unit": "% yield",
+   "observed_at": "2026-10-09",
+   "kind": "secondary",
+   "source_name": "Trading Economics bonds page, read 2026-10-12 07:30 UTC",
+   "source_url": "https://tradingeconomics.com/bonds"
+  },
+  {
+   "id": "intl-uk-30y",
+   "group": "Long-end yields elsewhere",
+   "label": "UK 30Y",
+   "metric": "30Y yield, last",
+   "value": 5.92,
+   "unit": "% yield",
+   "observed_at": "2026-10-09",
+   "kind": "secondary",
+   "source_name": "Trading Economics UK page, read 2026-10-12 07:30 UTC (stamped Oct 12; no gilt trading since Friday)",
+   "source_url": "https://tradingeconomics.com/united-kingdom/government-bond-yield"
+  },
+  {
+   "id": "intl-jp-30y",
+   "group": "Long-end yields elsewhere",
+   "label": "Japan 30Y",
+   "metric": "30Y yield, last",
+   "value": 4.06,
+   "unit": "% yield",
+   "observed_at": "2026-10-09",
+   "kind": "secondary",
+   "source_name": "Trading Economics Japan page, read 2026-10-12 07:30 UTC (stamped Oct 11)",
+   "source_url": "https://tradingeconomics.com/japan/government-bond-yield"
+  },
+  {
+   "id": "umich-1y",
+   "group": "Releases, last week",
+   "label": "UMich 1-yr inflation expectations",
+   "metric": "preliminary Oct",
+   "value": 4.7,
+   "unit": "%",
+   "observed_at": "2026-10-09",
+   "kind": "official",
+   "source_name": "University of Michigan Surveys of Consumers",
+   "source_url": "https://www.sca.isr.umich.edu/",
+   "note": "prior 4.6%"
+  },
+  {
+   "id": "umich-sent",
+   "group": "Releases, last week",
+   "label": "UMich consumer sentiment",
+   "metric": "preliminary Oct",
+   "value": 46.3,
+   "unit": "index1",
+   "observed_at": "2026-10-09",
+   "kind": "official",
+   "source_name": "University of Michigan Surveys of Consumers",
+   "source_url": "https://www.sca.isr.umich.edu/",
+   "note": "prior 48.1"
+  },
+  {
+   "id": "claims",
+   "group": "Releases, last week",
+   "label": "Initial jobless claims",
+   "metric": "week to Oct 3",
+   "value": 197,
+   "unit": "K",
+   "observed_at": "2026-10-08",
+   "kind": "official",
+   "source_name": "U.S. Department of Labor",
+   "source_url": "https://www.dol.gov/ui/data.pdf",
+   "note": "prior revised 199K"
+  },
+  {
+   "id": "auction-3y",
+   "group": "Treasury auctions",
+   "label": "3-year note",
+   "metric": "high yield",
+   "value": 4.932,
+   "unit": "% yield",
+   "observed_at": "2026-10-06",
+   "kind": "official",
+   "source_name": "U.S. Treasury Fiscal Data, auctions_query",
+   "source_url": "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/od/auctions_query",
+   "note": "bid-to-cover 2.62; indirect 57.6% of competitive; September auction 4.474% (secondary: thevaultreport/tftc)",
+   "prior": 4.474
+  },
+  {
+   "id": "auction-10y",
+   "group": "Treasury auctions",
+   "label": "10-year note (reopening)",
+   "metric": "high yield",
+   "value": 5.3,
+   "unit": "% yield",
+   "observed_at": "2026-10-07",
+   "kind": "official",
+   "source_name": "U.S. Treasury Fiscal Data, auctions_query",
+   "source_url": "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/od/auctions_query",
+   "note": "bid-to-cover 2.77; indirect 80.3% of competitive; September auction 4.834% (secondary: thevaultreport/tftc)",
+   "prior": 4.834
+  },
+  {
+   "id": "auction-30y",
+   "group": "Treasury auctions",
+   "label": "30-year bond (reopening)",
+   "metric": "high yield",
+   "value": 5.618,
+   "unit": "% yield",
+   "observed_at": "2026-10-08",
+   "kind": "official",
+   "source_name": "U.S. Treasury Fiscal Data, auctions_query",
+   "source_url": "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/od/auctions_query",
+   "note": "bid-to-cover 2.54; indirect 72.3% of competitive; September auction 5.308% (secondary: thevaultreport/tftc)",
+   "prior": 5.308
+  },
+  {
+   "id": "lab-spx-adv",
+   "group": "Lab",
+   "label": "SPX advancers",
+   "metric": "share at 15:55 ET",
+   "value": 62.7,
+   "unit": "%",
+   "observed_at": "2026-10-09T15:55:00-04:00",
+   "kind": "lab",
+   "source_name": "Market Lab (Yahoo regular-session bars)",
+   "source_url": "https://github.com/dwats250/market-review/blob/main/lab/2026-10-09.md",
+   "note": "median member +0.36% vs SPY +0.60%"
+  },
+  {
+   "id": "lab-qqq-iv-oct8",
+   "group": "Lab",
+   "label": "QQQ IV30",
+   "metric": "Oct 8, 16:05 ET",
+   "value": 19.106,
+   "unit": "vol pts",
+   "observed_at": "2026-10-08T16:05:04-04:00",
+   "kind": "lab",
+   "source_name": "Market Lab (Cboe, delayed ~15 min)",
+   "source_url": "https://github.com/dwats250/market-review/blob/main/lab/2026-10-08.md",
+   "note": "18.341 at 12:30 ET the same day"
+  },
+  {
+   "id": "lab-qqq-iv",
+   "group": "Lab",
+   "label": "QQQ IV30",
+   "metric": "Oct 9 close",
+   "value": 17.865,
+   "unit": "vol pts",
+   "observed_at": "2026-10-09T16:05:04-04:00",
+   "kind": "lab",
+   "source_name": "Market Lab (Cboe, delayed ~15 min)",
+   "source_url": "https://github.com/dwats250/market-review/blob/main/lab/2026-10-09.md"
+  },
+  {
+   "id": "lab-spy-iv",
+   "group": "Lab",
+   "label": "SPY IV30",
+   "metric": "Oct 9 close",
+   "value": 11.92,
+   "unit": "vol pts",
+   "observed_at": "2026-10-09T16:05:04-04:00",
+   "kind": "lab",
+   "source_name": "Market Lab (Cboe, delayed ~15 min)",
+   "source_url": "https://github.com/dwats250/market-review/blob/main/lab/2026-10-09.md"
+  },
+  {
+   "id": "hyp-h1",
+   "group": "Hypotheses",
+   "label": "H1",
+   "metric": "Long-end Treasury yields are restrictive and weigh on rate-sensitive equities",
+   "value": "open",
+   "unit": "status",
+   "observed_at": "2026-10-11",
+   "kind": "hypothesis",
+   "source_name": "market-review hypotheses.md (restated 2026-10-11)",
+   "source_url": "https://github.com/dwats250/market-review/blob/3885b71/hypotheses.md",
+   "note": "Measure: XLRE, XLU, IWM vs SPY: 20-session level, and daily sensitivity to the 10Y"
+  },
+  {
+   "id": "hyp-h3",
+   "group": "Hypotheses",
+   "label": "H3",
+   "metric": "Participation is weak: the cap-weighted index looks healthier than the average stock",
+   "value": "open",
+   "unit": "status",
+   "observed_at": "2026-10-11",
+   "kind": "hypothesis",
+   "source_name": "market-review hypotheses.md (restated 2026-10-11)",
+   "source_url": "https://github.com/dwats250/market-review/blob/3885b71/hypotheses.md",
+   "note": "Measure: RSP − SPY 20-session spread"
+  },
+  {
+   "id": "hyp-h4",
+   "group": "Hypotheses",
+   "label": "H4",
+   "metric": "Equity volatility stays relatively calm despite H1–H3",
+   "value": "strengthening",
+   "unit": "status",
+   "observed_at": "2026-10-11",
+   "kind": "hypothesis",
+   "source_name": "market-review hypotheses.md (restated 2026-10-11)",
+   "source_url": "https://github.com/dwats250/market-review/blob/3885b71/hypotheses.md",
+   "note": "Measure: VIX close < 17 and SPY 20-session realized < 12%"
+  },
+  {
+   "id": "hyp-h5",
+   "group": "Hypotheses",
+   "label": "H5",
+   "metric": "Capital still concentrates in a narrow set of winners, especially large tech",
+   "value": "weakening",
+   "unit": "status",
+   "observed_at": "2026-10-11",
+   "kind": "hypothesis",
+   "source_name": "market-review hypotheses.md (restated 2026-10-11)",
+   "source_url": "https://github.com/dwats250/market-review/blob/3885b71/hypotheses.md",
+   "note": "Measure: QQQ − SPY and XLK − SPY 20-session spreads, with RSP − SPY"
+  },
+  {
+   "id": "fomc-minutes",
+   "group": "Fed",
+   "label": "FOMC minutes (Sep 15–16)",
+   "metric": "released Oct 7, 2:00 PM ET",
+   "value": "another hike expected before year-end; timing open",
+   "unit": "status",
+   "observed_at": "2026-10-07T14:00:00-04:00",
+   "kind": "secondary",
+   "source_name": "TheStreet and Investrade reports, via market-review daily 2026-10-07",
+   "source_url": "https://github.com/dwats250/market-review/blob/main/daily/2026/2026-10-07.md"
+  },
+  {
+   "id": "fomc-next",
+   "group": "Fed",
+   "label": "Next FOMC meeting",
+   "metric": "scheduled",
+   "value": "Oct 27–28",
+   "unit": "status",
+   "observed_at": "2026-10-11",
+   "kind": "scheduled",
+   "source_name": "Federal Reserve FOMC calendar",
+   "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+  },
+  {
+   "id": "press-france",
+   "group": "Long-end yields elsewhere",
+   "label": "France",
+   "metric": "press coverage, Oct 8",
+   "value": "debt-crisis risk; worst decade for French bonds since 1803",
+   "unit": "status",
+   "observed_at": "2026-10-08",
+   "kind": "secondary",
+   "source_name": "NYT and MarketWatch headlines, via Macroglide Oct 8 recap",
+   "source_url": "https://www.nytimes.com/2026/10/08/business/france-bond-yields.html"
+  },
+  {
+   "id": "tsmc-sep-rev",
+   "group": "Earnings",
+   "label": "TSMC September revenue",
+   "metric": "year on year, released Oct 8",
+   "value": 54.6,
+   "unit": "pct change 1",
+   "observed_at": "2026-10-08",
+   "kind": "official",
+   "source_name": "TSMC investor relations, monthly revenue",
+   "source_url": "https://investor.tsmc.com/english/monthly-revenue/2026",
+   "note": "NT$511.86B; −0.6% m/m"
+  },
+  {
+   "id": "auction-3y-sep",
+   "group": "Treasury auctions",
+   "label": "3-year note",
+   "metric": "high yield, September auction",
+   "value": 4.474,
+   "unit": "% yield",
+   "observed_at": "2026-09-08",
+   "kind": "secondary",
+   "source_name": "thevaultreport.com / tftc.io (secondary; official API did not filter)",
+   "source_url": "https://thevaultreport.com/treasury-auctions/2026-09"
+  },
+  {
+   "id": "auction-10y-sep",
+   "group": "Treasury auctions",
+   "label": "10-year note",
+   "metric": "high yield, September auction",
+   "value": 4.834,
+   "unit": "% yield",
+   "observed_at": "2026-09-09",
+   "kind": "secondary",
+   "source_name": "thevaultreport.com / tftc.io (secondary; official API did not filter)",
+   "source_url": "https://thevaultreport.com/treasury-auctions/2026-09"
+  },
+  {
+   "id": "auction-30y-sep",
+   "group": "Treasury auctions",
+   "label": "30-year bond",
+   "metric": "high yield, September auction",
+   "value": 5.308,
+   "unit": "% yield",
+   "observed_at": "2026-09-10",
+   "kind": "secondary",
+   "source_name": "thevaultreport.com / tftc.io (secondary; official API did not filter)",
+   "source_url": "https://thevaultreport.com/treasury-auctions/2026-09"
+  }
+ ],
+ "calendar": [
+  {
+   "id": "cal-holiday",
+   "at": "2026-10-12",
+   "title": "Columbus Day: US bond market closed, NYSE open; Japan closed (Sports Day)",
+   "source_name": "SIFMA recommendation; NYSE holidays",
+   "source_url": "https://www.sifma.org/news/press-releases/sifma-fixed-income-market-close-recommendations-in-the-u-s-the-u-k-and-japan-for-u-s-columbus-day-and-japan-health-and-sports-day-holidays-2026",
+   "confirmed": true
+  },
+  {
+   "id": "cal-banks-tue",
+   "at": "2026-10-13T07:00:00-04:00",
+   "title": "JPMorgan, Wells Fargo, Goldman Sachs, Citigroup, UnitedHealth, J&J results (pre-market, ~6:45–8:00 ET)",
+   "source_name": "Issuer investor-relations announcements",
+   "source_url": "https://jpmorganchaseco.gcs-web.com/",
+   "confirmed": true,
+   "consensus": [
+    {
+     "label": "EPS: JPM 5.94 · JNJ 2.53 · UNH 4.12",
+     "source": "Macroglide"
+    }
+   ]
+  },
+  {
+   "id": "cal-asml",
+   "at": "2026-10-14T01:00:00-04:00",
+   "title": "ASML Q3 results",
+   "source_name": "ASML investor relations",
+   "source_url": "https://investor.asml.com/quarterly-results",
+   "confirmed": true
+  },
+  {
+   "id": "cal-banks-wed",
+   "at": "2026-10-14T07:00:00-04:00",
+   "title": "Bank of America, Morgan Stanley, BlackRock results (pre-market)",
+   "source_name": "Issuer investor-relations announcements",
+   "source_url": "https://newsroom.bankofamerica.com/",
+   "confirmed": true,
+   "consensus": [
+    {
+     "label": "EPS: BAC 1.11",
+     "source": "Macroglide"
+    }
+   ]
+  },
+  {
+   "id": "cal-cpi",
+   "at": "2026-10-14T08:30:00-04:00",
+   "title": "CPI, September",
+   "source_name": "BLS release schedule",
+   "source_url": "https://www.bls.gov/schedule/2026/10_sched_list.htm",
+   "confirmed": true,
+   "consensus": [
+    {
+     "label": "Headline 0.6% m/m · 3.6% y/y",
+     "source": "FF"
+    },
+    {
+     "label": "Headline 3.7% y/y",
+     "source": "TE"
+    },
+    {
+     "label": "Core 0.2% m/m · 2.5% y/y (TD, Cleveland Fed nowcast: 2.4%)",
+     "source": "FF; TE"
+    }
+   ],
+   "prior": "0.4% m/m · 3.4% y/y; core 0.3% · 2.4% (BLS)"
+  },
+  {
+   "id": "cal-beige",
+   "at": "2026-10-14T14:00:00-04:00",
+   "title": "Fed Beige Book",
+   "source_name": "Federal Reserve calendar",
+   "source_url": "https://www.federalreserve.gov/newsevents/2026-october.htm",
+   "confirmed": true
+  },
+  {
+   "id": "cal-tsmc",
+   "at": "2026-10-15T02:00:00-04:00",
+   "title": "TSMC Q3 results call",
+   "source_name": "TSMC investor relations",
+   "source_url": "https://investor.tsmc.com/english/quarterly-results",
+   "confirmed": true
+  },
+  {
+   "id": "cal-thu-830",
+   "at": "2026-10-15T08:30:00-04:00",
+   "title": "PPI, retail sales (advance), jobless claims, Empire State, Philly Fed",
+   "source_name": "BLS, Census, DOL, NY Fed, Philadelphia Fed calendars",
+   "source_url": "https://www.census.gov/economic-indicators/calendar-listview-2026.html",
+   "confirmed": true,
+   "consensus": [
+    {
+     "label": "PPI 0.5% m/m, core 0.3%",
+     "source": "FF; TE"
+    },
+    {
+     "label": "Retail sales 0.3%, ex-autos 0.5%",
+     "source": "FF; TE"
+    },
+    {
+     "label": "Claims 195K (FF) / 200K (TE)",
+     "source": "aggregators disagree"
+    }
+   ],
+   "prior": "Retail sales Aug +1.2% (Census advance); claims 197K"
+  },
+  {
+   "id": "cal-auction-ann",
+   "at": "2026-10-15",
+   "title": "Treasury announces 20-year reopening (auction Oct 21) and 5-year TIPS reopening (Oct 22); no coupon auctions this week",
+   "source_name": "Treasury tentative auction schedule",
+   "source_url": "https://home.treasury.gov/system/files/221/Tentative-Auction-Schedule.pdf",
+   "confirmed": true,
+   "note": "Announcement time not verified; bills only Tue–Thu",
+   "time_note": "Time not verified"
+  },
+  {
+   "id": "cal-warsh",
+   "at": "2026-10-15T23:30:00-04:00",
+   "title": "Fed Chair Warsh with IMF's Georgieva (Bangkok)",
+   "source_name": "Federal Reserve calendar",
+   "source_url": "https://www.federalreserve.gov/newsevents/2026-october.htm",
+   "confirmed": true
+  },
+  {
+   "id": "cal-ip",
+   "at": "2026-10-16T09:15:00-04:00",
+   "title": "Industrial production and capacity utilization, September",
+   "source_name": "Federal Reserve G.17",
+   "source_url": "https://www.federalreserve.gov/releases/g17/",
+   "confirmed": true,
+   "consensus": [
+    {
+     "label": "IP 0.4%, capacity utilization 76.5%",
+     "source": "FF; TE"
+    }
+   ],
+   "prior": "IP 0.0%, CU 76.3%"
+  }
+ ],
+ "not_collected": [
+  "Sunday futures and FX after the reopen: no admitted page exposed a timestamped post-reopen print; the indications seen carried no date and are not used",
+  "Weekend news (Oct 10–11): Reuters, AP and NHC pages were not read; no development is reported",
+  "BoJ, ECB and BoE meeting dates: official pages not read",
+  "Credit spreads (only HYG/LQD ETF closes)"
+ ]
+}

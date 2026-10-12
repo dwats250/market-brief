@@ -1,0 +1,359 @@
+{
+ "headline": "Real yields hold the long end high as CPI arrives",
+ "dek": {
+  "text": "Since Sep 1 the 10Y has moved {since-sep1-nominal-10y}, all of it real yield ({since-sep1-real-10y}); the breakeven moved {since-sep1-be-10y} even with Brent settling at ${brent-settle}.",
+  "refs": [
+   "since-sep1-nominal-10y",
+   "since-sep1-real-10y",
+   "since-sep1-be-10y",
+   "brent-settle"
+  ]
+ },
+ "thesis": [
+  {
+   "text": "Rates are the week's organizing force, and so far they are a real-rate story. The 10Y par yield ended Friday at {treasury-10y}, a few basis points under Monday's {treasury-10y-w41-high}, and the 30Y at {treasury-30y}. New supply has repriced with it: last week's 10-year auction cleared at {auction-10y} and the 30-year at {auction-30y}, against {auction-10y-sep} and {auction-30y-sep} in September.",
+   "refs": [
+    "treasury-10y",
+    "treasury-10y-w41-high",
+    "treasury-30y",
+    "auction-10y",
+    "auction-30y",
+    "auction-10y-sep",
+    "auction-30y-sep"
+   ],
+   "uncertainty": "A par-curve breakeven also carries inflation-risk and liquidity premia, so a flat breakeven is not proof that inflation expectations are anchored.",
+   "alternative": "A rising term premium, not expected policy, may be what lifts real yields; daily par curves cannot separate the two."
+  },
+  {
+   "text": "Equities absorbed it by rotating, not falling. SPY returned {spy-week} on the week; semiconductors returned {smh-week}, regional banks {kre-week} and homebuilders {xhb-week}; utilities ({xlu-week}), staples ({xlp-week}) and energy ({xle-week}) led. Credit did not flinch (high yield {hyg-week}), and the VIX closed at {vix}, above SPY's 20-session realized volatility of {spy-realized-20}.",
+   "refs": [
+    "spy-week",
+    "smh-week",
+    "kre-week",
+    "xhb-week",
+    "xlu-week",
+    "xlp-week",
+    "xle-week",
+    "hyg-week",
+    "vix",
+    "spy-realized-20"
+   ]
+  },
+  {
+   "text": "The tension: the Fed's minutes pointed to another hike, consumers' year-ahead inflation expectations rose to {umich-1y}, and the CPI consensus has energy lifting the headline while core stays subdued. Soft core with flat breakevens gives the long end room to ease and the rate-sensitive laggards room to run. Inflation compensation joining real yields would give the long end a second engine.",
+   "refs": [
+    "fomc-minutes",
+    "umich-1y",
+    "fomc-next"
+   ]
+  }
+ ],
+ "take": {
+  "text": "This is a real-rate regime with calm inflation pricing; a CPI week in which breakevens rise more than real yields fall would show it wrong.",
+  "refs": [
+   "since-sep1-real-10y",
+   "since-sep1-be-10y"
+  ]
+ },
+ "calendar": [
+  {
+   "calendar_id": "cal-holiday",
+   "exposed": "Treasuries and JGBs (closed); U.S. equities trade",
+   "why": "Monday's pages carry Friday's curve. The next official curve is Tuesday's, published Tuesday evening, so the brief's rates block runs a day behind all week."
+  },
+  {
+   "calendar_id": "cal-banks-tue",
+   "exposed": "XLF, KRE; XLV through UnitedHealth and J&J",
+   "why": "First read on net interest income with the 2Y at {treasury-2y} and the 2s10s at {treasury-2s10s}, and on credit costs after regional banks' {kre-week} week.",
+   "outcomes": [
+    {
+     "case": "Firm income, benign provisions",
+     "implies": "Financials extend last week's {xlf-week}; regional banks recover some ground."
+    },
+    {
+     "case": "Rising provisions or soft guidance",
+     "implies": "KRE's slide extends, a credit signal that would test calm high yield ({hyg-week})."
+    }
+   ]
+  },
+  {
+   "calendar_id": "cal-asml",
+   "exposed": "SMH, XLK, NVDA",
+   "why": "Semiconductors returned {smh-week} last week; ASML's bookings are the first read on chip equipment demand.",
+   "outcomes": [
+    {
+     "case": "Bookings and guidance hold",
+     "implies": "Semis stabilize against QQQ ahead of TSMC."
+    },
+    {
+     "case": "Bookings disappoint",
+     "implies": "Semis extend losses into TSMC; the concentration hypothesis (H5) weakens further."
+    }
+   ]
+  },
+  {
+   "calendar_id": "cal-banks-wed",
+   "exposed": "XLF, KRE",
+   "why": "Second read on deposit costs and trading revenue; confirms or contradicts Tuesday."
+  },
+  {
+   "calendar_id": "cal-cpi",
+   "exposed": "2Y and 10Y, breakevens, XLRE, IWM, XLU, gold, the dollar",
+   "why": "The first inflation print with the 10Y near its multi-decade high. Consensus has energy lifting the headline while core stays subdued.",
+   "outcomes": [
+    {
+     "case": "Core at or below consensus, breakevens flat",
+     "implies": "Real yields have room to ease; rate-sensitives (XLRE, IWM) extend last week's catch-up."
+    },
+    {
+     "case": "Core above consensus",
+     "implies": "The 2Y leads higher, the 10Y retests {treasury-10y-w41-high}, and small caps and real estate lag."
+    },
+    {
+     "case": "Hot headline, soft core",
+     "implies": "Breakevens up, real yields down: the 10Y level can hide a change in what drives it."
+    }
+   ]
+  },
+  {
+   "calendar_id": "cal-beige",
+   "exposed": "Front end, the dollar",
+   "why": "Anecdotal read on prices and wages two weeks before the {fomc-next} FOMC; lands after the brief's last analysis of the day."
+  },
+  {
+   "calendar_id": "cal-tsmc",
+   "exposed": "SMH, NVDA, QQQ",
+   "why": "AI demand check after September revenue of {tsmc-sep-rev} year on year.",
+   "outcomes": [
+    {
+     "case": "Guidance confirms demand",
+     "implies": "Semis recover and QQQ's implied volatility eases."
+    },
+    {
+     "case": "Guidance disappoints",
+     "implies": "Tech-specific volatility rises; watch QQQ IV30 against its Oct 8 {lab-qqq-iv-oct8}."
+    }
+   ]
+  },
+  {
+   "calendar_id": "cal-thu-830",
+   "exposed": "2Y, the dollar, XLY",
+   "why": "Five releases in one minute: producer prices feed the Fed's preferred gauge, and retail sales test spending with sentiment at {umich-sent}. Their effects cannot be separated.",
+   "outcomes": [
+    {
+     "case": "Firm retail sales and PPI",
+     "implies": "The front end prices more of the hike the minutes described."
+    },
+    {
+     "case": "Weak retail sales",
+     "implies": "Growth worry joins rates; discretionary and small caps lag."
+    }
+   ]
+  },
+  {
+   "calendar_id": "cal-auction-ann",
+   "exposed": "Long end",
+   "why": "Sizes for next week's 20-year and 5-year TIPS reopenings. No coupon supply this week, so the long end trades on data."
+  },
+  {
+   "calendar_id": "cal-warsh",
+   "exposed": "Front end, the dollar",
+   "why": "The Chair's first remarks after CPI and retail sales; after Thursday's close, so Friday's premarket reads them."
+  },
+  {
+   "calendar_id": "cal-ip",
+   "exposed": "XLI, XLB",
+   "why": "Last read on goods output before the FOMC; lands between the 6:00 AM PT premarket page and the 7:00 AM PT update."
+  }
+ ],
+ "rates_note": "Week change, Fri Oct 2 → Fri Oct 9, from Treasury's official daily par curves. No intraday yields exist anywhere in this edition.",
+ "spotlights": [
+  {
+   "title": "Real rates, not inflation pricing, set the long end",
+   "paragraphs": [
+    {
+     "text": "Since Sep 1 the 10Y real yield has moved {since-sep1-real-10y} while the 10Y breakeven stayed between {be-10y-range-low} and {be-10y-range-high}. Last week fit the pattern: the real 10Y moved {real-10y-change} and the breakeven {be-10y-change}. Oil did not change it either; WTI went from {wti-settle-prior-week} to {wti-settle} over the week and Brent settled at {brent-settle}.",
+     "refs": [
+      "since-sep1-real-10y",
+      "be-10y-range-low",
+      "be-10y-range-high",
+      "real-10y-change",
+      "be-10y-change",
+      "wti-settle-prior-week",
+      "wti-settle",
+      "brent-settle"
+     ]
+    },
+    {
+     "text": "It is not only a U.S. story. The UK 10Y gilt yields {intl-uk-10y}, above the U.S. {treasury-10y}, and France's 10Y ({intl-fr-10y}) yields more than Italy's ({intl-it-10y}), with press coverage of French debt stress. Germany ({intl-de-10y}) and Japan ({intl-jp-10y}) sit far lower.",
+     "refs": [
+      "intl-uk-10y",
+      "treasury-10y",
+      "intl-fr-10y",
+      "intl-it-10y",
+      "press-france",
+      "intl-de-10y",
+      "intl-jp-10y"
+     ],
+     "uncertainty": "Foreign yields are one-time readings from a secondary site, dated Friday; they are context, not admitted evidence."
+    },
+    {
+     "text": "This week CPI and PPI are the first inflation prints since the long end reached these levels, and there is no coupon supply to blur the reaction.",
+     "refs": [
+      "auction-30y"
+     ]
+    }
+   ],
+   "why": "Selected because it is the largest measured move behind the week's biggest scheduled catalyst. Considered and not featured: Japan and the yen (USD/JPY {usdjpy} at Friday's last quote; no post-reopen prints, and Japanese markets are closed Monday) and the dollar (DXY {dxy})."
+  },
+  {
+   "title": "The weak spots meet their catalysts",
+   "paragraphs": [
+    {
+     "text": "Last week's two worst groups face direct tests. Semiconductors returned {smh-week} while the Nasdaq-100 returned {qqq-week}; ASML reports Wednesday and TSMC Thursday. Regional banks returned {kre-week} as the money-center banks report Tuesday and Wednesday.",
+     "refs": [
+      "smh-week",
+      "qqq-week",
+      "kre-week"
+     ]
+    },
+    {
+     "text": "Concentration is fading at the margin rather than breaking: QQQ's twenty-session spread over SPY is still {qqq-20s-vs-spy}, and equal weight's is {rsp-20s-vs-spy}. About half of tech's lost lead last week came from early-September sessions leaving the window, not from new selling.",
+     "refs": [
+      "qqq-20s-vs-spy",
+      "rsp-20s-vs-spy",
+      "xlk-20s-vs-spy"
+     ]
+    },
+    {
+     "text": "The tell is tech-specific volatility: QQQ's 30-day implied volatility reached {lab-qqq-iv-oct8} at Thursday's close and eased to {lab-qqq-iv} on Friday, while SPY's sits at {lab-spy-iv}.",
+     "refs": [
+      "lab-qqq-iv-oct8",
+      "lab-qqq-iv",
+      "lab-spy-iv"
+     ]
+    }
+   ],
+   "why": "Selected because SMH and KRE were last week's largest relative moves and each meets its own catalyst this week."
+  }
+ ],
+ "lab": [
+  {
+   "id": "H1",
+   "refs": [
+    "hyp-h1",
+    "xlre-20s-vs-spy",
+    "iwm-20s-vs-spy",
+    "xlu-20s-vs-spy"
+   ],
+   "status_note": "open",
+   "test": "On CPI day, do XLRE, XLU and IWM move against the 10Y? They still trail SPY over twenty sessions (XLRE {xlre-20s-vs-spy}, IWM {iwm-20s-vs-spy}), but the day-to-day link with the 10Y has been weak.",
+   "weaken": "Two of the three beat SPY over twenty sessions while the 30Y stays in the mid-5s."
+  },
+  {
+   "id": "H5",
+   "refs": [
+    "hyp-h5",
+    "qqq-20s-vs-spy",
+    "smh-week"
+   ],
+   "status_note": "weakening",
+   "test": "ASML and TSMC. QQQ's twenty-session spread over SPY is {qqq-20s-vs-spy}; semis start the week after a {smh-week} week.",
+   "weaken": "QQQ − SPY reaches zero, or equal weight stops trailing, at Friday's close."
+  },
+  {
+   "id": "H4",
+   "refs": [
+    "hyp-h4",
+    "vix",
+    "lab-qqq-iv-oct8"
+   ],
+   "status_note": "strengthening, narrowed to the S&P",
+   "test": "Does the VIX stay below 17 through CPI? It closed at {vix}. A lab observation, not yet a finding: QQQ's implied volatility rose to {lab-qqq-iv-oct8} on Oct 8 while SPY's barely moved.",
+   "weaken": "Two VIX closes at or above 17 in the week."
+  }
+ ],
+ "scenarios": [
+  {
+   "name": "Soft core, steady breakevens",
+   "tone": "bullish",
+   "looks": "Core CPI at or below consensus; real yields ease; rate-sensitives and equal weight lead; semis stabilize after TSMC.",
+   "first": "Wednesday's XLRE, IWM and RSP prints against SPY in this brief; Thursday's curve page shows a lower real 10Y with the breakeven near {be-10y}.",
+   "breaks": "The 10Y closes back above {treasury-10y-w41-high}."
+  },
+  {
+   "name": "Inflation joins real rates",
+   "tone": "bearish",
+   "looks": "Core above consensus and breakevens rise with oil; the 2Y leads higher; the 10Y and 30Y push through {treasury-10y-w41-high} and {treasury-30y-w41-high}.",
+   "first": "IWM, KRE and XHB underperform on Wednesday; the VIX closes at or above 17; Thursday's curve shows breakevens up.",
+   "breaks": "Breakevens fall back while yields keep rising: that is the real-rate regime again, not this one."
+  },
+  {
+   "name": "In line; earnings set the spreads",
+   "tone": "sideways",
+   "looks": "CPI near consensus; the 10Y stays inside last week's {treasury-10y-w41-low} to {treasury-10y-w41-high} range; the index drifts while bank and chip results move sectors.",
+   "first": "Index changes small next to XLF, KRE and SMH moves; VIX near {vix}.",
+   "breaks": "The 10Y leaves the range on a close."
+  },
+  {
+   "name": "Hot headline, soft core",
+   "tone": "mixed",
+   "looks": "Energy lifts the headline while core stays soft; breakevens rise as real yields fall, leaving the 10Y little changed.",
+   "first": "Thursday's curve page: real 10Y down, breakeven up. Energy and gold lead; rate-sensitives split.",
+   "breaks": "Breakevens and real yields move the same way."
+  }
+ ],
+ "watches": [
+  {
+   "question": "Does the 10Y's CPI move come from real yields or the breakeven?",
+   "horizon": "Thursday's pages (Wednesday's official curve)",
+   "confirm": "The real yield carries the move; the 10Y breakeven stays inside its {be-10y-range-low} to {be-10y-range-high} range since Sep 1.",
+   "changes": "The breakeven leaves that range upward.",
+   "refs": [
+    "be-10y-range-low",
+    "be-10y-range-high",
+    "be-10y"
+   ]
+  },
+  {
+   "question": "Does the 10Y hold below last week's high?",
+   "horizon": "Through Friday's official curve",
+   "confirm": "The 10Y par yield stays below {treasury-10y-w41-high}.",
+   "changes": "A close above it.",
+   "refs": [
+    "treasury-10y",
+    "treasury-10y-w41-high"
+   ]
+  },
+  {
+   "question": "Do semis stabilize after ASML and TSMC?",
+   "horizon": "By Friday's close",
+   "confirm": "SMH matches or beats QQQ on Thursday and Friday.",
+   "changes": "SMH extends its {smh-week} week and QQQ IV30 tops {lab-qqq-iv-oct8}.",
+   "refs": [
+    "smh-week",
+    "lab-qqq-iv-oct8"
+   ]
+  },
+  {
+   "question": "Do regional banks follow the big banks?",
+   "horizon": "Through Wednesday's close",
+   "confirm": "KRE recovers against XLF after Tuesday's and Wednesday's results.",
+   "changes": "KRE extends its {kre-week} week while high yield weakens.",
+   "refs": [
+    "kre-week",
+    "hyg-week"
+   ]
+  },
+  {
+   "question": "Does S&P volatility stay calm through CPI?",
+   "horizon": "Wednesday through Friday closes",
+   "confirm": "VIX closes stay below 17.",
+   "changes": "Two closes at or above 17.",
+   "refs": [
+    "vix",
+    "spy-realized-20"
+   ]
+  }
+ ]
+}

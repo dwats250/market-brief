@@ -575,21 +575,37 @@ def finite_number(value):
     return isinstance(value, (int, float)) and value == value and value not in (float("inf"), float("-inf"))
 
 
-def _alpaca_intraday(payload, histories, now, retrieved_at, source_id):
+def _alpaca_intraday(payload, histories, now, retrieved_at, source_id, missing=None):
+    """Current prints from one snapshot response. `missing`, when given, receives {symbol: reason} for every
+    symbol the response reported but this function did not admit, so no drop is silent."""
     observations = []
+    missing = {} if missing is None else missing
     by_symbol = {row["symbol"]: row for row in histories}
     for symbol, snapshot in payload.items():
         trade = snapshot.get("latestTrade") or {}
         close = (snapshot.get("prevDailyBar") or {}).get("c")
         observed_at = trade.get("t")
         price = trade.get("p")
-        if symbol not in by_symbol or not finite_number(price) or not finite_number(close) or not observed_at:
+        if symbol not in by_symbol:
+            missing[symbol] = "no prior-close history"
+            continue
+        if not finite_number(price) or not finite_number(close) or not observed_at:
+            missing[symbol] = "no trade or prior close in the snapshot"
             continue
         when = timestamp(observed_at)
-        if when.date() != now.date() or when > now:
+        # Bounded by the response that reported the trade, not the run's start: the snapshot is requested seconds
+        # after the run begins, and the busiest tickers trade in that gap most often (W41: SPY absent on 20 of 35
+        # in-session pages; at 4:01 PM after-hours trading is thin). A trade later than its own response is a
+        # clock fault.
+        if when.date() != now.date():
+            missing[symbol] = "no IEX trade yet this session"
+            continue
+        if when > retrieved_at:
+            missing[symbol] = "trade stamped after the snapshot response"
             continue
         value = 100 * (price / close - 1) if close else None
         if value is None or not finite_number(value):
+            missing[symbol] = "no trade or prior close in the snapshot"
             continue
         observations.append(dict(id=f"{symbol}-intraday", topic=symbol, metric="premarket return",
             value=value, unit="%", baseline="Alpaca IEX latest trade versus previous regular close",
@@ -613,14 +629,25 @@ def alpaca_probe(now, symbols=("SPY", "QQQ"), key_id=None, secret_key=None, fetc
         "end": now.date().isoformat(), "limit": 10000 if len(symbols) > 2 else 200,
         "adjustment": "split", "feed": "iex", "sort": "asc",
     }, deadline, key_id, secret_key)
+    snapped = datetime.now(timezone.utc)
     histories = _alpaca_history(bars, now, retrieved, "alpaca-daily")
     return dict(authenticated=True, provider="Alpaca Trading API", plan="Basic", feed="IEX",
                 snapshot_symbols=sorted(snapshots), historical_symbols=sorted(h["symbol"] for h in histories),
                 historical_sessions={h["symbol"]: len(h["dates"]) for h in histories},
                 historical_ranges={h["symbol"]: [h["dates"][0], h["dates"][-1]] for h in histories},
                 intraday_symbols=sorted(r["topic"] for r in _alpaca_intraday(
-                    snapshots, histories, now, retrieved, "alpaca-iex")),
+                    snapshots, histories, now, snapped, "alpaca-iex")),
                 retrieved_at=retrieved.isoformat())
+
+
+def missing_prints(missing, symbols):
+    """`no current print for 3 of 21 symbols — SPY, AAPL (no IEX trade yet this session); GDX (no prior-close
+    history)`: symbols in universe order, grouped by reason."""
+    groups = {}
+    for symbol in [s for s in symbols if s in missing] + [s for s in missing if s not in symbols]:
+        groups.setdefault(missing[symbol], []).append(symbol)
+    detail = "; ".join(f"{', '.join(names)} ({reason})" for reason, names in groups.items())
+    return f"no current print for {len(missing)} of {len(symbols)} symbols — {detail}"
 
 
 def alpaca_collect(now, symbols=ALPACA_UNIVERSE, key_id=None, secret_key=None):
@@ -657,10 +684,20 @@ def alpaca_collect(now, symbols=ALPACA_UNIVERSE, key_id=None, secret_key=None):
         snapshots = _alpaca_request("/v2/stocks/snapshots", {
             "symbols": ",".join(symbols), "feed": "iex",
         }, deadline, key_id, secret_key)
-        observations = _alpaca_intraday(snapshots, histories, now, retrieved, "alpaca-iex")
+        # The snapshot's own observation window closes when its response arrives: that moment bounds every trade
+        # it reports and is when this source was checked.
+        snapped = datetime.now(timezone.utc)
+        intraday["retrieved_at"] = snapped.isoformat()
+        missing = {}
+        observations = _alpaca_intraday(snapshots, histories, now, snapped, "alpaca-iex", missing)
+        missing.update({symbol: "not returned by the snapshot" for symbol in symbols if symbol not in snapshots})
         intraday["coverage_symbols"] = len(observations)
         if not observations:
             intraday.update(status="UNAVAILABLE", reason="no current IEX trade timestamps returned")
+        elif missing:
+            # A partial snapshot is not "Available": the Sources drawer, Coverage limitations and the analyst's
+            # source list name every symbol without a current print and why.
+            intraday.update(status="DEGRADED", reason=missing_prints(missing, symbols))
     except SourceError as exc:
         intraday.update(status="UNAVAILABLE", reason=str(exc))
         observations = []

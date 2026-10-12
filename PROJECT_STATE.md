@@ -205,7 +205,29 @@ sentence is not shown, and a targeted ledger row in dark sits on the surface (fa
 320, 390 and 1280 px in both themes with every drawer open. `examples/` and `publish/index.html` are not
 regenerated here: the scheduler's next run renders the page under the new template.
 
+**Evidence cutoff after collection, session cutoff, no silent drops (2026-10-11/12, branch `fix/evidence-cutoff-after-collection`).**
+
+The W41 reconciliation counted a mean of 14.6 of 21 current prints on 35 in-session pages. NVDA was missing on 25, AAPL on 22, SPY on 20 and XLRE on 2, while the close pages lost none. Oct 12 repeated it: 15 of 21 at 7:02 AM PT and 17 at 8:02.
+
+**Cause (strongly supported, not yet confirmed against Alpaca's trade record):**
+- `cli.run` used the run's start as the evidence cutoff, and `_alpaca_intraday` dropped any trade stamped after it.
+- The IEX snapshot is requested seconds later, after Treasury, BLS, Fed and the daily bars, so the busiest tickers' latest trade read as "future" and was discarded without a note.
+- A missing ticker keeps its daily rows, and SPY always trades at mid-session. That leaves only the time filter.
+
+**Changes:**
+- The evidence cutoff is now when collection finished. A trade is bounded by its own snapshot response, which becomes its `retrieved_at` and the source's checked time. Collection still runs on the start time, and `collection_started_at` and "Generated UTC" keep it.
+- **Session cutoff.** An intraday trade stamped after the regular-session close is refused as session evidence and named. Every close page Sep 25–Oct 9 had admitted two to four 4:00–4:02 PM trades as session prints.
+- **No silent drops.** A symbol without a current print is named with its reason, and a partial snapshot reads Degraded. The Sources drawer status wraps, so a long reason does not overflow at 390 px.
+
+ARCHITECTURE now separates run start, observation window, evidence cutoff and session cutoff. No source, schema, prompt or cadence change. Tests: `tests/test_evidence_cutoff.py` (7) and `tests/test_reader_truth.py` D1.
+
 ## Next
+
+Evidence cutoff after collection: after merge, check these.
+- **In-session pages:** 21 of 21 current prints. Otherwise the Alpaca source reads Degraded and names each missing symbol and why.
+- **Technical details:** an evidence cutoff a few seconds after Generated UTC.
+- **Close pages:** two to four fewer prints, each named "after-hours trade".
+- **Confirming the cause:** if a mid-session page names SPY, NVDA or AAPL as "trade stamped after the snapshot response", the cause is a clock fault. Any other missing reason means the cause is elsewhere: reopen with the run archive's `evidence.json`. The trade-level check (market-review `discussions/2026-10-11-print-coverage.md`) confirms or refutes the cause.
 
 BLS release actuals: after merge, the next run on a release day (the next is the CPI, Wednesday 2026-10-14, 8:30 AM ET)
 should show the `Economic release` card at the top of Macro & rates from the premarket on, `BLS Consumer Price Index ·

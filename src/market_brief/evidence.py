@@ -87,8 +87,9 @@ def session_info(now, checkpoint="PREMARKET"):
                 scheduled_checkpoint_at=checkpoint_data["scheduled_at"])
 
 
-def normalize_observation(raw, now, near_close=None):
-    """`near_close` is the exchange close for a post-close checkpoint; otherwise None."""
+def normalize_observation(raw, now, near_close=None, session_close=None):
+    """`near_close` is the exchange close for a post-close checkpoint; otherwise None. `session_close` is this
+    run's regular-session close: an intraday trade stamped after it is after-hours, not session evidence."""
     keys = ("id", "topic", "metric", "value", "unit", "baseline", "frequency",
             "observed_at", "retrieved_at", "source_id", "status", "reason")
     row = {key: raw.get(key) for key in keys}
@@ -125,6 +126,11 @@ def normalize_observation(raw, now, near_close=None):
             observed = timestamp(row["observed_at"])
             if observed > now or observed > retrieved:
                 return reject("INVALID", "future observation")
+            # The evidence cutoff bounds a print in time; the session bounds what it can stand for. A trade after the
+            # regular-session close (a 4:00:30 PM IEX trade at the 4:01 PM close snapshot) is after-hours, so it never
+            # becomes a closing print, a near-close print, a closing comparison or the close handoff's snapshot.
+            if session_close is not None and observed > session_close:
+                return reject("UNAVAILABLE", "after-hours trade, after the regular-session close")
             age = (now - observed).total_seconds()
             if age > 1200:
                 if (near_close is not None and near_close - NEAR_CLOSE_WINDOW <= observed <= near_close
@@ -192,9 +198,10 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
                   observations=[], history=[], derived=[], events=[], context_items=[],
                   attention=[], previous=None, cuttingboard=raw.get("cuttingboard", {
                       "status": "UNAVAILABLE", "reason": "not requested"}))
-    near_close = timestamp(packet["run"]["session"]["close"]) if checkpoint == "CLOSE_1M" else None
+    session_close = timestamp(packet["run"]["session"]["close"])
+    near_close = session_close if checkpoint == "CLOSE_1M" else None
     for raw_row in raw.get("observations", []):
-        row = normalize_observation(raw_row, now, near_close)
+        row = normalize_observation(raw_row, now, near_close, session_close)
         source = by_source.get(row["source_id"])
         if not source:
             raise ValueError("observation references unknown source")

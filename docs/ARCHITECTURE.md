@@ -82,8 +82,22 @@ UCO is a leveraged fund, not crude oil.
 
 ## Freshness and source failures
 
-Set one `target_time` at run start. Collect within five minutes. Intraday
-observations after that cutoff are excluded or require a new target/run. For
+A live run keeps four clocks apart:
+
+| Clock | What it is | Where it lives | What it decides |
+|---|---|---|---|
+| Run start | When the run began | `collection_started_at`, `actual_started_at`, "Generated UTC" | The session, the date and the windows that collection runs on |
+| Observation window | Each request's own span, closing when its response arrives | Each row's `retrieved_at` and its source's checked time | The latest trade a response can report: an IEX trade is bounded by the snapshot response that reported it |
+| Evidence cutoff | When collection finished | `run.target_time`, "Evidence cutoff UTC" | Ages (live, delayed, stale) and "future"; no row may be observed after it |
+| Session cutoff | The exchange's regular-session close for this run's session | `run.session.close` | What a print can stand for: a trade after the close is after-hours, never a closing, near-close or session print |
+
+Collect within five minutes. Intraday observations after the evidence cutoff are excluded or need a new
+target or run. Until 2026-10-11 the evidence cutoff was the run's start, so a trade reported during collection
+read as "future", and the busiest tickers lost their current prints. The session cutoff is a separate bound
+(2026-10-12): a later evidence cutoff never admits an after-hours trade into regular-session analysis. At the
+4:01 PM close snapshot, an IEX trade stamped after 4:00:00 PM is refused and named in Coverage limitations.
+A symbol the collector cannot give a current print is never dropped silently. Its source reads Degraded, and
+the reason names each such symbol and why. For
 premarket v0, accept timestamped delayed prices up to 20 minutes old, visibly
 labeled DELAYED; this is a design tolerance, not an assertion of real-time access.
 Quotes of unknown age are UNKNOWN, not current. Baseline spreads need compatible

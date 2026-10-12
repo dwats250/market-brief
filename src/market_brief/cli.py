@@ -259,10 +259,12 @@ def run(args):
         if raw.get("cuttingboard"):
             raw["cuttingboard"] = cuttingboard_record(raw["cuttingboard"], target, target)
     else:
-        target = started
-        raw = collect_live(target, include_cuttingboard=args.cuttingboard)
+        raw = collect_live(started, include_cuttingboard=args.cuttingboard)
         if args.input:
             raw = merge_input(raw, read_json(args.input))
+        # The evidence cutoff is when collection finished. At the run's start, every print reported during
+        # collection read as a future observation, and the busiest tickers lost their current print.
+        target = datetime.now(timezone.utc)
     # A commissioning run describes the market phase it actually collected in.
     checkpoint = current_phase(target) if commissioning else args.checkpoint
     kind = checkpoint_kind(checkpoint)

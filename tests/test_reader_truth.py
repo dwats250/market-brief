@@ -17,7 +17,7 @@ from test_pipeline import fixture_packet, narrative
 from test_render import clock_lines
 
 from market_brief import cli
-from market_brief.continuity import interpretation_record
+from market_brief.continuity import closing_data, interpretation_record
 from market_brief.evidence import ROOT, evidence_catalog, finalize_coverage, normalize_observation
 from market_brief.render import (
     change_column,
@@ -47,6 +47,7 @@ SESSION = dict(open=f"{TUE}T13:30:00+00:00", close=f"{TUE}T20:00:00+00:00")
 def with_prints(now, checkpoint, observed_at, prints=PRINTS):
     """The fixture packet at `now`, with current prints admitted through the real normalizer."""
     clock = utc(now)
+    # As evidence.normalize_packet admits them: bounded by the session's close at every checkpoint.
     near_close = utc(SESSION["close"]) if checkpoint == "CLOSE_1M" else None
     packet = packet_at(clock, checkpoint=checkpoint, intraday=False)
     for symbol, value in prints:
@@ -54,7 +55,7 @@ def with_prints(now, checkpoint, observed_at, prints=PRINTS):
                    baseline="latest trade versus previous regular close", frequency="intraday",
                    observed_at=observed_at, retrieved_at=clock.isoformat(), source_id="sample-prices",
                    status="AVAILABLE", reason="")
-        row = normalize_observation(raw, clock, near_close)
+        row = normalize_observation(raw, clock, near_close, utc(SESSION["close"]))
         row["expected_freshness"] = "LIVE"
         packet["observations"].append(row)
     return finalize_coverage(packet)
@@ -143,10 +144,20 @@ def test_c_a_provisional_session_ending_print_reads_near_close():
     assert "not official closing bars" in found["page"]
 
 
-def test_d1_a_print_after_the_close_reads_after_hours():
+def test_d1_a_print_after_the_close_is_after_hours_and_never_closing_evidence():
+    """2026-10-12: all nine scheduled close pages from Sep 25 to Oct 9 admitted two to four IEX trades after 4:00 PM
+    (SPY on most), and the closing status, comparisons and close handoff read them as session prints. An
+    after-hours trade is refused as session evidence and named; the label itself is still tested in D2."""
     packet = with_prints(f"{TUE}T20:10:00+00:00", "CLOSE_1M", f"{TUE}T20:05:00+00:00")
-    assert {r["status"] for r in packet["observations"] if r["frequency"] == "intraday"} == {"DELAYED"}
-    assert_every_path_reads(surfaces(packet), AFTER_HOURS_LABEL)
+    rows = [r for r in packet["observations"] if r["frequency"] == "intraday"]
+    assert {(r["status"], r["value"], r["reason"]) for r in rows} == {
+        ("UNAVAILABLE", None, "after-hours trade, after the regular-session close")}
+    assert closing_data(packet)["status"] != "PROVISIONAL_NEAR_CLOSE"
+    assert f"SPY: {rows[0]['reason']}" in packet["coverage"]["limitations"]
+    # The last regular-session second is still the session: a print at the close is a near-close print.
+    packet = with_prints(f"{TUE}T20:25:00+00:00", "CLOSE_1M", f"{TUE}T20:00:00+00:00")
+    assert {r["status"] for r in packet["observations"] if r["frequency"] == "intraday"} == {"PROVISIONAL"}
+    assert closing_data(packet)["status"] == "PROVISIONAL_NEAR_CLOSE"
 
 
 # --- D2, D3, D4: unknown phase, mixed tables, never an official close label ---------------------------

@@ -653,7 +653,7 @@ def since_caption(anchors, unpublished=()):
     return "vs " + " and ".join(parts) if parts else None
 
 
-def presentation(packet, narrative=None, context=None, interpretation=None):
+def presentation(packet, narrative=None, context=None, interpretation=None, glance=None):
     if interpretation is None:
         interpretation = interpretation_record(packet, narrative, context)
     narrative = interpretation["narrative"]
@@ -976,7 +976,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None):
         since_label += f" · through the {interpretation_clock} analysis"
     return dict(
         mode=packet["run"]["mode"], status=status, commissioning=commissioning,
-        live_commissioning=live_commissioning, checkpoint=checkpoint, kind=kind, carried=carried,
+        live_commissioning=live_commissioning, checkpoint=checkpoint, kind=kind, carried=carried, glance=glance,
         # The scheduler's idempotency marker; a commissioning run never claims a scheduled slot.
         marker_checkpoint="COMMISSIONING" if packet["run"].get("commissioning") else checkpoint,
         edition_label=EDITION_LABELS.get(checkpoint, "Market edition"),
@@ -1228,10 +1228,18 @@ def markdown(view):
     return "\n".join(lines)
 
 
-def render(packet, narrative=None, context=None, interpretation=None):
+def render(packet, narrative=None, context=None, interpretation=None, glance=None):
     """Render one edition. A synthesis edition passes its narrative (and freezes it on the way); a
-    deterministic refresh passes the frozen `interpretation` record it carries."""
-    view = presentation(packet, narrative, context, interpretation)
+    deterministic refresh passes the frozen `interpretation` record it carries. `glance` is the optional overseas
+    line's view (`glance.view`), kept out of the packet so it never reaches evidence, continuity or the analyst."""
+    view = presentation(packet, narrative, context, interpretation, glance)
     env = Environment(loader=FileSystemLoader(ROOT / "templates"),
                       autoescape=select_autoescape(default=True))
-    return markdown(view), env.get_template("brief.html.j2").render(**view)
+    template = env.get_template("brief.html.j2")
+    try:
+        return markdown(view), template.render(**view)
+    except Exception:
+        if glance is None:
+            raise
+        # The optional overseas line never fails an edition: render without it.
+        return markdown(view), template.render(**dict(view, glance=None))

@@ -191,6 +191,53 @@ and 30 days of normalized run evidence/reports, or the source's shorter permitte
 retention. Raw responses are ephemeral. Do not prune automatically in v0; document
 a later manual cleanup command rather than introducing a background job.
 
+## Global Market Glance (built, off)
+
+One optional line under the clocks shows five overseas indices (KOSPI, Nikkei 225, TAIEX, Hang Seng, DAX) and each
+one's latest **completed** session. The code is `src/market_brief/glance.py`; it is display only.
+
+**Isolation.** The record stays out of the packet, so it never reaches evidence, continuity, the freshness rules or
+the analyst's context. Any failure, in collection or in rendering, drops to a quiet "unavailable today" line or to no
+line at all. It never fails a run.
+
+**Sessions.**
+- A market's expected session is its latest one whose regular close is at or before the day's first collection. The
+  `exchange_calendars` package, already a dependency, defines it (XKRX, XTKS, XTAI, XHKG, XETR), so holidays and
+  early closes follow its rules.
+- At the US premarket, the DAX shows the previous Frankfurt session, labelled with its weekday. Any session other than
+  today's carries its weekday, and the expanded view gives both dates ("Tue, Oct 13 vs Mon, Oct 12").
+
+**Collection.**
+- At most once a day: the first LIVE run collects.
+- Every later run reads the record back from the `data-glance` attribute of the `publish/index.html` its checkout
+  holds, the same way it reads `data-evidence-cutoff`.
+- A market whose expected session is missing is fetched again, alone, at most three collections a day.
+- The DAX is never fetched a second time for Frankfurt's close.
+
+**Measure.**
+- The percentile of today's absolute close-to-close move among the index's own absolute daily moves, using a static
+  baseline (`config/glance_baseline.json`, about three years). The percentile is the share of the baseline strictly
+  smaller than today's move.
+- Bold at the 95th percentile or above. There is no σ, no model and no interpretation.
+- A missing or malformed baseline file marks nothing.
+
+**Refreshing the baseline (manual).** Write a CSV with columns `market,date,close` (market codes `KOSPI`, `N225`,
+`TAIEX`, `HSI`, `DAX`; about three years of daily closes each, from a source whose terms allow it), then run
+`python -m market_brief glance-baseline --from-file closes.csv` and commit the resulting file. Repeat yearly if wanted.
+
+**Why it is off.** `glance.SOURCE` is `None`. No free source was found (2026-10-13) that permits public display of all
+five indices:
+- EODHD's free plan forbids personal users "displaying… the Information… in its original or repackaged form";
+- Nikkei requires a licence "beyond personal use";
+- the Hang Seng Indexes note forbids further dissemination without a licence agreement;
+- STOXX/DAX offers no free display allowance that could be found;
+- Stooq has required an API key since March 2026, with unclear terms;
+- only TAIEX is clearly available, as Taiwan open government data (Open Government Data License 1.0).
+
+To turn the Glance on, set `SOURCE` to a fetch function returning `{code: [(session_date, close), ...]}` for a lawful
+source, add its host to the collector's allowlist and its key to the workflow, and commit a baseline. US-listed ETFs
+are not a substitute: they trade in dollars during the US session.
+
 ## Continuity (v0.1)
 
 Every observation and derived row carries a stable `identity` (instrument, metric, window,

@@ -11,7 +11,7 @@ import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import __version__
+from . import __version__, glance
 from .collect import ALPACA_UNIVERSE, alpaca_probe, collect_live, cuttingboard_record
 from .context import analyst_context, edition_profile
 from .continuity import (
@@ -300,10 +300,13 @@ def run(args):
         prior["reason"] = f"{prior['reason']}; {bundle_note}" if prior["reason"] else bundle_note
     comparisons = compare_all(prior, packet)
     page = Path(RUN_ROOT) / "publish" / "index.html"
+    published_page = page.read_text() if page.is_file() else ""
     packet["continuity"] = dict(status=prior["status"], reason=prior["reason"], anchors=prior["anchors"],
                                 comparisons=comparisons,
-                                unpublished=unpublished_anchors(prior["anchors"],
-                                                                page.read_text() if page.is_file() else ""))
+                                unpublished=unpublished_anchors(prior["anchors"], published_page))
+    # Optional overseas line: collected at most once a day and carried in the published page. Off while
+    # glance.SOURCE is None; never in the packet, so evidence, continuity and the analyst's context are unchanged.
+    overseas = glance.view(glance.resolve(target, published_page)) if mode == "LIVE" and not experiment else None
     write_json(folder / "evidence.json", packet)
     evidence_hash = digest(packet)
     context, interpretation, interpretation_note = None, None, ""
@@ -402,7 +405,7 @@ def run(args):
         published = False
         if interpretation is not None:
             try:
-                markdown, page = render(packet, narrative, context, interpretation=interpretation)
+                markdown, page = render(packet, narrative, context, interpretation=interpretation, glance=overseas)
             except Exception as exc:  # noqa: BLE001 - any rendering defect is diagnosed like a rejection
                 # The accepted narrative is already on disk; nothing has been published.
                 raise ValueError(f"render failed after acceptance ({type(exc).__name__}: {exc})") from None
@@ -585,7 +588,8 @@ def scheduled(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="One local pre-market briefing, grounded in evidence")
     parser.add_argument("command", choices=["premarket", "schedule", "resolve-scheduled",
-                                             "alpaca-probe", "open", "publish", "continuity-restore"])
+                                             "alpaca-probe", "open", "publish", "continuity-restore",
+                                             "glance-baseline"])
     parser.add_argument("--replay", action="store_true", help="offline fictional evidence + narrative")
     parser.add_argument("--input", type=Path, help="sourced input JSON; SAMPLE for replay, LIVE otherwise")
     parser.add_argument("--synthesize", action="store_true", help="call Claude even for SAMPLE evidence")
@@ -617,6 +621,12 @@ def main(argv=None):
             return 0
         if args.command == "continuity-restore":
             return restore_continuity(args)
+        if args.command == "glance-baseline":
+            # Manual, once: --from-file closes.csv (market,date,close; about three years per index).
+            if not args.from_file:
+                raise ValueError("glance-baseline needs --from-file")
+            print(glance.write_baseline(args.from_file))
+            return 0
         if args.command == "resolve-scheduled":
             now = datetime.now(timezone.utc)
             checkpoint = scheduled_checkpoint(now)

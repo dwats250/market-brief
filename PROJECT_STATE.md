@@ -221,6 +221,12 @@ The W41 reconciliation counted a mean of 14.6 of 21 current prints on 35 in-sess
 
 ARCHITECTURE now separates run start, observation window, evidence cutoff and session cutoff. No source, schema, prompt or cadence change. Tests: `tests/test_evidence_cutoff.py` (7) and `tests/test_reader_truth.py` D1.
 
+**Global Market Glance, built and off (2026-10-13, branch `feat/global-glance`).**
+- `glance.py`, one `<details>` under the clocks (existing `proof` and `refs` styles; no CSS change), and a manual `glance-baseline` command.
+- Collection is at most once a day and carried in the published page. Display only.
+- `glance.SOURCE` stays `None` until a free source that permits public display is admitted; with it off, the page is byte-identical.
+- Tests: `tests/test_glance.py` (24).
+
 ## Next
 
 Evidence cutoff after collection: after merge, check these.

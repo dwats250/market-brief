@@ -99,7 +99,8 @@ def test_the_line_publishes_and_stays_out_of_evidence_and_context(day, monkeypat
         lambda codes: {c: snap(101.0, when=when) for c in codes}, lambda: when + timedelta(seconds=12)))
     assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
     page = day.page("OPEN_30M")
-    assert "Global equity proxies · EWY +1.00% · EWJ +1.00%" in page and "They are proxies" in page
+    assert "Global equity proxies<br>EWY +1.00% · EWJ +1.00%" in page and "They are proxies" in page
+    assert "EWG +1.00%</summary>" in page and "Prices from the Tue, Sep 8 US session." in page
     for name in ("evidence.json", "analyst_context.json"):
         text = (day.folder("OPEN_30M") / name).read_text()
         assert "EWY" not in text and "glance" not in text
@@ -125,3 +126,21 @@ def test_a_broken_view_renders_the_edition_without_it():
     _, plain = render(fixture_packet(), narrative())
     _, page = render(fixture_packet(), narrative(), glance=dict(status="ok", markets=None))
     assert page == plain
+
+
+def test_the_date_shows_on_the_ticker_line_only_when_it_is_not_the_page_date():
+    from test_pipeline import fixture_packet, narrative
+
+    from market_brief.render import render
+
+    packet = fixture_packet()
+    year, month, day = (int(part) for part in packet["run"]["session"]["date"].split("-"))
+    today = datetime(year, month, day)
+    markets = [dict(code=c, label=c, text="+1.00%", unusual=False, rank="", when="") for c in glance.CODES]
+    for when, on_line in ((today, False), (today - timedelta(days=4), True)):
+        stamp = f"{glance.WEEKDAYS[when.weekday()]}, {when:%b} {when.day}"
+        _, page = render(packet, narrative(), glance=dict(status="ok", markets=markets, session=stamp,
+                                                          threshold="95", window=""))
+        assert (f"EWG +1.00% · {stamp}</summary>" in page) is on_line
+        assert "EWG +1.00%</summary>" in page or on_line
+        assert f"Prices from the {stamp} US session." in page

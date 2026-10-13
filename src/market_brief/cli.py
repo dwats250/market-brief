@@ -300,13 +300,14 @@ def run(args):
         prior["reason"] = f"{prior['reason']}; {bundle_note}" if prior["reason"] else bundle_note
     comparisons = compare_all(prior, packet)
     page = Path(RUN_ROOT) / "publish" / "index.html"
-    published_page = page.read_text() if page.is_file() else ""
     packet["continuity"] = dict(status=prior["status"], reason=prior["reason"], anchors=prior["anchors"],
                                 comparisons=comparisons,
-                                unpublished=unpublished_anchors(prior["anchors"], published_page))
-    # Optional overseas line: collected at most once a day and carried in the published page. Off while
-    # glance.SOURCE is None; never in the packet, so evidence, continuity and the analyst's context are unchanged.
-    overseas = glance.view(glance.resolve(target, published_page)) if mode == "LIVE" and not experiment else None
+                                unpublished=unpublished_anchors(prior["anchors"],
+                                                                page.read_text() if page.is_file() else ""))
+    # Optional Global Equity Proxies line (five US-listed country ETFs): display only, never in the packet, so
+    # evidence, continuity and the analyst's context are unchanged; any failure is a quiet line, never a failed run.
+    overseas = (glance.view(glance.resolve(target, packet["run"]["session"], checkpoint))
+                if mode == "LIVE" and not experiment else None)
     write_json(folder / "evidence.json", packet)
     evidence_hash = digest(packet)
     context, interpretation, interpretation_note = None, None, ""

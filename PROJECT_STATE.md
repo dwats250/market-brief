@@ -221,6 +221,11 @@ The W41 reconciliation counted a mean of 14.6 of 21 current prints on 35 in-sess
 
 ARCHITECTURE now separates run start, observation window, evidence cutoff and session cutoff. No source, schema, prompt or cadence change. Tests: `tests/test_evidence_cutoff.py` (7) and `tests/test_reader_truth.py` D1.
 
+**Global Equity Proxies (2026-10-13).** One `<details>` under the clocks shows EWY, EWJ, EWT, EWH and EWG, each against its previous US close, labelled as proxies.
+- One Alpaca snapshot request per run; existing freshness rules; display only; quiet on failure.
+- No baseline file is committed yet, so nothing is highlighted until one is built (`glance-baseline`).
+- Tests: `tests/test_glance.py`.
+
 ## Next
 
 Evidence cutoff after collection: after merge, check these.

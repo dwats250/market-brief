@@ -191,6 +191,28 @@ and 30 days of normalized run evidence/reports, or the source's shorter permitte
 retention. Raw responses are ephemeral. Do not prune automatically in v0; document
 a later manual cleanup command rather than introducing a background job.
 
+## Global Equity Proxies
+
+One optional line under the clocks shows five US-listed country ETFs: EWY (Korea), EWJ (Japan), EWT (Taiwan), EWH
+(Hong Kong) and EWG (Germany). Each shows its current print against its previous US close, with the US session date.
+
+**What they are.** Proxies, not the foreign indices: funds priced in US dollars during US hours, carrying currency
+moves. They do not report the latest foreign sessions. No free source permits public display of the native indices
+(2026-10-13), so the owner chose these.
+
+**Collection.** One IEX snapshot request per LIVE run, on the existing Alpaca integration (same host and keys). The
+existing freshness rules (`normalize_observation`) apply: stale, future and after-hours prints show as "—", with the
+reason in the expanded view. The snapshot's own response time is its cutoff.
+
+**Isolation.** Code lives in `src/market_brief/glance.py`. It is display only: not in the packet, so evidence,
+continuity and the analyst's context are unchanged. Any failure is a quiet "unavailable" line. Rendering falls back to
+the edition without the line.
+
+**Highlight (optional).** A static baseline, `config/glance_baseline.json`, holds each fund's sorted absolute daily
+moves (about three years). A move larger than 95% of them is bold. Build it once:
+`python -m market_brief glance-baseline --from-file closes.csv`, with columns `symbol,date,close`. Without the file,
+nothing is marked.
+
 ## Continuity (v0.1)
 
 Every observation and derived row carries a stable `identity` (instrument, metric, window,

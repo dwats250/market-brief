@@ -35,9 +35,9 @@ something a person cared about, never as a dashboard, a terminal, a card grid or
 | Plane | Holds | Its one signature |
 |---|---|---|
 | Narrative | Headline, dek, paragraphs, the take, What changed, flags, events | None: ink on paper |
-| Evidence | Tables, the curve module, the release card, opened `§` evidence | Caps caption and tabular figures; compact objects on the inset surface |
-| Watch | Open and carried watches | The teal gutter rule |
-| Audit | The guide, Sources & coverage, the footer | Small muted type behind a disclosure |
+| Evidence | Tables, the rates strip, the curve module, the release card, opened `§` evidence (its rows and its chart), the before → after lines under a verdict | Caps caption and tabular figures; compact objects on the inset surface |
+| Watch | Open and carried watches | The teal gutter rule, grey once the horizon has passed |
+| Audit | The guide, Sources & coverage, the footer | Small muted type behind a disclosure; Coverage limitations open when there are any |
 
 A new element names its plane and reuses that plane's signature. If it needs a new one, change this
 document in the same pull request.
@@ -65,11 +65,22 @@ This is the whole set. There are no icons.
 
 | Mark | Means | Where |
 |---|---|---|
-| `§` | Evidence behind this claim | After a claim; never in tables |
+| `§` | Evidence behind this claim | After a claim, or on the window line of its before → after rows; never in tables |
 | Teal square, 5px, in the gutter | A change since the last read | What changed |
-| Teal rule, 2px, in the gutter | An open question (grey once retired) | Watches |
+| Teal rule, 2px, in the gutter | An open question (grey once its horizon has passed or it is retired) | Watches |
 | `▸` / `▾` | Collapsed / open | Every drawer and ledger group |
+| `→` between two values | The same measurement at two clocks; never the path between them | Before → after rows |
+| `↑` `↓` `→` in direction colour | The sign of the move the text beside it names | Before → after rows |
 | `·` `—` `→` `−` `+` | Separator, label dash, revision, sign | As typed |
+
+## The evidence chart
+
+An opened `§` drawer may draw at most two small figures, one per cited instrument with admitted close history,
+under its rows and above one shared legend. Each is geometry over values the ledger already holds: the last
+twenty regular closes as a teal path ending at the previous close on a hairline at zero, the fifty-session
+average as a dotted rule at its own distance, and the drawer's cited prints of this session as isolated dots in
+direction colour, labelled with their clocks and never joined, because two prints are two measurements, not a
+path. A drawer whose rows cite no close history draws nothing, and table proofs never draw.
 
 ## Instruments
 
@@ -85,8 +96,8 @@ ticker alone where it is the name. Tables and flags use the same form. Evidence 
 - Do not add a font size, weight or spacing value when an existing one is within 2px.
 - Spacing tiers: 2–8px inside a component, 12px between paragraphs, 24px between components, 32px between
   subsections, and the section break. Only the section break shrinks on phones.
-- Widths: prose 700px, compact data 560px (the rates table, spreads, chart and release card share it),
-  five-column tables the full column.
+- Widths: prose 700px, compact data 560px (the rates strip and table, spreads, chart, release card and the
+  before → after rows share it), five-column tables the full column.
 
 ## Themes and phones
 

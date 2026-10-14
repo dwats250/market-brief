@@ -252,7 +252,7 @@ def test_the_guide_is_collapsed_above_sources_and_leads_with_the_latest_move():
     for text in re.findall(r"<dd>([^<]*)</dd>", body):
         assert 1 <= len(re.findall(r"[.!?](?:\s|$)", text.replace("&amp;", "&"))) <= 2, text  # one or two sentences
     moves = body.split('<details class="guide-moves"><summary>See all curve moves</summary>', 1)[1]
-    assert len(re.findall(r"<dt>", moves)) == 13 and "<dt>Mixed curve move</dt>" in moves
+    assert len(re.findall(r"<dt>", moves)) == 17 and "<dt>Mixed curve move</dt>" in moves
     assert "How to read" not in md and "See all curve moves" not in md  # HTML only
     assert "today" not in body.lower()
 

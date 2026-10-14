@@ -226,7 +226,39 @@ ARCHITECTURE now separates run start, observation window, evidence cutoff and se
 - No baseline file is committed yet, so nothing is highlighted until one is built (`glance-baseline`).
 - Tests: `tests/test_glance.py`.
 
+**Readability pass (2026-10-14, branch `feat/readability-refinement`).** Presentation and one deterministic
+classifier; the information architecture, content, prompt, schema, validator, continuity and cadence are unchanged.
+(1) What changed: a verdict whose citations hold one instrument's measurement at two clocks renders a before → after
+line under its sentence (`SPY · −0.53% → +0.21% · ↑ turned higher`, then the window `Premarket 5:41 AM → Intraday
+12:06 PM PT · vs prior close` with the `§` marker on it, so the provenance opens under the comparison); the window
+names each clock's phase, so a premarket print is never conflated with an intraday one, and the arrow joins two
+measurements, never a path. (2) An opened `§` drawer draws up to two evidence charts, one per cited instrument with
+admitted close history: the last twenty regular closes ending at the previous close on a zero rule, the 50DMA
+dotted, and the drawer's cited prints of this session as isolated labelled dots in direction colour; a carried page
+draws the prints its analyst saw. Geometry only, from the history and rows the page already holds; no new data.
+(3) A rates strip under the lead (four tenors with daily changes, 2s10s and 5s30s, the named move, the notes that
+place the curve in time, a link to the full module) read from the same module as Macro & rates, under the curve's
+own dated caption. (4) The curve classifier is `curve-move.v2`: a parallel shift needs both legs at the threshold in
+one direction; only the leading leg there is `Broadly higher/lower, mild steepening/flattening` by the sign of Δs
+(Tue, Oct 13: 2Y −1, 10Y −3 read "Parallel shift lower" under v1). Two releases on one clock are named once in the
+curve's release note. (5) Wording: the no-change note reads "Nothing comparable has moved …"; a listed event whose
+time has passed without admitted values reads `released · values not collected`. (6) Watches carry a state
+(`active`, `unresolved`, `judged`, `expired`, `completed`): the gutter turns grey once a horizon has passed, and a
+live watch with a verdict points to it (`verdict in What changed`) without repeating it. (7) Sources & coverage: a
+smaller heading, Coverage limitations open and counted when there are any (`none recorded` otherwise). Markdown
+carries the same strip, lines and states. Tests: `tests/test_readability_pass.py` (31, three of them phone-width in
+headless Chrome with every drawer open). `examples/` and `publish/index.html` are not regenerated here.
+
 ## Next
+
+Readability pass: after merge, on the first live page check the before → after lines under each verdict against
+their `§` rows, open a `§` on a watch that cites a print and confirm the chart's dots match the rows' values and
+clocks, confirm the strip's tenors equal the Macro & rates table, and read the curve label on a day the old rule
+would have called parallel. Not in this slice, each a follow-up decision: real OHLC candles (Alpaca's daily bars
+already carry open/high/low; the collector keeps only closes, so a session's candle would need `o`/`h`/`l` kept per
+bar and the previous session's open shown beside its close), intraday bars for a continuous path between prints
+(a new collection scope), and a prompt line asking the analyst to say plainly when a carried watch's premise has
+changed (the prompt sits at 10,990 of 11,000 bytes, so it needs a trim elsewhere and a paid-synthesis judgment).
 
 Evidence cutoff after collection: after merge, check these.
 - **In-session pages:** 21 of 21 current prints. Otherwise the Alpaca source reads Degraded and names each missing symbol and why.

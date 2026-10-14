@@ -92,8 +92,9 @@ def test_module_renders_in_order_with_the_analyst_paragraphs_after_the_record():
                        ["treasury-2s10s-change"])
     md, page = render(rates_packet(), value)
     section = macro_section(page)
-    markers = ['<div class="caption">U.S. Treasury par curve<span>', '<table class="narrow-first rates">',
-               '<dl class="spreads">', '<p class="curve-move">', '<div class="curve-chart">',
+    markers = ['<div class="caption" id="treasury-curve">U.S. Treasury par curve<span>',
+               '<table class="narrow-first rates">', '<dl class="spreads">', '<p class="curve-move">',
+               '<div class="curve-chart">',
                '<div class="para">Treasuries sold off', "View exact values &amp; baselines"]
     positions = [section.index(marker) for marker in markers]
     assert positions == sorted(positions)
@@ -255,8 +256,8 @@ def test_a_curve_past_the_admission_window_keeps_a_dated_module():
     assert packet["curve"]["freshness"] == "stale" and not any(r["topic"].startswith("US ") for r in packet["derived"])
     md, page = render(packet, narrative())
     section = macro_section(page)
-    assert '<div class="caption">U.S. Treasury par curve<span>Fri, Sep 4 · latest official daily observation</span>' \
-        in section
+    assert ('<div class="caption" id="treasury-curve">U.S. Treasury par curve<span>Fri, Sep 4 · latest official daily '
+            'observation</span>') in section
     assert "This curve is more than a week old, so its yields are not shown." in section
     assert "<table" not in section.split('<div class="para">', 1)[0] and "curve-chart" not in section
     assert "**U.S. TREASURY PAR CURVE** · Fri, Sep 4 · latest official daily observation" in md

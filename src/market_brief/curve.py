@@ -26,7 +26,7 @@ SPREAD_LEVEL, SPREAD_CHANGE = "curve spread", "daily spread change"
 # A spread level is a level, not a move: its own unit keeps it unsigned on the page and outside move magnitudes.
 SPREAD_UNIT = "bp spread"
 SPREAD_FORMULA = "curve-spread.v1"
-RULE_VERSION = "curve-move.v1"
+RULE_VERSION = "curve-move.v2"
 STALE_AFTER_DAYS = 5
 # Treasury's par curve is fitted from indicative quotes taken at or near 3:30 PM ET on its observation date.
 QUOTE_TIME = time(15, 30)
@@ -44,6 +44,12 @@ SENTENCES = {
     "Twist flattener": "The front end rose while the long end fell.",
     "Parallel shift higher": "Yields rose by similar amounts across the curve.",
     "Parallel shift lower": "Yields fell by similar amounts across the curve.",
+    # One leg moved and the other barely did: the curve moved in one direction with a tilt too small to name as a
+    # steepener or flattener. Not a parallel shift, which needs both legs at the threshold.
+    "Broadly higher, mild steepening": "Yields rose across the curve, a little more at the long end.",
+    "Broadly higher, mild flattening": "Yields rose across the curve, a little more at the front end.",
+    "Broadly lower, mild steepening": "Yields fell across the curve, a little more at the front end.",
+    "Broadly lower, mild flattening": "Yields fell across the curve, a little more at the long end.",
     "Slight steepening": "The curve steepened slightly; neither end moved much.",
     "Slight flattening": "The curve flattened slightly; neither end moved much.",
     "Little changed": "Yields were little changed.",
@@ -96,11 +102,16 @@ def classify(d2, d10, long_change=None, threshold=3.0):
     Δs = Δ10 − Δ2; the leading leg has the larger |Δ|; every threshold comparison is inclusive. A tie between
     the legs never decides a direction: equal magnitudes with opposite signs are a twist at the threshold and a
     slight or quiet move below it, and equal magnitudes with the same sign agree.
+
+    Under the threshold for a steepener or flattener, a parallel shift needs both legs at the threshold in one
+    direction (v1 needed only the leading leg, so 2Y −1 / 10Y −3 read as parallel). When only the leading leg is
+    there, the move is broadly in its direction with a mild tilt named by the sign of Δs (v2).
     """
     if not threshold > 0:
         raise ValueError("curve move threshold must be positive")
     spread = d10 - d2
     lead = d10 if abs(d10) >= abs(d2) else d2
+    trail = d2 if lead is d10 else d10
     if d2 * d10 < 0 and min(abs(d2), abs(d10)) >= threshold:
         label, rule = ("Twist steepener" if spread > 0 else "Twist flattener"), "twist"
     elif abs(spread) >= threshold:
@@ -110,7 +121,11 @@ def classify(d2, d10, long_change=None, threshold=3.0):
         else:
             label, rule = f"Slight {'steepening' if spread > 0 else 'flattening'}", "slight"
     elif abs(lead) >= threshold:
-        label, rule = f"Parallel shift {'higher' if lead > 0 else 'lower'}", "parallel"
+        direction = "higher" if lead > 0 else "lower"
+        if abs(trail) >= threshold and lead * trail > 0:
+            label, rule = f"Parallel shift {direction}", "parallel"
+        else:
+            label, rule = f"Broadly {direction}, mild {'steepening' if spread > 0 else 'flattening'}", "broad"
     else:
         label, rule = "Little changed", "quiet"
     sentence, note = SENTENCES[label], ""
@@ -201,12 +216,18 @@ def release_notes(curve_date, run, events, context_items):
     found.sort(key=lambda item: timestamp(item["at"]))
     names = [f"the {_clock(item['at'], run)} FOMC statement" if item["kind"] == "fomc"
              else f"the {_clock(item['at'], run)} {item['title']} release" for item in found[:2]]
+    first, second = found[:2] + [None] * (2 - len(found[:2]))
+    if second and first["kind"] == second["kind"] == "release" and first["at"] == second["at"]:
+        # Two releases on one clock (the CPI and Real Earnings at 8:30 AM ET) are named once, on that clock.
+        names = [f"the {_clock(first['at'], run)} {first['title']} and {second['title']} releases"]
     if not found:
         text = ""
-    elif len(found) == 1:
+    elif len(found) == 1 or len(names) == 1 and len(found) == 2:
         text = f"Curve predates {names[0]}."
     elif len(found) == 2:
         text = f"Curve predates {names[0]} and {names[1]}."
+    elif len(names) == 1:
+        text = f"Curve predates {names[0]} and {len(found) - 2} more."
     else:
         text = f"Curve predates {names[0]}, {names[1]} and {len(found) - 2} more."
     return dict(releases=found, text=text)

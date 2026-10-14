@@ -52,8 +52,12 @@ def test_a_verdict_citing_one_measurement_at_two_clocks_renders_one_before_after
     # carries the evidence marker, so the provenance opens under the comparison, not over it.
     assert ('<span class="window">Premarket 5:41 AM → Intraday 12:06 PM PT · vs prior close '
             '<details class="cite">') in block
-    assert "<b>Weakened</b> — If growth retains its lead" in since
+    # The observation leads; the question it judged follows as a labelled second line, before the rows.
+    assert ('<b>Weakened</b> — The benchmark print turned positive.<span class="judged"><span class="role">Watch'
+            '</span>If growth retains its lead') in since
+    assert since.index('class="judged"') < since.index('class="moves"')
     assert since.count('<details class="cite">') == 1 and 'href="#evidence-SPY-intraday"' in block
+    assert "- **Weakened** — The benchmark print turned positive. Watch: If growth retains its lead" in md
     assert "  - SPY · −0.53% → +0.21% · turned higher · Premarket 5:41 AM → Intraday 12:06 PM PT · vs prior close" in md
 
 
@@ -63,8 +67,24 @@ def test_a_record_citing_each_measurement_once_pairs_nothing():
                             statement="Miners trail gold.", assessment="strengthened",
                             reason="The gap widened again.", evidence_ids=["GDX-spread20"])])
     since = what_changed(page)
-    assert "<b>Strengthened</b> — Miners trail gold." in since and 'class="moves"' not in since
+    assert "<b>Strengthened</b> — The gap widened again." in since and 'class="moves"' not in since
+    assert '<span class="role">Relationship</span>Miners trail gold.</span>' in since
     assert "  - " not in md.split("## What changed", 1)[1].split("## What matters next", 1)[0]
+
+
+def test_a_pair_the_sentence_already_states_is_not_repeated_under_it():
+    _, _, _, md, page = verdict_page(
+        changes=[dict(comparison_id="cmp-premarket-SPY-intraday",
+                      text="SPY turned from {{premarket:SPY-intraday}} to {{SPY-intraday}}.",
+                      evidence_ids=["SPY-intraday", "premarket:SPY-intraday"])])
+    since = what_changed(page)
+    assert "SPY turned from −0.53% to +0.21%. <details" in since and 'class="moves"' not in since
+    assert "  - " not in md.split("## What changed", 1)[1].split("## What matters next", 1)[0]
+    # A verdict without a stated reason keeps its question as the line, with no labelled second line.
+    rows = [print_row("SPY-intraday", 0.21, "2026-09-08T19:06:00+00:00"),
+            print_row("premarket:SPY-intraday", -0.53, "2026-09-08T12:41:00+00:00")]
+    assert movement_rows(rows, SESSION, stated="SPY went from −0.53% to +0.21% after the open.") == []
+    assert len(movement_rows(rows, SESSION, stated="SPY turned positive after the open.")) == 1
 
 
 def test_pairs_are_earliest_against_latest_and_never_across_instruments_or_units():
@@ -110,9 +130,19 @@ def test_the_verb_for_any_other_measurement_is_rose_or_fell():
 
 # --- 2. the evidence chart ------------------------------------------------------------------------------------
 
-def test_an_opened_marker_draws_the_cited_instruments_closes_and_isolated_prints():
+def test_two_prints_alone_draw_nothing_the_line_and_the_rows_carry_them():
     _, _, _, _, page = verdict_page(watch_updates=[dict(
         carried_id=TUE_1, assessment="weakened", reason="The benchmark print turned positive.", evidence_ids=SAME)])
+    since = what_changed(page)
+    assert 'class="moves"' in since and 'class="evidence"' not in since and "<svg" not in since
+
+
+def test_an_opened_marker_draws_the_cited_instruments_closes_and_isolated_prints():
+    """A drawer that cites the instrument's history (its twenty-session spread here) beside its prints draws the
+    closes as context and the prints as isolated points."""
+    _, _, _, _, page = verdict_page(watch_updates=[dict(
+        carried_id=TUE_1, assessment="weakened", reason="The benchmark print turned positive.",
+        evidence_ids=[*SAME, "SPY-r20"])])
     since = what_changed(page)
     figure = since.split('<span class="evidence">', 1)[1].split("</svg>", 1)[0]
     assert '<span class="chart-head"><b>SPY</b><span>20 sessions to Fri, Sep 4 · Tue, Sep 8 prints</span>' in figure
@@ -124,19 +154,37 @@ def test_an_opened_marker_draws_the_cited_instruments_closes_and_isolated_prints
     assert '<text x="' in prints and ">5:41 AM</text>" in prints and ">12:06 PM</text>" in prints
     # Direction colour on the prints carries the sign the text already states.
     assert 'class="direction-negative"' in prints and 'class="direction-positive"' in prints
-    assert '<line class="zero"' in figure and '<line class="average"' in figure and '<line class="divider"' in figure
+    assert '<line class="zero"' in figure and '<line class="divider"' in figure
     # One legend per drawer, after its figures, naming only the marks the drawer uses.
     drawer = since.split('<details class="cite">', 1)[1].split("</details>", 1)[0]
     assert drawer.count('<span class="curve-legend evidence-legend">') == 1
     assert drawer.index("evidence-legend") > drawer.rindex("</svg>", 0, drawer.index("evidence-legend"))
-    assert "prints vs previous close" in drawer and "50DMA" in drawer
+    assert "prints vs previous close" in drawer
+
+
+def test_the_fifty_session_average_is_drawn_when_cited_or_already_in_view():
+    history = dict(symbol="SPY", dates=[f"2026-08-{d:02d}" for d in range(1, 26)],
+                   closes=[100 + 0.2 * index for index in range(25)])  # previous close 104.8, path from −4.6%
+    far = evidence_chart(history, [], average=95.0, session_date="2026-09-08")   # −9.4%: outside the window
+    assert far["reference_y"] is None and far["domain"][0] > -9
+    cited = evidence_chart(history, [], average=95.0, session_date="2026-09-08", average_cited=True)
+    assert cited["reference_y"] is not None and cited["domain"][0] <= -9.4
+    near = evidence_chart(history, [], average=103.0, session_date="2026-09-08")  # −1.7%: inside the path's range
+    assert near["reference_y"] is not None
+    # On the page: a drawer citing the distance from the 50DMA draws the reference and says so in the legend.
+    packet, value = fixture_packet(), narrative()
+    value["sections"]["equities"][0]["evidence_ids"] = ["XLI-dma50"]
+    _, page = render(packet, value)
+    equities = page.split("<h2>Equity structure</h2>", 1)[1].split("</section>", 1)[0]
+    drawer = equities.split('<details class="cite">', 1)[1].split("</details>", 1)[0]
+    assert '<line class="average"' in drawer and "50DMA" in drawer
 
 
 def test_the_chart_is_geometry_over_real_closes_and_claims_no_path_between_prints():
     history = dict(symbol="SPY", dates=[f"2026-08-{d:02d}" for d in range(1, 26)],
                    closes=[100 + 0.2 * index for index in range(25)])
     prints = [print_row("a", -0.5, "2026-09-08T12:41:00+00:00"), print_row("b", 0.3, "2026-09-08T19:06:00+00:00")]
-    chart = evidence_chart(history, prints, average=103.0, session_date="2026-09-08")
+    chart = evidence_chart(history, prints, average=103.0, session_date="2026-09-08", average_cited=True)
     assert len(chart["path"]["points"]) == 21 and len(chart["path"]["segments"]) == 20
     # The path ends at the previous close, which is zero and sits on the rule.
     assert chart["prior"]["y"] == chart["zero_y"]
@@ -147,8 +195,9 @@ def test_the_chart_is_geometry_over_real_closes_and_claims_no_path_between_print
     assert chart["reference_y"] > chart["zero_y"]  # 103 is below the 104.8 previous close
     # Without prints the path takes the whole width and there is no divider.
     alone = evidence_chart(history, [], None, "2026-09-08")
+    assert alone["reference_y"] is None
     assert alone["path"]["points"][-1]["x"] == "100.0%" and alone["divider_x"] is None and alone["dots"] == []
-    assert alone["reference_y"] is None and alone["right_label"] == ""
+    assert alone["right_label"] == ""
     # Too little history draws nothing.
     assert evidence_chart(dict(symbol="SPY", dates=["2026-09-04"], closes=[100.0])) is None
     # More prints than labels fit label the first and the last only.
@@ -174,7 +223,7 @@ def test_a_carried_page_draws_the_prints_its_analyst_saw(day):
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
 
     def cite_the_print(live):
-        live["character"]["evidence_ids"].append("SPY-intraday")
+        live["character"]["evidence_ids"] += ["SPY-intraday", "SPY-r20"]  # the print beside its history
     assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", mutate=cite_the_print) == 0
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300", prints=(("SPY", 0.9), ("QQQ", 0.8))) == 0
     structure, refresh = day.page("OPEN_30M"), day.page("HOURLY_1300")
@@ -189,39 +238,55 @@ def test_a_carried_page_draws_the_prints_its_analyst_saw(day):
     assert '<span class="value">+0.90%</span>' in refresh
 
 
-# --- 3. the rates strip ---------------------------------------------------------------------------------------
+# --- 3. the rates takeaway --------------------------------------------------------------------------------------
 
-def test_the_rates_strip_sits_under_the_lead_and_agrees_with_the_module():
+def test_a_lead_that_cites_the_curve_gets_one_rates_line_after_the_take():
     packet, value = fixture_packet(), narrative()
     md, page = render(packet, value)
     view = presentation(packet, value)
-    strip = page.split('<section class="rates-strip">', 1)[1].split("</section>", 1)[0]
-    assert page.index('<section class="rates-strip">') < page.index("<h2>What matters next</h2>")
-    assert page.index("<h1>") < page.index('<section class="rates-strip">')
-    # The same caption as the module: the curve's own date, never this session's clock.
-    assert '<div class="caption">Rates<span>Fri, Sep 4 · latest official daily observation</span></div>' in strip
-    tenors = re.findall(r"<dt>(\w+)</dt><dd[^>]*>(.*?)</dd>", strip)
-    assert [t[0] for t in tenors] == ["2Y", "5Y", "10Y", "30Y"]
-    for (maturity, text), row in zip(tenors, view["macro"]["yields"]):
-        assert maturity == row["maturity"] and text.startswith(row["level"]["display"])
-        if not row["change"]["absent"]:
-            assert f"<small>{row['change']['display']}</small>" in text
-    assert "2s10s 26 bp · 5 bp steeper" in strip and "<b>Bull steepener</b>" in strip
-    assert '<a href="#treasury-curve">Full curve and chart</a>' in strip
+    assert view["character_ids"] and any(i.startswith("treasury-") for i in view["character_ids"])
+    line = page.split('<p class="rates-lead">', 1)[1].split("</p>", 1)[0]
+    # After the take, before What changed / What matters next; no block of its own in the narrative.
+    assert page.index("<b>The take:</b>") < page.index('<p class="rates-lead">')
+    assert page.index('<p class="rates-lead">') < page.index("<h2>What matters next</h2>")
+    assert 'class="rates-strip"' not in page and 'class="tenors"' not in page
+    # The curve's own date, every observed tenor with its change, both spreads, the label, and the full module.
+    assert line.startswith("<b>Rates</b> · Fri, Sep 4 · latest official daily observation")
+    assert '<span class="tenor">2Y 3.86% −4 bp</span>' in line and '<span class="tenor">10Y 4.12% +1 bp</span>' in line
+    assert "5Y" not in line and "30Y" not in line and "no print" not in line  # tenors the curve lacks are not listed
+    assert '<span class="tenor">2s10s 26 bp</span>' in line and "<b>Bull steepener</b>" in line
+    assert '<a href="#treasury-curve">Full curve</a>' in line
     assert '<div class="caption" id="treasury-curve">U.S. Treasury par curve<span>' in page
-    # A missing spread is the module's detail and stays there; a note that places the curve in time travels.
-    assert "No 5s30s" not in strip and "No 5s30s: the latest curve has no 5Y or 30Y yield." in page
-    assert md.index("**RATES** · Fri, Sep 4 · latest official daily observation · 2Y 3.86% −4 bp") < md.index(
-        "## What matters next")
+    # The sentence is said once, in the module; the note that places the curve before a release travels.
+    assert "Front-end yields fell more than the long end." not in line
+    assert line.endswith("<br>Curve predates the 7:00 AM PT Fictional manufacturing survey release.") or \
+        "Curve predates" not in page
+    for row in view["macro"]["yields"]:
+        if not row["level"]["absent"]:
+            assert f"{row['maturity']} {row['level']['display']} {row['change']['display']}" in line
+    rates_md = md.split("**RATES** · ", 1)[1].split("\n", 1)[0]
+    assert rates_md.startswith("Fri, Sep 4 · latest official daily observation · 2Y 3.86% −4 bp · 10Y 4.12% +1 bp")
+    assert "2s10s 26 bp · Bull steepener" in rates_md and md.index("**RATES**") < md.index("## What matters next")
 
 
-def test_no_curve_no_strip():
+def test_a_lead_that_does_not_cite_the_curve_gets_no_rates_line():
+    packet, value = fixture_packet(), narrative()
+    for record in (value["banner"], value["character"], *value["summary"], value["take"]):
+        record["evidence_ids"] = [i for i in record["evidence_ids"] if not i.startswith("treasury-")]
+    value["character"]["evidence_ids"].append("QQQ-daily")
+    md, page = render(packet, value)
+    assert 'class="rates-lead"' not in page and "**RATES**" not in md
+    # The module is untouched either way.
+    assert '<div class="caption" id="treasury-curve">U.S. Treasury par curve<span>' in page
+
+
+def test_no_curve_no_rates_line():
     packet, value = fixture_packet(), narrative()
     packet["observations"] = [row for row in packet["observations"] if not row["topic"].startswith("US ")]
     packet["derived"] = [row for row in packet["derived"] if not row["topic"].startswith("US ")]
     value["sections"]["macro"] = []
     md, page = render(packet, value)
-    assert 'class="rates-strip"' not in page and "**RATES**" not in md
+    assert 'class="rates-lead"' not in page and "**RATES**" not in md
 
 
 # --- 4. watch states -------------------------------------------------------------------------------------------

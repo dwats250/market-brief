@@ -132,8 +132,10 @@ def interpretation_fragments(page):
     what changed, and the watches (live, retired and flagged). Everything else on the page belongs to
     the data clock. The one deterministic annotation a refresh may add to a watch, `horizon passed` (and
     the grey gutter state that goes with it), is stripped before comparing."""
-    # The lead runs to the first section; the coverage note between them belongs to the data clock.
-    head = re.sub(r'<p class="notice compact">.*?</p>', "", page.split("<h1>", 1)[1].split("<section", 1)[0]).rstrip()
+    # The lead runs to the first section; the coverage note and the rates takeaway between them belong to the
+    # data clock (the takeaway reads this run's curve module, dated, like the module itself).
+    head = re.sub(r'<p class="(?:notice compact|rates-lead)">.*?</p>', "",
+                  page.split("<h1>", 1)[1].split("<section", 1)[0]).rstrip()
     since = (page.split('<section class="since">', 1)[1].split("</section>", 1)[0]
              if '<section class="since">' in page else "")
     watches = (page.split('<span class="eyebrow">Watches</span>', 1)[1]

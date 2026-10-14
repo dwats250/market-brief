@@ -182,6 +182,13 @@ EVIDENCE_MIN_SPAN = 2.0    # percentage points
 EVIDENCE_PADDING = 1.15
 EVIDENCE_CHARTS = 2
 EVIDENCE_DOT_LABELS = 3    # more prints than this label only the first and the last
+# A chart earns its place only when it shows what the rows beside it cannot: a drawer cites the instrument's
+# history (a twenty-session return or spread, its fifty-session average or distance from it, the close that
+# crossed it) or at least EVIDENCE_SEQUENCE prints of one session. Two prints are two numbers; the before → after
+# line and the rows carry them, and no path is drawn between them.
+HISTORY_METRICS = {"twenty-session return", "fifty-session average", "distance from 50DMA", "regular close"}
+AVERAGE_METRICS = {"fifty-session average", "distance from 50DMA", "regular close"}
+EVIDENCE_SEQUENCE = 3
 
 
 def clock_key(value):
@@ -212,10 +219,11 @@ def move_words(earlier, later, returns):
     return "extended its loss" if last < first else "pared its loss"
 
 
-def movement_rows(rows, session, anchored=()):
+def movement_rows(rows, session, anchored=(), stated=""):
     """Before → after lines from one block's cited rows: one per instrument and measurement cited at two clocks,
     earliest against latest. The window names each clock and, for prints, the phase it fell in, so a premarket
-    print is never conflated with an intraday one. Rows cited once pair with nothing."""
+    print is never conflated with an intraday one. Rows cited once pair with nothing, and a pair whose two values
+    the block's own sentence already states (`stated`) is not shown a second time under it."""
     groups = {}
     for row in rows:
         if (not isinstance(row.get("value"), (int, float)) or not isinstance(row.get("observed_at"), str)
@@ -243,6 +251,8 @@ def movement_rows(rows, session, anchored=()):
         else:
             window = f"{compact_clock(earlier['observed_at'])} → {compact_clock(later['observed_at'])}"
             measure = reader_metric_label(later, session)
+        if stated and formatted(earlier) in stated and formatted(later) in stated:
+            continue
         delta = round(later["value"] - earlier["value"], 6)
         result.append(dict(
             topic=topic, label=instrument_label(topic),
@@ -254,8 +264,11 @@ def movement_rows(rows, session, anchored=()):
     return result
 
 
-def evidence_chart(history, prints=(), average=None, session_date=None, sessions=EVIDENCE_SESSIONS):
-    """Server-side geometry for one instrument's evidence chart. None when the history is too short to draw."""
+def evidence_chart(history, prints=(), average=None, session_date=None, sessions=EVIDENCE_SESSIONS,
+                   average_cited=False):
+    """Server-side geometry for one instrument's evidence chart. None when the history is too short to draw. The
+    fifty-session average is a reference, never the reason the chart exists: drawn at its distance when the drawer
+    cites it (then the window makes room for it), otherwise only when it already falls inside the window."""
     closes, dates = history["closes"][-(sessions + 1):], history["dates"][-(sessions + 1):]
     if len(closes) < 2 or not closes[-1]:
         return None
@@ -265,7 +278,11 @@ def evidence_chart(history, prints=(), average=None, session_date=None, sessions
                    and isinstance(row.get("observed_at"), str) and "T" in row["observed_at"]),
                   key=lambda row: timestamp(row["observed_at"]))
     reference = 100 * (average / prior - 1) if isinstance(average, (int, float)) and average else None
-    values = [*path, *(row["value"] for row in dots), *([reference] if reference is not None else [])]
+    values = [*path, *(row["value"] for row in dots)]
+    if reference is not None and (average_cited or min(values) <= reference <= max(values)):
+        values.append(reference)
+    else:
+        reference = None
     low, high = min(values), max(values)
     span = max((high - low) * EVIDENCE_PADDING, EVIDENCE_MIN_SPAN)
     base = (low + high) / 2 - span / 2
@@ -848,18 +865,16 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         rows = frozen if rows is None else rows
         return [rows[ref] for ref in ids if rows.get(ref) is not None]
 
-    def moves(ids, rows=None):
-        return movement_rows(cited_rows(ids, rows), session, catalog)
-
     # The chart's previous close is the history's last close, so the history must end at the session the prints
     # are measured against: the previous session, or the one before it when today's bar is not yet published.
     through = {session.get("previous_session"), (packet.get("history_lag") or {}).get("history_through")}
     histories = {h["symbol"]: h for h in packet["history"] if h.get("dates") and h["dates"][-1] in through}
 
     def charts_for(marker_refs):
-        """Evidence charts for one opened `§` drawer: one per cited instrument with admitted close history, in the
-        order the rows cite them, drawn from the rows this drawer cites (frozen values, so a carried page's chart
-        shows the prints its analyst saw) and this run's history, which is the same prior sessions all day."""
+        """Evidence charts for one opened `§` drawer: one per cited instrument whose rows make a chart useful (see
+        HISTORY_METRICS), in the order the rows cite them, drawn from the rows this drawer cites (frozen values, so
+        a carried page's chart shows the prints its analyst saw) and this run's history, the same prior sessions
+        all day."""
         by_topic = {}
         for ref in marker_refs:
             row = frozen.get(ref["id"]) or catalog.get(ref["id"])
@@ -867,12 +882,19 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                 continue
             by_topic.setdefault(ref["topic"], []).append(row)
         charts = []
-        for topic, rows in list(by_topic.items())[:EVIDENCE_CHARTS]:
+        for topic, rows in by_topic.items():
+            prints = [row for row in rows if current_print(row)]
+            metrics = {row.get("metric", "") for row in rows}
+            history_cited = any(m in HISTORY_METRICS or m.startswith("relative to ") for m in metrics)
+            if not history_cited and len(prints) < EVIDENCE_SEQUENCE:
+                continue
             average = (catalog.get(f"{topic}-sma50") or {}).get("value")
-            chart = evidence_chart(histories[topic], [row for row in rows if current_print(row)], average,
-                                   session_date)
+            chart = evidence_chart(histories[topic], prints, average, session_date,
+                                   average_cited=bool(metrics & AVERAGE_METRICS))
             if chart:
                 charts.append(dict(topic=topic, label=instrument_label(topic), chart=chart))
+            if len(charts) == EVIDENCE_CHARTS:
+                break
         return charts
 
     def proof(rows, keys=("today", "relative", "r20", "dma")):
@@ -910,19 +932,21 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     module = rates_module(packet, treasuries, catalog)
     metal_pairs = [f"{row['symbol']} vs {row['relative_label']}" for row in metal_rows if row["relative"]["id"]]
     yields = module["yields"]
-    # The rates strip (readability pass): the same official curve as the Macro & rates module, in one compact
-    # block under the lead, read from the module itself so the two never disagree. It names the curve's own
-    # date, so a prior-day observation is never read as this session's, and links to the full module.
-    rates_strip = None
+    # The rates takeaway (readability pass): one small line after the take, only when the lead itself cites the
+    # curve (a Treasury tenor or spread row in the headline, character, summary or take), so rates appear near the
+    # opening exactly when they bear on the thesis and nowhere else repeats the module. It is the module's own
+    # rows and label under the curve's own date, with the note that places the curve before a release; the
+    # sentence, chart and spread detail stay in Macro & rates.
+    rates_lead = None
     if yields and module["curve"]:
         curve = module["curve"]
-        rates_strip = dict(title="Rates", caption=curve["caption"], stale=curve["stale"],
-                           tenors=[dict(maturity=row["maturity"], level=row["level"], change=row["change"])
-                                   for row in yields],
-                           spreads=curve["spreads"], move=curve["move"] if curve["move"] else None,
-                           # Only the notes that place the curve in time; a missing spread is the module's detail.
-                           notes=[note for note in curve["notes"] if not note.startswith("No ")],
-                           anchor="treasury-curve")
+        rates_lead = dict(caption=curve["caption"], stale=curve["stale"],
+                          tenors=[dict(maturity=row["maturity"], level=row["level"], change=row["change"])
+                                  for row in yields if not row["level"]["absent"]],
+                          spreads=[dict(name=line["name"], level=line["level"]) for line in curve["spreads"]],
+                          move=curve["move"]["label"] if curve["move"] and not curve["move"]["unavailable"] else "",
+                          note=next((note for note in curve["notes"] if note.startswith("Curve predates")), ""),
+                          anchor="treasury-curve")
 
     # What matters next: new watches with their frozen horizons, then the carried watches continuity will keep.
     watches = []
@@ -1016,11 +1040,19 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         since_entries += kept
         cited |= {i for entry in kept for i in current(entry["evidence_ids"])}
     for entry in since_entries:
-        # Before → after lines from the entry's own citations. One window is stated once above the lines; windows
-        # that differ stay on their own lines, so a premarket print never shares a caption with an intraday one.
-        entry["moves"] = moves(entry["evidence_ids"])
+        # Before → after lines from the entry's own citations, under the observation. One window is stated once
+        # for the lines; windows that differ stay on their own lines, so a premarket print never shares a caption
+        # with an intraday one. A pair the sentence already spells out is not repeated.
+        stated = " ".join(str(entry.get(key) or "") for key in ("text", "reason"))
+        entry["moves"] = movement_rows(cited_rows(entry["evidence_ids"]), session, catalog, stated)
         windows = {(move["window"], move["measure"]) for move in entry["moves"]}
         entry["window"] = " · ".join(next(iter(windows))) if len(windows) == 1 else ""
+        # What changed leads with what was observed (the reason) and names the question or relationship it
+        # judged as a labelled second line; a verdict with no stated reason keeps the question as its line.
+        if entry["kind"] in ("watch", "relationship"):
+            entry["observed"] = entry["reason"] or entry["text"]
+            entry["judged"] = entry["text"] if entry["reason"] else ""
+            entry["role"] = "Watch" if entry["kind"] == "watch" else "Relationship"
 
     # Flagged: a selected trigger earns its place only when its instrument is not already in the lead, in
     # What changed, or in a live watch, by cited row or by name. The frozen selection is unchanged; a
@@ -1029,6 +1061,12 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                     *watches, *live_carried]
     if narrative.get("take"):
         lead_records.append(narrative["take"])
+    opening_records = [narrative["banner"], narrative["character"], *narrative["summary"],
+                       *([narrative["take"]] if narrative.get("take") else [])]
+    opening_ids = {i for record in opening_records for i in record.get("evidence_ids", [])}
+    if rates_lead and not any((frozen.get(i) or catalog.get(i) or {}).get("metric") in RATE_METRICS
+                              for i in opening_ids):
+        rates_lead = None
     covered_ids = {i for record in lead_records for i in record.get("evidence_ids", [])}
     covered_topics = {row["topic"] for ident in covered_ids
                       for row in [frozen.get(ident) or catalog.get(ident)] if row and row.get("topic")}
@@ -1200,7 +1238,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         character=expand(narrative["character"]["text"]),
         character_ids=narrative["character"]["evidence_ids"],
         character_refs=refs(narrative["character"]["evidence_ids"]),
-        summary=[paragraph(p) for p in narrative["summary"]], take=take, rates_strip=rates_strip,
+        summary=[paragraph(p) for p in narrative["summary"]], take=take, rates_lead=rates_lead,
         evidence_charts=charts_for,
         since=dict(heading="What changed", label=since_label, entries=since_entries, note=since_note,
                    status=prior.get("status", "cold_start")),
@@ -1260,23 +1298,24 @@ def markdown(view):
         lines += [f"**The take:** {esc(view['take']['text'])} {refs(view['take']['evidence_ids'])}", ""]
     if view["coverage"]["missing_domains"]:
         lines += [f"Missing: {esc(' · '.join(view['coverage']['missing_domains']))}.", ""]
-    strip = view["rates_strip"]
-    if strip:
+    lead_rates = view["rates_lead"]
+    if lead_rates:
         tenors = " · ".join(f"{t['maturity']} {t['level']['display']}"
-                            + ("" if strip["stale"] or t["change"]["absent"] else f" {t['change']['display']}")
-                            for t in strip["tenors"])
-        spreads = " · ".join(f"{s['name']} {s['level']}" + (f" · {s['detail']}" if s["detail"] else "")
-                             for s in strip["spreads"])
-        move = f" · {strip['move']['label']}" if strip["move"] and not strip["move"]["unavailable"] else ""
-        lines += [f"**RATES** · {esc(strip['caption'])} · {tenors}" + (f" · {spreads}" if spreads else "") + move, ""]
+                            + ("" if lead_rates["stale"] or t["change"]["absent"] else f" {t['change']['display']}")
+                            for t in lead_rates["tenors"])
+        spreads = " · ".join(f"{s['name']} {s['level']}" for s in lead_rates["spreads"])
+        move = f" · {lead_rates['move']}" if lead_rates["move"] else ""
+        lines += [f"**RATES** · {esc(lead_rates['caption'])} · {tenors}" + (f" · {spreads}" if spreads else "") + move
+                  + (f" · {esc(lead_rates['note'])}" if lead_rates["note"] else ""), ""]
     since = view["since"]
     if since["entries"] or since["note"]:
         lines += [f"## {since['heading']}" + (f" · {esc(since['label'])}" if since["label"] else ""), ""]
         for item in since["entries"]:
             if item["kind"] == "change":
                 lines.append(f"- {esc(item['text'])} {refs(item['evidence_ids'])}")
-            else:  # a verdict on a carried watch or relationship
-                lines.append(f"- **{item['assessment'].capitalize()}** — {esc(item['text'])} {esc(item['reason'])} "
+            else:  # a verdict on a carried watch or relationship: the observation, then what it judged
+                judged = f" {item['role']}: {esc(item['judged'])}" if item["judged"] else ""
+                lines.append(f"- **{item['assessment'].capitalize()}** — {esc(item['observed'])}{judged} "
                              f"{refs(item['evidence_ids'])}")
             for move in item.get("moves", []):
                 # Before → after, with its window: two measurements, never a path.

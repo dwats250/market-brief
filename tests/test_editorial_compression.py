@@ -111,7 +111,9 @@ def test_a_lower_priority_record_repeating_a_verdicts_evidence_is_not_shown_agai
                       text="SPY moved from {{premarket:SPY-intraday}} to {{SPY-intraday}}.", evidence_ids=same)])
     md, page = render(packet, value, context)
     since = what_changed(page)
-    assert since.count("<li>") == 1 and "<b>Weakened</b> — If growth retains its lead" in since
+    # The verdict leads with what was observed and names the question it judged as a labelled second line.
+    assert since.count("<li>") == 1 and "<b>Weakened</b> — The benchmark print turned positive." in since
+    assert '<span class="judged"><span class="role">Watch</span>If growth retains its lead' in since
     assert "Growth leads the broad benchmark." not in since and "SPY moved from" not in since
     # The suppressed records are still the analyst's records: nothing in the frozen narrative changed.
     view = presentation(packet, value, context)
@@ -157,7 +159,8 @@ def test_a_live_watch_with_a_verdict_keeps_its_question_and_never_its_verdict_un
     value = opening(watch_updates=[dict(carried_id=TUE_1, assessment="strengthened", reason="Growth held its lead.",
                                         evidence_ids=["SPY-intraday", "premarket:SPY-intraday"])])
     md, page = render(packet, value, context)
-    assert "<b>Strengthened</b> — If growth retains its lead" in what_changed(page)
+    assert "<b>Strengthened</b> — Growth held its lead." in what_changed(page)
+    assert '<span class="role">Watch</span>If growth retains its lead' in what_changed(page)
     block = matters(page)
     assert "If growth retains its lead" in block and "strengthened" not in block.lower()
     assert "Growth held its lead." not in block

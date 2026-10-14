@@ -58,12 +58,13 @@ MISMATCH = "take text and evidence must be both present or both empty"
 # (Macro & rates) adds one rule set: `.release`, `.release-title`, `.release-values` (labels stack below 360 px).
 # A Degraded source status wraps like an Unavailable one (2026-10-12: `.source-status.degraded`, no colour or weight),
 # so a reason that names missing symbols cannot push the Sources drawer past a phone's width.
-# The readability pass (2026-10-14) adds the What changed before → after lines (`.moves`, one left-aligned reading group
-# per row with the window under it) and the judged line (`.since .judged`), the watch state on the gutter
-# (`.watch.state-expired`, `.state-completed`), the rates takeaway after the take (`.rates-lead`), the evidence chart
-# inside an opened `§` drawer (`.refs .evidence`, `.chart-head`, `.evidence-chart`, two legend keys) and the audit
-# section's smaller heading (`section.audit h2`).
-STYLE_SHA256 = "da10c08d0978995d0167e01ebcce1b7baafa479b676e1ceb47b8d550851d30cb"
+# The readability pass (2026-10-14) adds the What changed before → after lines (`.moves`, one left-aligned group per
+# row with the window under it, on the inset surface, its opened `§` kept off a second surface) and the judged line
+# (`.since .judged`), the watch state on the gutter (`.watch.state-expired`, `.state-completed`), the rates summary
+# after the take on the inset surface (`.rates-lead` and its `.group` lines), the evidence chart inside an opened `§`
+# drawer (`.refs .evidence`, `.chart-head`, `.evidence-chart`, two legend keys) and the audit section's smaller
+# heading (`section.audit h2`).
+STYLE_SHA256 = "aea7fb9102918dec52de0629d45606ea8ce978e0c36f8ee8abcdd2fe9f14038d"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):

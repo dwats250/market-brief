@@ -16,7 +16,7 @@ from test_editorial_compression import opening, what_changed
 from test_pipeline import fixture_packet, narrative
 
 from market_brief.continuity import interpretation_record
-from market_brief.curve import RULE_VERSION, classify
+from market_brief.curve import RULE_VERSION, classify, derive_curve
 from market_brief.render import evidence_chart, move_words, movement_rows, presentation, render
 
 TUE_1 = "watch-sample-premarket-124500-tue-1"
@@ -56,6 +56,10 @@ def test_a_verdict_citing_one_measurement_at_two_clocks_renders_one_before_after
     assert ('<b>Weakened</b> — The benchmark print turned positive.<span class="judged"><span class="role">Watch'
             '</span>If growth retains its lead') in since
     assert since.index('class="judged"') < since.index('class="moves"')
+    # The movement group sits on the inset surface; the provenance it opens does not stack a second surface on it.
+    style = re.search(r"<style>.*?</style>", page, re.S).group(0)
+    assert ".moves{display:block;background:var(--surface);" in style
+    assert ".moves details.cite[open] .refs{background:none;" in style
     assert since.count('<details class="cite">') == 1 and 'href="#evidence-SPY-intraday"' in block
     assert "- **Weakened** — The benchmark print turned positive. Watch: If growth retains its lead" in md
     assert "  - SPY · −0.53% → +0.21% · turned higher · Premarket 5:41 AM → Intraday 12:06 PM PT · vs prior close" in md
@@ -240,30 +244,40 @@ def test_a_carried_page_draws_the_prints_its_analyst_saw(day):
 
 # --- 3. the rates takeaway --------------------------------------------------------------------------------------
 
-def test_a_lead_that_cites_the_curve_gets_one_rates_line_after_the_take():
+def test_a_lead_that_cites_the_curve_gets_one_rates_summary_after_the_take():
     packet, value = fixture_packet(), narrative()
     md, page = render(packet, value)
     view = presentation(packet, value)
     assert view["character_ids"] and any(i.startswith("treasury-") for i in view["character_ids"])
-    line = page.split('<p class="rates-lead">', 1)[1].split("</p>", 1)[0]
-    # After the take, before What changed / What matters next; no block of its own in the narrative.
-    assert page.index("<b>The take:</b>") < page.index('<p class="rates-lead">')
-    assert page.index('<p class="rates-lead">') < page.index("<h2>What matters next</h2>")
+    block = page.split('<div class="rates-lead">', 1)[1].split("</p></div>", 1)[0]
+    # After the take, before What matters next, on its own inset surface; no rates block of its own in the narrative.
+    assert page.index("<b>The take:</b>") < page.index('<div class="rates-lead">')
+    assert page.index('<div class="rates-lead">') < page.index("<h2>What matters next</h2>")
     assert 'class="rates-strip"' not in page and 'class="tenors"' not in page
-    # The curve's own date, every observed tenor with its change, both spreads, the label, and the full module.
-    assert line.startswith("<b>Rates</b> · Fri, Sep 4 · latest official daily observation")
-    assert '<span class="tenor">2Y 3.86% −4 bp</span>' in line and '<span class="tenor">10Y 4.12% +1 bp</span>' in line
-    assert "5Y" not in line and "30Y" not in line and "no print" not in line  # tenors the curve lacks are not listed
-    assert '<span class="tenor">2s10s 26 bp</span>' in line and "<b>Bull steepener</b>" in line
-    assert '<a href="#treasury-curve">Full curve</a>' in line
+    style = re.search(r"<style>.*?</style>", page, re.S).group(0)
+    assert ".rates-lead{background:var(--surface);" in style
+    # Four reading groups: heading and date; yields; spreads and label; timing note and link.
+    caption, yields, spreads, footer = re.split(r'</div><p class="group">|</p><p class="group">|</p><p class="fine">',
+                                                block)
+    assert caption == '<div class="caption">Rates<span>Fri, Sep 4 · latest official daily observation</span>'
+    assert yields == "<span>2Y <b>3.86%</b> −4 bp</span><span>10Y <b>4.12%</b> +1 bp</span>"
+    assert "5Y" not in yields and "no print" not in yields  # tenors the curve lacks are not listed
+    assert spreads == "<span>2s10s 26 bp</span><span><b>Bull steepener</b></span>"
+    note = next((n for n in view["macro"]["curve"]["notes"] if n.startswith("Curve predates")), "")
+    assert footer == (f"{note} " if note else "") + '<a href="#treasury-curve">Full curve and chart</a>'
+    # When the curve predates a release, the note travels with the summary, ahead of the link.
+    packet["events"][0]["scheduled_at"] = "2026-09-08T12:30:00+00:00"
+    packet["curve"] = derive_curve(dict(packet, derived=[]))["curve"]
+    _, later = render(packet, value)
+    footer = later.split('<div class="rates-lead">', 1)[1].split('<p class="fine">', 1)[1].split("</p>", 1)[0]
+    assert footer == ("Curve predates the 5:30 AM PT Fictional manufacturing survey release. "
+                      '<a href="#treasury-curve">Full curve and chart</a>')
     assert '<div class="caption" id="treasury-curve">U.S. Treasury par curve<span>' in page
-    # The sentence is said once, in the module; the note that places the curve before a release travels.
-    assert "Front-end yields fell more than the long end." not in line
-    assert line.endswith("<br>Curve predates the 7:00 AM PT Fictional manufacturing survey release.") or \
-        "Curve predates" not in page
+    # The sentence is said once, in the module.
+    assert "Front-end yields fell more than the long end." not in block
     for row in view["macro"]["yields"]:
         if not row["level"]["absent"]:
-            assert f"{row['maturity']} {row['level']['display']} {row['change']['display']}" in line
+            assert f"{row['maturity']} <b>{row['level']['display']}</b> {row['change']['display']}" in yields
     rates_md = md.split("**RATES** · ", 1)[1].split("\n", 1)[0]
     assert rates_md.startswith("Fri, Sep 4 · latest official daily observation · 2Y 3.86% −4 bp · 10Y 4.12% +1 bp")
     assert "2s10s 26 bp · Bull steepener" in rates_md and md.index("**RATES**") < md.index("## What matters next")

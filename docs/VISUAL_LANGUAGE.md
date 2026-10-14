@@ -50,7 +50,7 @@ An object earns `--surface` only when all three hold:
 2. it is self-contained, with its own label and time;
 3. it is compact, no taller than about half a phone screen.
 
-Today: the economic-release card, opened `§` evidence and proof lines, and a targeted ledger row.
+Today: the economic-release card, the rates summary after the take, the before → after movement group under a verdict, opened `§` evidence and proof lines, and a targeted ledger row. An opened `§` inside the movement group shows its rows on that same surface, never a second one.
 
 The tint has square corners, no border and no shadow. It extends one `--hang` into the gutter on each side
 while its text stays on the column edge. Never two surfaces side by side, never one inside another, never

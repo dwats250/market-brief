@@ -134,8 +134,9 @@ def interpretation_fragments(page):
     the grey gutter state that goes with it), is stripped before comparing."""
     # The lead runs to the first section; the coverage note and the rates takeaway between them belong to the
     # data clock (the takeaway reads this run's curve module, dated, like the module itself).
-    head = re.sub(r'<p class="(?:notice compact|rates-lead)">.*?</p>', "",
-                  page.split("<h1>", 1)[1].split("<section", 1)[0]).rstrip()
+    head = page.split("<h1>", 1)[1].split("<section", 1)[0]
+    head = re.sub(r'<div class="rates-lead">.*?</p></div>', "", re.sub(r'<p class="notice compact">.*?</p>', "", head))
+    head = head.rstrip()
     since = (page.split('<section class="since">', 1)[1].split("</section>", 1)[0]
              if '<section class="since">' in page else "")
     watches = (page.split('<span class="eyebrow">Watches</span>', 1)[1]

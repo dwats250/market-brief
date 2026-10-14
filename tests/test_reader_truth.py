@@ -432,7 +432,8 @@ def test_k_the_saved_record_does_not_depend_on_the_renderer(monkeypatch, tmp_pat
 # --- E, E2, F: omissions and the optional Cuttingboard source ------------------------------------------
 
 def coverage_items(page):
-    drawer = page.split("<summary>Coverage limitations</summary>", 1)[1].split("</details>", 1)[0]
+    drawer = re.split(r"<summary>Coverage limitations <span>[^<]*</span></summary>", page,
+                      maxsplit=1)[1].split("</details>", 1)[0]
     return re.findall(r"<li>(.*?)</li>", drawer)
 
 
@@ -648,7 +649,7 @@ def test_n_a_frozen_availability_claim_never_outlives_its_edition(day, monkeypat
 
     # The originating synthesis still states its caveat, with its marker, in both formats.
     structure, structure_md = day.page("OPEN_30M"), brief_md(day, "OPEN_30M")
-    sources = structure.split("<h2>Sources &amp; coverage</h2>", 1)[1].split('<details class="drawer">', 1)[0]
+    sources = structure.split("<h2>Sources &amp; coverage</h2>", 1)[1].split('<details class="drawer', 1)[0]
     assert LIMITATION in sources and '<details class="cite">' in sources
     assert structure_md.count(LIMITATION) == 2
 
@@ -656,7 +657,7 @@ def test_n_a_frozen_availability_claim_never_outlives_its_edition(day, monkeypat
     refresh, refresh_md = day.page("HOURLY_1300"), brief_md(day, "HOURLY_1300")
     assert LIMITATION not in refresh and LIMITATION not in refresh_md
     assert "QQQ current print is unavailable" not in refresh and "QQQ current print is unavailable" not in refresh_md
-    sources = refresh.split("<h2>Sources &amp; coverage</h2>", 1)[1].split('<details class="drawer">', 1)[0]
+    sources = refresh.split("<h2>Sources &amp; coverage</h2>", 1)[1].split('<details class="drawer', 1)[0]
     assert sources.strip() == ""  # no orphaned marker where the caveat was
     evidence = json.loads((day.folder("HOURLY_1300") / "evidence.json").read_text())
     qqq = evidence_catalog(evidence)["QQQ-intraday"]

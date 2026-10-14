@@ -292,6 +292,10 @@ TABLE = [
     ((4, -4), "Twist flattener"),
     ((5, 6), "Parallel shift higher"),
     ((-5, -6), "Parallel shift lower"),
+    ((1, 3), "Broadly higher, mild steepening"),
+    ((3, 1), "Broadly higher, mild flattening"),
+    ((-3, -1), "Broadly lower, mild steepening"),
+    ((-1, -3), "Broadly lower, mild flattening"),   # Tue, Oct 13, 2026: 2Y −1, 10Y −3, not a parallel shift
     ((-1, 2), "Slight steepening"),
     ((1, -2), "Slight flattening"),
     ((1, 2), "Little changed"),
@@ -317,6 +321,10 @@ def test_reader_copy_is_the_approved_sentence_per_label():
         "Twist flattener": "The front end rose while the long end fell.",
         "Parallel shift higher": "Yields rose by similar amounts across the curve.",
         "Parallel shift lower": "Yields fell by similar amounts across the curve.",
+        "Broadly higher, mild steepening": "Yields rose across the curve, a little more at the long end.",
+        "Broadly higher, mild flattening": "Yields rose across the curve, a little more at the front end.",
+        "Broadly lower, mild steepening": "Yields fell across the curve, a little more at the front end.",
+        "Broadly lower, mild flattening": "Yields fell across the curve, a little more at the long end.",
         "Slight steepening": "The curve steepened slightly; neither end moved much.",
         "Slight flattening": "The curve flattened slightly; neither end moved much.",
         "Little changed": "Yields were little changed.",
@@ -343,10 +351,13 @@ def test_reader_copy_is_the_approved_sentence_per_label():
     ((-1, 2), "Slight steepening"),
     ((1, -3), "Bull flattener"),
     ((1, -2), "Slight flattening"),
-    # A parallel shift needs the leading leg at the threshold with |Δs| < t.
-    ((2, 3), "Parallel shift higher"),
+    # A parallel shift needs both legs at the threshold in one direction with |Δs| < t; only the leading leg there
+    # is a broad move with a mild tilt, and neither leg there is quiet.
+    ((3, 4), "Parallel shift higher"),
+    ((2, 3), "Broadly higher, mild steepening"),
     ((1, 2), "Little changed"),
-    ((-2, -3), "Parallel shift lower"),
+    ((-3, -4), "Parallel shift lower"),
+    ((-2, -3), "Broadly lower, mild flattening"),
     ((-1, -2), "Little changed"),
 ])
 def test_boundaries_at_t_and_t_minus_one(changes, label):
@@ -521,8 +532,8 @@ def test_cpi_morning_note():
               event("bls-event-2", "Later Release", "2026-10-14T14:00:00+00:00", now)]  # after this run
     curve = rates_packet(now, rows, events)["curve"]
     assert [item["id"] for item in curve["releases"]] == ["bls-event-0", "bls-event-1"]
-    assert curve["release_note"] == ("Curve predates the 5:30 AM PT Consumer Price Index release and the "
-                                     "5:30 AM PT Real Earnings release.")
+    # Two releases on one clock are named once, on that clock.
+    assert curve["release_note"] == "Curve predates the 5:30 AM PT Consumer Price Index and Real Earnings releases."
 
 
 def test_release_note_names_two_then_counts_the_rest():
@@ -533,11 +544,17 @@ def test_release_note_names_two_then_counts_the_rest():
             ("Business Employment Dynamics", "2026-10-14T14:00:00+00:00"),
             ("County Employment and Wages", "2026-10-14T14:00:00+00:00")))], [])
     assert len(notes["releases"]) == 4
-    assert notes["text"] == ("Curve predates the 5:30 AM PT Consumer Price Index release, the 5:30 AM PT Real "
-                             "Earnings release and 2 more.")
+    assert notes["text"] == ("Curve predates the 5:30 AM PT Consumer Price Index and Real Earnings releases "
+                             "and 2 more.")
     single = release_notes(date(2026, 10, 13), utc("2026-10-14T15:00:00+00:00"),
                            [dict(id="e0", title="Consumer Price Index", scheduled_at="2026-10-14T12:30:00+00:00")], [])
     assert single["text"] == "Curve predates the 5:30 AM PT Consumer Price Index release."
+    # Two releases on different clocks keep their own clocks.
+    staggered = release_notes(date(2026, 10, 13), utc("2026-10-14T15:00:00+00:00"), [
+        dict(id="e0", title="Consumer Price Index", scheduled_at="2026-10-14T12:30:00+00:00"),
+        dict(id="e1", title="Business Employment Dynamics", scheduled_at="2026-10-14T14:00:00+00:00")], [])
+    assert staggered["text"] == ("Curve predates the 5:30 AM PT Consumer Price Index release and the 7:00 AM PT "
+                                 "Business Employment Dynamics release.")
 
 
 def test_a_release_the_curve_already_reflects_is_not_named():

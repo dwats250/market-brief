@@ -9,6 +9,7 @@ alone.
 
 import copy
 import json
+import re
 
 import pytest
 from test_cadence import TUE, Day
@@ -94,7 +95,8 @@ def live_watch(page, question):
     for end in ('<details class="drawer retired">', '<span class="eyebrow">Flagged', '<span class="eyebrow">Events',
                 "</section>"):
         matters = matters.split(end, 1)[0]
-    blocks = [b for b in matters.split('<div class="watch">')[1:] if b.startswith(f'<div class="question">{question}')]
+    blocks = [b for b in re.split(r'<div class="watch state-[a-z]+">', matters)[1:]
+              if b.startswith(f'<div class="question">{question}')]
     assert len(blocks) == 1, question
     return blocks[0]
 

@@ -15,8 +15,8 @@ something a person cared about, never as a dashboard, a terminal, a card grid or
 2. **The inset surface is reserved for deterministic, checkable facts.** See the test below.
 3. **Active questions use the teal gutter.** A watch carries a 2px rule in the left margin; a retired watch
    carries the same rule in grey. Nothing else uses a left rule in the gutter.
-4. **Text holds the column edge.** Tints and marks sit in the gutter (`--hang`); the left edge of the text
-   never moves, from the masthead to the footer.
+4. **Containers hold the column edge.** Marks sit in the gutter (`--hang`); shaded surfaces and the notice start
+   at the column edge and inset their text by their padding.
 5. **Whitespace and alignment replace rules before ornament is introduced.** Space first, a hairline
    second, the strong rule only between sections.
 6. **Teal is structural.** It marks what is live: the masthead, links and `§`, the watch gutter, the list
@@ -35,9 +35,9 @@ something a person cared about, never as a dashboard, a terminal, a card grid or
 | Plane | Holds | Its one signature |
 |---|---|---|
 | Narrative | Headline, dek, paragraphs, the take, What changed, flags, events | None: ink on paper |
-| Evidence | Tables, the curve module, the release card, opened `§` evidence | Caps caption and tabular figures; compact objects on the inset surface |
-| Watch | Open and carried watches | The teal gutter rule |
-| Audit | The guide, Sources & coverage, the footer | Small muted type behind a disclosure |
+| Evidence | Tables, the curve module, the release card, opened `§` evidence (its rows and, when useful, its chart), the before → after lines under a verdict, the one-line rates takeaway after the take | Caps caption and tabular figures; compact objects on the inset surface |
+| Watch | Open and carried watches | The teal gutter rule, grey once the horizon has passed |
+| Audit | The guide, Sources & coverage, the footer | Small muted type behind a disclosure; Coverage limitations open when there are any |
 
 A new element names its plane and reuses that plane's signature. If it needs a new one, change this
 document in the same pull request.
@@ -50,11 +50,12 @@ An object earns `--surface` only when all three hold:
 2. it is self-contained, with its own label and time;
 3. it is compact, no taller than about half a phone screen.
 
-Today: the economic-release card, opened `§` evidence and proof lines, and a targeted ledger row.
+Today: the economic-release card, the rates summary after the take, the before → after movement group under a verdict, opened `§` evidence and proof lines, and a targeted ledger row. An opened `§` inside the movement group shows its rows on that same surface, never a second one.
 
-The tint has square corners, no border and no shadow. It extends one `--hang` into the gutter on each side
-while its text stays on the column edge. Never two surfaces side by side, never one inside another, never
-a surface and a gutter rule on the same object.
+The tint has 6px corners, no border and no shadow. Like the sample/replay notice, it sits on the column edge
+with its text inset by one `--hang` of padding, at most the 560px data width; it never bleeds into the gutter,
+which is reserved for marks. Never two surfaces side by side, never one inside another, never a surface and a
+gutter rule on the same object.
 
 The surface moves away from the ink in both themes, lighter than the page in light and darker in dark, so
 text on it never loses contrast.
@@ -65,11 +66,26 @@ This is the whole set. There are no icons.
 
 | Mark | Means | Where |
 |---|---|---|
-| `§` | Evidence behind this claim | After a claim; never in tables |
+| `§` | Evidence behind this claim | After a claim, or on the window line of its before → after rows; never in tables |
 | Teal square, 5px, in the gutter | A change since the last read | What changed |
-| Teal rule, 2px, in the gutter | An open question (grey once retired) | Watches |
+| Teal rule, 2px, in the gutter | An open question (grey once its horizon has passed or it is retired) | Watches |
 | `▸` / `▾` | Collapsed / open | Every drawer and ledger group |
+| `→` between two values | The same measurement at two clocks; never the path between them | Before → after rows: ticker, values, arrow and verb as one left-aligned group, the window under them |
+| `↑` `↓` `→` in direction colour | The sign of the move the text beside it names | Before → after rows |
+| Small caps label (`Watch`, `Relationship`, `Confirm`, `Changes it`) | The role of the line that follows | Under a verdict; inside a watch |
 | `·` `—` `→` `−` `+` | Separator, label dash, revision, sign | As typed |
+
+## The evidence chart
+
+An opened `§` drawer may draw at most two small figures, under its rows and above one shared legend, and only
+where a figure shows what the rows cannot: the drawer cites the instrument's history (a twenty-session return or
+spread, its fifty-session average or distance from it, the close that crossed it) or at least three prints of one
+session. Two prints are two numbers; the before → after line and the rows carry them and nothing is drawn. Each
+figure is geometry over values the ledger already holds: the last twenty regular closes as a teal path ending at
+the previous close on a hairline at zero, the fifty-session average as a dotted rule when it is cited or already
+in view, and the drawer's cited prints as isolated dots in direction colour, labelled with their clocks and never
+joined, because no path between them was observed. Table proofs never draw. Real OHLC is drawn only when real
+OHLC is held; none is today.
 
 ## Instruments
 
@@ -85,8 +101,8 @@ ticker alone where it is the name. Tables and flags use the same form. Evidence 
 - Do not add a font size, weight or spacing value when an existing one is within 2px.
 - Spacing tiers: 2–8px inside a component, 12px between paragraphs, 24px between components, 32px between
   subsections, and the section break. Only the section break shrinks on phones.
-- Widths: prose 700px, compact data 560px (the rates table, spreads, chart and release card share it),
-  five-column tables the full column.
+- Widths: prose 700px, compact data 560px (the rates table, spreads, chart, release card and the before → after
+  rows share it), five-column tables the full column.
 
 ## Themes and phones
 

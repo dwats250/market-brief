@@ -226,7 +226,48 @@ ARCHITECTURE now separates run start, observation window, evidence cutoff and se
 - No baseline file is committed yet, so nothing is highlighted until one is built (`glance-baseline`).
 - Tests: `tests/test_glance.py`.
 
+**Readability pass (2026-10-14, branch `feat/readability-refinement`, PR #55).** Presentation and one deterministic
+classifier; the information architecture, content, prompt, schema, validator, continuity and cadence are unchanged.
+(1) What changed leads with what was observed (the verdict's reason), names the watch or relationship it judged as
+a labelled second line, and, when its citations hold one instrument's measurement at two clocks, shows `SPY ·
+−0.53% → +0.21% · ↑ turned higher` as one left-aligned group with the window under it (`Premarket 5:41 AM →
+Intraday 12:06 PM PT · vs prior close §`, the `§` opening the provenance under the comparison); each clock's phase
+is named, the arrow joins two measurements and never a path, and a pair the sentence already spells out is not
+repeated. (2) An opened `§` drawer draws up to two evidence charts only when a chart shows what the rows cannot: the
+drawer cites the instrument's history (twenty-session return or spread, fifty-session average or distance, a cross)
+or at least three prints of one session; two prints alone draw nothing. A chart is the last twenty regular closes
+ending at the previous close on a zero rule, the 50DMA dotted when cited or already in view, and the cited prints as
+isolated labelled dots; a carried page draws the prints its analyst saw. Geometry only, from the history and rows the
+page already holds; no OHLC until real OHLC is held. (3) Rates reach the opening only when the lead (headline,
+character, summary or take) cites a Treasury row: one small line after the take with the module's observed tenors and
+daily changes, both spreads, the move label, the curve's own dated caption, the note that places the curve before a
+release, and a link to the full module; the sentence, chart and spread detail stay in Macro & rates. (4) The curve
+classifier is `curve-move.v2`: a parallel shift needs both legs at the threshold in one direction; only the leading
+leg there is `Broadly higher/lower, mild steepening/flattening` by the sign of Δs (Tue, Oct 13: 2Y −1, 10Y −3 read
+"Parallel shift lower" under v1). Two releases on one clock are named once in the curve's release note. (5) Wording:
+the no-change note reads "Nothing comparable has moved …"; a listed event whose time has passed without admitted
+values reads `released · values not collected`; a retired watch shows its horizon line above its question. (6)
+Watches carry a state (`active`, `unresolved`, `judged`, `expired`, `completed`): the gutter turns grey once a horizon
+has passed, and a live watch with a verdict points to it (`verdict in What changed`) without repeating it. (7) Sources
+& coverage: a smaller heading, Coverage limitations open and counted when there are any (`none recorded` otherwise).
+Markdown carries the same line, lines and states. Tests: `tests/test_readability_pass.py` (35 incl. three
+phone-width in headless Chrome with every drawer open). `examples/` and `publish/index.html` are not regenerated here.
+Known fixture artefact, not a defect: the test harness reuses one narrative at every checkpoint, so a preview over
+`carried_setup` shows three distinct watch records (Friday close, Tuesday premarket, Tuesday opening) with identical
+wording; production's analyst writes new watches only for questions not already carried.
+
 ## Next
+
+Readability pass: after merge, on the first live page check the before → after lines under each verdict against
+their `§` rows, open a `§` on a watch that cites a print and confirm the chart's dots match the rows' values and
+clocks, confirm the strip's tenors equal the Macro & rates table, and read the curve label on a day the old rule
+would have called parallel. Not in this slice, each a follow-up decision: real OHLC candles (Alpaca's daily bars
+already carry `o`/`h`/`l`; `_alpaca_history` keeps `c` only, so the smallest safe addition is three additive arrays
+beside `closes` in the history record, validated to the same length, with the renderer drawing the previous session as
+one candle beside the close path and showing its open and close in the chart head), intraday bars for a continuous
+path between prints (a new collection scope), and a prompt line asking the analyst to say plainly when a carried
+watch's premise has changed and to keep each verdict reason to one observed fact (the prompt sits at 10,990 of 11,000
+bytes, so it needs a trim elsewhere and a paid-synthesis judgment).
 
 Evidence cutoff after collection: after merge, check these.
 - **In-session pages:** 21 of 21 current prints. Otherwise the Alpaca source reads Degraded and names each missing symbol and why.

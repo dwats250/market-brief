@@ -130,15 +130,20 @@ PASSED = " · horizon passed"
 def interpretation_fragments(page):
     """The parts of the page that belong to the interpretation clock: headline through the read,
     what changed, and the watches (live, retired and flagged). Everything else on the page belongs to
-    the data clock. The one deterministic annotation a refresh may add to a watch, `horizon passed`,
-    is stripped before comparing."""
-    # The lead runs to the first section; the coverage note between them belongs to the data clock.
-    head = re.sub(r'<p class="notice compact">.*?</p>', "", page.split("<h1>", 1)[1].split("<section", 1)[0]).rstrip()
+    the data clock. The one deterministic annotation a refresh may add to a watch, `horizon passed` (and
+    the grey gutter state that goes with it), is stripped before comparing."""
+    # The lead runs to the first section; the coverage note and the rates takeaway between them belong to the
+    # data clock (the takeaway reads this run's curve module, dated, like the module itself).
+    head = page.split("<h1>", 1)[1].split("<section", 1)[0]
+    head = re.sub(r'<div class="rates-lead">.*?</p></div>', "", re.sub(r'<p class="notice compact">.*?</p>', "", head))
+    head = head.rstrip()
     since = (page.split('<section class="since">', 1)[1].split("</section>", 1)[0]
              if '<section class="since">' in page else "")
     watches = (page.split('<span class="eyebrow">Watches</span>', 1)[1]
                .split('<span class="eyebrow">Events', 1)[0].split("</section>", 1)[0])
-    return head, since, watches.replace(PASSED, "")
+    watches = watches.replace(PASSED, "").replace("state-expired", "state-active").replace("state-completed",
+                                                                                           "state-judged")
+    return head, since, watches
 
 
 @pytest.fixture

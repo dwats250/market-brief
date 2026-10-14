@@ -422,3 +422,16 @@ def test_the_new_blocks_fit_a_phone_with_every_drawer_open(tmp_path, width):
 @pytest.fixture
 def day(monkeypatch, tmp_path):
     return Day(monkeypatch, tmp_path)
+
+
+def test_shaded_surfaces_align_with_the_notice_on_the_column_edge():
+    _, page = render(fixture_packet(), narrative())
+    style = re.search(r"<style>.*?</style>", page, re.S).group(0)
+    notice = re.search(r"\.notice\{[^}]*\}", style).group(0)
+    assert "margin:14px 0" in notice and "calc(-1" not in notice
+    for selector in (r"\.release", r"\.rates-lead", r"\.moves", r"details\.cite\[open\] \.refs"):
+        rule = re.search(r"(?<![\w-])" + selector + r"\{[^}]*background:var\(--surface\);[^}]*\}", style).group(0)
+        assert "border-radius:6px" in rule and "calc(-1" not in rule and "max-width:560px" in rule, rule
+    # Gutter marks keep their place in the gutter.
+    assert re.search(r"\.since li::before\{[^}]*left:calc\(-1\*var\(--hang\)\)", style)
+    assert re.search(r"\.watch\{border-left:2px solid var\(--teal\);margin:0 0 16px calc\(-1\*var\(--hang\)\)", style)

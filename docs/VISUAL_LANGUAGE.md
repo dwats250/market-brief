@@ -15,8 +15,8 @@ something a person cared about, never as a dashboard, a terminal, a card grid or
 2. **The inset surface is reserved for deterministic, checkable facts.** See the test below.
 3. **Active questions use the teal gutter.** A watch carries a 2px rule in the left margin; a retired watch
    carries the same rule in grey. Nothing else uses a left rule in the gutter.
-4. **Text holds the column edge.** Tints and marks sit in the gutter (`--hang`); the left edge of the text
-   never moves, from the masthead to the footer.
+4. **Containers hold the column edge.** Marks sit in the gutter (`--hang`); shaded surfaces and the notice start
+   at the column edge and inset their text by their padding.
 5. **Whitespace and alignment replace rules before ornament is introduced.** Space first, a hairline
    second, the strong rule only between sections.
 6. **Teal is structural.** It marks what is live: the masthead, links and `§`, the watch gutter, the list
@@ -52,9 +52,10 @@ An object earns `--surface` only when all three hold:
 
 Today: the economic-release card, the rates summary after the take, the before → after movement group under a verdict, opened `§` evidence and proof lines, and a targeted ledger row. An opened `§` inside the movement group shows its rows on that same surface, never a second one.
 
-The tint has square corners, no border and no shadow. It extends one `--hang` into the gutter on each side
-while its text stays on the column edge. Never two surfaces side by side, never one inside another, never
-a surface and a gutter rule on the same object.
+The tint has 6px corners, no border and no shadow. Like the sample/replay notice, it sits on the column edge
+with its text inset by one `--hang` of padding, at most the 560px data width; it never bleeds into the gutter,
+which is reserved for marks. Never two surfaces side by side, never one inside another, never a surface and a
+gutter rule on the same object.
 
 The surface moves away from the ink in both themes, lighter than the page in light and darker in dark, so
 text on it never loses contrast.

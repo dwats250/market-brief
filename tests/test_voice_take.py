@@ -63,8 +63,9 @@ MISMATCH = "take text and evidence must be both present or both empty"
 # (`.since .judged`), the watch state on the gutter (`.watch.state-expired`, `.state-completed`), the rates summary
 # after the take on the inset surface (`.rates-lead` and its `.group` lines), the evidence chart inside an opened `§`
 # drawer (`.refs .evidence`, `.chart-head`, `.evidence-chart`, two legend keys) and the audit section's smaller
-# heading (`section.audit h2`).
-STYLE_SHA256 = "aea7fb9102918dec52de0629d45606ea8ce978e0c36f8ee8abcdd2fe9f14038d"
+# heading (`section.audit h2`). Shaded surfaces (`.release`, `.rates-lead`, `.moves`, opened `.refs`) align with the
+# notice on the column edge, 6px corners, no gutter bleed.
+STYLE_SHA256 = "96beddb82a8019533859581f92058d5a549880ecfdd13c34ee0ec4341be9c13e"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):

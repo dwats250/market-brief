@@ -39,6 +39,8 @@ from .metrics import annotate_magnitude, derive
 from .render import render
 from .schedule import (
     CHECKPOINTS,
+    ET,
+    VANCOUVER,
     checkpoint_kind,
     checkpoint_session,
     current_phase,
@@ -47,6 +49,8 @@ from .schedule import (
 )
 from .synthesize import (
     NARRATIVE_SCHEMA,
+    NarrativeRejected,
+    as_returned,
     construct_prompt,
     editorial_notes,
     narrative_schema,
@@ -230,6 +234,56 @@ def merge_input(collected, supplied):
     return collected
 
 
+def degradable(exc):
+    """Whether a synthesis failure may publish as the deterministic refresh (OD-1): the analysis was attempted and
+    not accepted, never a refusal or fault before any request."""
+    return (isinstance(exc, NarrativeRejected) or isinstance(getattr(exc, "attempt", None), dict)
+            or "edition budget" in str(exc))
+
+
+def record_rejection(folder, metadata, exc):
+    """A rejected run's accounting: the error, the paid call it was (at what it cost when known) and the response."""
+    metadata.update(validation="FAILED", error=str(exc))
+    attempt = getattr(exc, "attempt", None)
+    if isinstance(attempt, dict):
+        # A request was sent: the rejection is recorded as the paid call it was, at what it cost when known.
+        metadata.update(model_route=attempt.get("route", metadata["model_route"]), model=attempt)
+        usage = attempt.get("usage")
+        if isinstance(usage, dict) and usage:
+            # The log line an accepted call prints, so a rejected call's cost is visible without the artifact.
+            print("Synthesis usage (not accepted): " + " ".join(f"{k}={v}" for k, v in usage.items()), flush=True)
+    rejected = getattr(exc, "narrative", None)
+    if rejected is not None:
+        # The generated output is the diagnostic; keep it beside the evidence it failed against.
+        write_json(folder / "narrative.rejected.json", rejected)
+
+
+def missing_prints_reason(packet):
+    """Why a refresh has no current print, from the packet: none returned, or how many came back too old and when the
+    newest was stamped (2026-10-15 HOURLY_1400: the feed stopped at 12:56 ET, an hour before the run)."""
+    prints = [r for r in packet["observations"] if r.get("frequency") == "intraday"]
+    if not prints:
+        return ("refresh has no timestamped current prints: the price source returned none; "
+                "the last accepted page stands")
+    statuses = {}
+    for row in prints:
+        statuses[row.get("status") or "unknown"] = statuses.get(row.get("status") or "unknown", 0) + 1
+    detail = ", ".join(f"{count} {status.lower()}" for status, count in sorted(statuses.items()))
+    stamped = []
+    for row in prints:
+        if row.get("status") == "STALE":
+            try:
+                stamped.append(timestamp(row["observed_at"]))
+            except (KeyError, TypeError, ValueError, AttributeError):
+                pass
+    if stamped:
+        newest = max(stamped)
+        detail += (f"; the newest stale print was stamped {newest.astimezone(ET):%-I:%M:%S %p} ET / "
+                   f"{newest.astimezone(VANCOUVER):%-I:%M:%S %p} PT")
+    return (f"refresh has no timestamped current prints: {len(prints)} intraday prints ({detail}); "
+            "the last accepted page stands")
+
+
 def sample_interpretation(packet, prior, comparisons):
     """A fictional replay of a deterministic checkpoint renders the fixture narrative as the carried
     interpretation, dated to the session's premarket so the two clocks read as they would in production."""
@@ -341,56 +395,85 @@ def run(args):
         if packet["coverage"]["status"] == "INSUFFICIENT":
             raise ValueError("no usable observations/events/context; evidence diagnostic only")
         narrative = None
+        degraded = None
         if kind == "synthesis":
-            if args.replay and not args.synthesize:
-                fixture = "narrative.continuity.json" if prior["status"] == "available" else "narrative.sample.json"
-                narrative = read_json(ROOT / "tests/fixtures" / fixture)
-                validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)
-                system, prompt = construct_prompt(packet, full=full, context=context)
-                model = dict(route="fixture-replay", resolved_models=[],
-                             prompt_hash=digest(dict(system=system, user=prompt)),
-                             evidence_hash=evidence_hash)
-            else:
-                print("Evidence collected; requesting one isolated structured synthesis.", flush=True)
+            try:
+                if args.replay and not args.synthesize:
+                    fixture = "narrative.continuity.json" if prior["status"] == "available" else "narrative.sample.json"
+                    narrative = read_json(ROOT / "tests/fixtures" / fixture)
+                    validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)
+                    system, prompt = construct_prompt(packet, full=full, context=context)
+                    model = dict(route="fixture-replay", resolved_models=[],
+                                 prompt_hash=digest(dict(system=system, user=prompt)),
+                                 evidence_hash=evidence_hash)
+                else:
+                    print("Evidence collected; requesting one isolated structured synthesis.", flush=True)
 
-                def requesting(attempt):
-                    # The paid-attempt boundary, immediately before the provider request is sent. A production
-                    # attempt is recorded first, so no later runner pays for this checkpoint again whatever the
-                    # response turns out to be; if the record cannot be written, nothing is sent.
-                    if production:
-                        # Keyed like every acceptance record (page, bundle origin): the run's own exchange-calendar
-                        # date. On a trading day that is the session `scheduled()` asks about; a run on a weekend or
-                        # holiday never stands for the next session's checkpoint.
-                        record = record_attempt(RUN_ROOT, packet["run"]["session"]["date"], checkpoint, folder.name,
-                                                attempt)
-                        metadata["attempt_record"] = str(record.relative_to(RUN_ROOT))
+                    def requesting(attempt):
+                        # The paid-attempt boundary, immediately before the provider request is sent. A production
+                        # attempt is recorded first, so no later runner pays for this checkpoint again whatever the
+                        # response turns out to be; if the record cannot be written, nothing is sent.
+                        if production:
+                            # Keyed like every acceptance record (page, bundle origin): the run's own exchange-calendar
+                            # date. On a trading day that is the session `scheduled()` asks about; a run on a weekend or
+                            # holiday never stands for the next session's checkpoint.
+                            record = record_attempt(RUN_ROOT, packet["run"]["session"]["date"], checkpoint, folder.name,
+                                                    attempt)
+                            metadata["attempt_record"] = str(record.relative_to(RUN_ROOT))
+                        metadata["synthesis"]["calls"] = 1
+                        metadata.update(model_route=attempt["route"], model=attempt)
+                    narrative, model = synthesize(packet, full=full, context=context, on_request=requesting)
                     metadata["synthesis"]["calls"] = 1
-                    metadata.update(model_route=attempt["route"], model=attempt)
-                narrative, model = synthesize(packet, full=full, context=context, on_request=requesting)
-                metadata["synthesis"]["calls"] = 1
-            notes = editorial_notes(narrative, NARRATIVE_SCHEMA if full else narrative_schema(context["edition"]))
-            metadata["editorial"] = notes
-            for note in notes:
-                print(f"Editorial overshoot kept: {note['path']} {note['keyword']} {note['actual']} > {note['limit']}",
-                      flush=True)
-            # Voice telemetry, observation only: it never changes acceptance, publication or the call count.
-            metadata["style"] = style_notes(narrative)
-            metadata.update(model_route=model["route"], model=model, narrative_hash=digest(narrative))
-            # The accepted response is on disk before anything else can fail; it is paid for.
-            write_json(folder / "narrative.json", narrative)
-            # Package this edition's state from the same validated response; no second model call.
-            state = edition_state(packet, narrative, prior, comparisons, metadata["context_hash"],
-                                  metadata["narrative_hash"], __version__)
-            interpretation = interpretation_record(packet, narrative, context, __version__, metadata["context_hash"])
-        else:
+                repairs = model.get("repairs") or []
+                if repairs:
+                    # The response as the analyst returned it stays beside the one accepted after the rewrite.
+                    write_json(folder / "narrative.returned.json", as_returned(narrative, repairs))
+                    metadata["repairs"] = repairs
+                # Overshoot is the analyst's: measured on the response as returned, not on the rewrite.
+                notes = editorial_notes(as_returned(narrative, repairs),
+                                        NARRATIVE_SCHEMA if full else narrative_schema(context["edition"]))
+                metadata["editorial"] = notes
+                for note in notes:
+                    print(f"Editorial overshoot kept: {note['path']} {note['keyword']} {note['actual']} > "
+                          f"{note['limit']}", flush=True)
+                # Voice telemetry, observation only: it never changes acceptance, publication or the call count.
+                metadata["style"] = style_notes(narrative)
+                metadata.update(model_route=model["route"], model=model, narrative_hash=digest(narrative))
+                # The accepted response is on disk before anything else can fail; it is paid for.
+                write_json(folder / "narrative.json", narrative)
+                # Package this edition's state from the same validated response; no second model call.
+                state = edition_state(packet, narrative, prior, comparisons, metadata["context_hash"],
+                                      metadata["narrative_hash"], __version__)
+                interpretation = interpretation_record(packet, narrative, context, __version__,
+                                                       metadata["context_hash"])
+            except ValueError as exc:
+                # A rejected opening analysis still publishes the checkpoint: the deterministic refresh of this same
+                # collection under the session's last accepted interpretation (owner ruling OD-1). No second model
+                # call, nothing recollected, and it never counts as a synthesis: the frozen interpretation is not
+                # replaced. Without an accepted interpretation (a rejected PREMARKET) the run fails closed as before.
+                # Only a production generation that was actually attempted and not accepted degrades: a rejected
+                # response, a failure after the request was sent, or an over-budget context that could not be sent.
+                # A refusal before any request, an experiment or a commissioning run fails closed as before.
+                if not production or not degradable(exc):
+                    raise
+                interpretation, interpretation_note = admit_interpretation(bundle, packet)
+                if interpretation is None or interpretation["origin"].get("checkpoint") == checkpoint:
+                    # No earlier analysis to stand, or this checkpoint's own analysis already stands.
+                    raise
+                record_rejection(folder, metadata, exc)
+                degraded = dict(checkpoint=checkpoint, scheduled_at=checkpoint_data["scheduled_at"], reason=str(exc))
+                narrative = None
+                print(f"Synthesis not accepted ({exc}); publishing the deterministic refresh under interpretation "
+                      f"{interpretation['origin']['run_id']}.", flush=True)
+        if kind != "synthesis" or degraded:
             if interpretation is None and args.replay:
                 # A fictional replay carries the fixture narrative; a fixture mismatch is a diagnosed rejection.
                 interpretation, interpretation_note = sample_interpretation(packet, prior, comparisons), ""
-            if kind == "refresh":
+            if kind == "refresh" or degraded:
                 if interpretation is None:
                     raise ValueError(interpretation_note)
                 if not packet["coverage"].get("current_premarket"):
-                    raise ValueError("refresh has no timestamped current prints; the last accepted page stands")
+                    raise ValueError(missing_prints_reason(packet))
             state = carried_state(packet, prior, comparisons, interpretation, __version__)
             closing = state["observed"]["data_status"]
             if kind == "close" and closing["status"] not in CLOSING_DATA_FOR_HANDOFF:
@@ -406,10 +489,14 @@ def run(args):
         published = False
         if interpretation is not None:
             try:
-                markdown, page = render(packet, narrative, context, interpretation=interpretation, glance=overseas)
+                repairs = None if degraded else (metadata.get("model") or {}).get("repairs")
+                markdown, page = render(packet, narrative, None if degraded else context,
+                                        interpretation=interpretation, glance=overseas, repairs=repairs,
+                                        degraded=degraded)
             except Exception as exc:  # noqa: BLE001 - any rendering defect is diagnosed like a rejection
                 # The accepted narrative is already on disk; nothing has been published.
-                raise ValueError(f"render failed after acceptance ({type(exc).__name__}: {exc})") from None
+                stage = "the degraded refresh" if degraded else "acceptance"
+                raise ValueError(f"render failed after {stage} ({type(exc).__name__}: {exc})") from None
             (folder / "brief.md").write_text(markdown)
             (folder / "brief.html").write_text(page)
             update_latest(RUN_ROOT, page)
@@ -420,7 +507,9 @@ def run(args):
         else:
             # Only a close reaches here: the session hands off even when no synthesis was accepted today.
             print(f"Close snapshot recorded without a page ({interpretation_note}).", flush=True)
-        metadata.update(validation="PASS", published=published)
+        metadata.update(validation="DEGRADED" if degraded else "PASS", published=published)
+        if degraded:
+            metadata["degraded_from"] = degraded
         metadata["continuity"].update(data_status=state["observed"]["data_status"],
                                       handoff="written" if handoff else handoff_reason,
                                       watches=[w["id"] for w in state["assessment"]["watches"]])
@@ -435,24 +524,17 @@ def run(args):
             # commissioning runs never touch it. A refresh never rewrites the frozen interpretation.
             write_bundle(bundle_path(RUN_ROOT),
                          advance_bundle(bundle, state, handoff, datetime.now(timezone.utc),
-                                        interpretation if kind == "synthesis" else None))
+                                        interpretation if kind == "synthesis" and not degraded else None))
             metadata["continuity"]["advanced"] = True
     except ValueError as exc:
-        metadata.update(validation="FAILED", error=str(exc))
-        attempt = getattr(exc, "attempt", None)
-        if isinstance(attempt, dict):
-            # A request was sent: the rejection is recorded as the paid call it was, at what it cost when known.
-            metadata.update(model_route=attempt.get("route", metadata["model_route"]), model=attempt)
-        rejected = getattr(exc, "narrative", None)
-        if rejected is not None:
-            # The generated output is the diagnostic; keep it beside the evidence it failed against.
-            write_json(folder / "narrative.rejected.json", rejected)
+        record_rejection(folder, metadata, exc)
         print(f"Brief not accepted: {exc}. Diagnostic: {folder}", file=sys.stderr)
         return 2
     finally:
         metadata["completed_at"] = datetime.now(timezone.utc).isoformat()
         write_json(folder / "metadata.json", metadata)
-    outcome = "validated" if kind == "synthesis" else "refreshed" if published else "recorded"
+    outcome = ("degraded to refresh" if degraded else "validated" if kind == "synthesis"
+               else "refreshed" if published else "recorded")
     print(f"{mode} / {packet['coverage']['status']} / {outcome}: {folder / 'brief.html'}")
     return 0
 

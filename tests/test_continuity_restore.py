@@ -171,19 +171,27 @@ def test_a_wake_after_a_failed_publication_skips_the_checkpoint_its_bundle_recor
     assert actions.calls == ["PREMARKET"] and not actions.days[again].attempts("PREMARKET")
 
 
-# --- a rejected synthesis never becomes restorable ----------------------------------------------------------
+# --- a rejected synthesis never becomes restorable as an interpretation ---------------------------------------
 
-def test_a_rejected_synthesis_uploads_nothing_and_the_last_accepted_state_is_restored(actions):
-    premarket = actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
-    rejected = actions.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", fail_synthesis=True)
+def test_a_rejected_synthesis_without_an_earlier_interpretation_uploads_nothing(actions):
+    close = actions.run(f"{FRI}T20:01:00+00:00", "CLOSE_1M")
+    rejected = actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False, fail_synthesis=True)
     assert actions.runs[rejected]["conclusion"] == "failure"
     # The run archived its diagnostic (always) and uploaded no continuity: the upload step never ran.
     assert [a["name"] for a in actions.artifacts if a["workflow_run"]["id"] == rejected] == [
-        f"market-brief-run-OPEN_30M-{rejected}"]
-    # Its runner's bundle is still the restored one: nothing from the rejected response was written to it.
-    assert json.loads(bundle_path(actions.days[rejected].root).read_text()) == actions.bundle(premarket)
+        f"market-brief-run-PREMARKET-{rejected}"]
+    assert json.loads(bundle_path(actions.days[rejected].root).read_text()) == actions.bundle(close)
+
+
+def test_a_rejected_opening_synthesis_publishes_a_refresh_whose_bundle_keeps_the_premarket_interpretation(actions):
+    premarket = actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
+    degraded = actions.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", fail_synthesis=True)
+    assert actions.runs[degraded]["conclusion"] == "success" and actions.published == ["PREMARKET", "OPEN_30M"]
+    # It uploads continuity as a refresh would: the observed record advances, the interpretation is untouched.
+    assert actions.bundle(degraded)["interpretation"] == actions.bundle(premarket)["interpretation"]
+    assert actions.bundle(degraded)["latest"]["origin"]["checkpoint"] == "OPEN_30M"
     refresh = actions.run(f"{TUE}T15:01:00+00:00", "HOURLY_1100")
-    assert actions.downloads == [premarket, premarket]
+    assert actions.downloads == [premarket, degraded]
     assert actions.days[refresh].metadata("HOURLY_1100")["interpretation"]["checkpoint"] == "PREMARKET"
     assert actions.calls == ["PREMARKET", "OPEN_30M"]  # the refresh retried nothing
 

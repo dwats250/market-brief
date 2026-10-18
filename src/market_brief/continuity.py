@@ -529,27 +529,28 @@ def validate_state(narrative, context, shown, topics):
     prior_refs = set(prior_values(context)) if available else set()
     comparisons = {c["id"]: c for c in (context or {}).get("comparisons", [])} if available else {}
 
-    def check_refs(record, allow_prior):
+    def check_refs(record, allow_prior, path):
+        # The record and the reference are named: the analyst's own identifiers explain the rejection.
         for ref in record["evidence_ids"]:
             if ":" in ref:
                 if not allow_prior or ref not in prior_refs:
-                    raise ValueError("prior evidence reference not admitted for this record")
+                    raise ValueError(f"prior evidence reference not admitted for this record at {path}: {ref}")
             elif ref not in shown:
-                raise ValueError("unknown, unavailable, or unsupplied evidence reference")
+                raise ValueError(f"unknown, unavailable, or unsupplied evidence reference at {path}: {ref}")
 
-    check_refs(narrative["character"], False)
+    check_refs(narrative["character"], False, "character")
     seen = set()
-    for update in narrative["watch_updates"]:
+    for index, update in enumerate(narrative["watch_updates"]):
         watch = carried_watches.get(update["carried_id"])
         if watch is None or update["carried_id"] in seen:
             raise ValueError("watch update names an unknown or repeated carried watch")
         seen.add(update["carried_id"])
         if watch["evaluability"] != "assessable" and update["assessment"] != "unresolved":
             raise ValueError("a watch without comparable current evidence can only be unresolved")
-        check_refs(update, True)
+        check_refs(update, True, f"watch_updates[{index}]")
         if not any(":" not in ref for ref in update["evidence_ids"]) and watch["evaluability"] == "assessable":
             raise ValueError("an assessed watch must cite current evidence")
-    for relationship in narrative["relationships"]:
+    for index, relationship in enumerate(narrative["relationships"]):
         carried = relationship["carried_id"]
         if carried is None and relationship["assessment"] != "new":
             raise ValueError("a new relationship must be assessed as new")
@@ -557,9 +558,9 @@ def validate_state(narrative, context, shown, topics):
             raise ValueError("relationship names an unknown carried record or restarts it as new")
         if not set(relationship["instruments"]) <= topics:
             raise ValueError("relationship names an instrument outside the supplied evidence")
-        check_refs(relationship, carried is not None)
+        check_refs(relationship, carried is not None, f"relationships[{index}]")
     seen = set()
-    for change in narrative["changes"]:
+    for index, change in enumerate(narrative["changes"]):
         comparison = comparisons.get(change["comparison_id"])
         if comparison is None or change["comparison_id"] in seen:
             raise ValueError("change names an unknown or repeated comparison")
@@ -575,7 +576,7 @@ def validate_state(narrative, context, shown, topics):
         foreign = set(change["evidence_ids"]) - {comparison.get("current_ref"), comparison.get("prior_ref")}
         if foreign:
             raise ValueError("change cites evidence outside its comparison: " + ", ".join(sorted(foreign)))
-        check_refs(change, True)
+        check_refs(change, True, f"changes[{index}]")
     return narrative
 
 

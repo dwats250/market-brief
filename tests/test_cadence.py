@@ -55,7 +55,7 @@ class Day:
 
     def run(self, now, checkpoint, *, intraday=True, value=None, mutate=None, last_history_date="2026-09-04",
             print_at=None, fail_synthesis=False, command="premarket", scale_last_close=None,
-            prints=(("SPY", -0.53), ("QQQ", -0.61), ("XLI", 0.4)), wire=False, collect=None):
+            prints=(("SPY", -0.53), ("QQQ", -0.61), ("XLI", 0.4)), wire=False, collect=None, flags=()):
         freeze_clock(self.monkeypatch, now)
         raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
         raw["mode"] = "LIVE"
@@ -88,7 +88,9 @@ class Day:
             (validated against the exact context), or the given one, or fails like a rejected response."""
             self.calls.append(packet["run"]["checkpoint"])
             if fail_synthesis:
-                raise ValueError("synthesis rejected")
+                # A paid response the validator rejected: the case a synthesis checkpoint degrades on (OD-1).
+                from market_brief.synthesize import NarrativeRejected
+                raise NarrativeRejected("synthesis rejected", {})
             live = value or edition_response(edition_profile(packet["run"]["checkpoint"]), context)
             if mutate:
                 mutate(live)
@@ -101,7 +103,7 @@ class Day:
         self.monkeypatch.setattr(cli, "RUN_ROOT", self.root)
         self.monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
         self.monkeypatch.setattr(cli, "publish_latest", lambda root: self.published.append(checkpoint))
-        return cli.main([command, "--checkpoint", checkpoint])
+        return cli.main([command, "--checkpoint", checkpoint, *flags])
 
     def attempts(self, checkpoint, session=TUE):
         prefix = f"live-{checkpoint.lower()}-"
@@ -387,12 +389,10 @@ def test_the_alternate_season_wake_never_retries_or_reruns_the_opening_structure
         day, capsys, first_attempt_fails):
     """PDT: the 14:01 UTC wake is the 7:00 update's one natural attempt. The 14:31 UTC wake exists for
     PST's open +1M; at 7:31 PDT it resolves to SKIP and never reaches the analyst, whether the first
-    attempt failed or succeeded."""
+    attempt failed or succeeded. A rejected attempt still publishes the checkpoint as a refresh (OD-1)."""
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
     assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M", command="schedule") == 0
-    expected = 2 if first_attempt_fails else 0
-    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", command="schedule", fail_synthesis=first_attempt_fails) \
-        == expected
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", command="schedule", fail_synthesis=first_attempt_fails) == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"] and len(day.attempts("OPEN_30M")) == 1
     # 7:31 PDT: the scheduler resolves nothing, and an explicit OPEN_30M dispatch is outside its window.
     freeze_clock(day.monkeypatch, f"{TUE}T14:31:00+00:00")
@@ -401,7 +401,7 @@ def test_the_alternate_season_wake_never_retries_or_reruns_the_opening_structure
     assert day.run(f"{TUE}T14:31:00+00:00", "OPEN_30M", command="schedule") == 0
     assert "SKIP / OPEN_30M / outside checkpoint window" in capsys.readouterr().out
     assert day.calls == ["PREMARKET", "OPEN_30M"] and len(day.attempts("OPEN_30M")) == 1
-    assert day.published == ["PREMARKET", "OPEN_1M"] + ([] if first_attempt_fails else ["OPEN_30M"])
+    assert day.published == ["PREMARKET", "OPEN_1M", "OPEN_30M"]
     # The hourly refreshes that follow are unaffected and still make no analyst call.
     assert day.run(f"{TUE}T15:01:00+00:00", "HOURLY_1100", command="schedule") == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]
@@ -434,11 +434,24 @@ def test_a_queue_delayed_earlier_wake_cannot_repeat_a_completed_checkpoint_on_a_
 
 
 def test_a_failed_opening_structure_synthesis_leaves_refreshes_on_the_premarket_interpretation(day):
+    """A rejected opening analysis still publishes its checkpoint as the deterministic refresh of the same collection
+    under the premarket interpretation, says so on the page, and freezes nothing (owner ruling OD-1)."""
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
     premarket = day.bundle()["interpretation"]["content_hash"]
-    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", fail_synthesis=True) == 2
-    assert day.calls == ["PREMARKET", "OPEN_30M"] and day.published == ["PREMARKET"]
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", fail_synthesis=True) == 0
+    assert day.calls == ["PREMARKET", "OPEN_30M"] and day.published == ["PREMARKET", "OPEN_30M"]
     assert day.bundle()["interpretation"]["content_hash"] == premarket  # a rejected synthesis freezes nothing
+    metadata = day.metadata("OPEN_30M")
+    assert metadata["validation"] == "DEGRADED" and metadata["error"] == "synthesis rejected"
+    assert metadata["degraded_from"]["checkpoint"] == "OPEN_30M"
+    assert metadata["interpretation"]["checkpoint"] == "PREMARKET"
+    opening = day.page("OPEN_30M")
+    assert ('<div class="notice">The opening structure analysis due 10:00 AM ET (7:00 AM PT) was not accepted, so no '
+            'new analysis was published; the premarket analysis stands and the prices are this update&#39;s.</div>'
+            ) in opening
+    assert clock_lines(opening)[:2] == ["Prices · 7:01 AM PT", "Analysis · 6:00 AM PT · premarket"]
+    assert "analyst call not accepted; deterministic refresh under interpretation run" in opening
+    assert 'data-checkpoint="OPEN_30M"' in opening
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
     page = day.page("HOURLY_1300")
     assert clock_lines(page)[:2] == ["Prices · 10:00 AM PT", "Analysis · 6:00 AM PT · premarket"]
@@ -666,3 +679,34 @@ def test_phone_width_has_no_horizontal_overflow(tmp_path):
     assert phone_layout_width(page, tmp_path) <= 390
     # The probe itself detects overflow: a 900 px box is reported.
     assert phone_layout_width(page.replace("<h1>", "<div style='width:900px'>x</div><h1>", 1), tmp_path) >= 900
+
+
+def test_only_an_attempted_production_generation_degrades(day):
+    """Owner correction after review: a refusal or fault before any request fails closed; it may never publish a
+    notice saying an analysis was not accepted."""
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
+
+    def refused(live):
+        raise ValueError("the paid synthesis attempt could not be recorded; no provider request was sent")
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", mutate=refused) == 2
+    assert day.published == ["PREMARKET"]
+
+
+def test_an_experiment_never_degrades_or_publishes(day):
+    from market_brief.continuity import bundle_path
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
+    before = bundle_path(day.root).read_text()
+    from market_brief.synthesize import NarrativeRejected
+
+    def rejected(live):
+        raise NarrativeRejected("rejected", live)
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", mutate=rejected, flags=("--experiment",)) == 2
+    assert day.published == ["PREMARKET"] and bundle_path(day.root).read_text() == before
+
+
+def test_a_checkpoint_whose_own_analysis_stands_is_never_called_rejected(day):
+    """A manual re-run of an accepted OPEN_30M that is then rejected keeps the accepted analysis and fails closed."""
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
+    assert day.run(f"{TUE}T14:05:00+00:00", "OPEN_30M", fail_synthesis=True) == 2
+    assert day.published == ["PREMARKET", "OPEN_30M"]

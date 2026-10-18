@@ -373,6 +373,81 @@ def analyst_model(config=None, environ=None):
                 cli_model=config["analyst"].get("cli_model", "sonnet"))
 
 
+COMPARISON_ALIAS = "comparison-alias.v1"
+# Records whose evidence may include prior refs (`continuity.validate_state`); a new relationship may not.
+PRIOR_ADMITTING = ("watch_updates", "relationships", "changes")
+
+
+def enabled_repairs(config=None):
+    """Deterministic citation repairs the owner has enabled (`analyst.repairs`); none unless listed as strings."""
+    config = config or read_json(ROOT / "config/editions.json")
+    listed = config["analyst"].get("repairs", [])
+    if not isinstance(listed, list) or not all(isinstance(rule, str) for rule in listed):
+        raise ValueError("analyst.repairs must be a list of rule names")
+    return set(listed)
+
+
+def canonicalize_comparison_aliases(narrative, context):
+    """Rewrite a comparison id cited as evidence to the two observations it compares (OD-1, 2026-10-17).
+
+    A comparison is defined as its `current_ref` and `prior_ref`, so citing one is citing the other two; this
+    canonicalizes the alias against the same frozen context, it adds nothing. Only in records that admit prior refs,
+    only for comparisons whose two operands were both supplied, by table lookup, and only in a citation list of
+    distinct strings: anything malformed or repeated is left exactly as returned for the validator, which then runs in
+    full on the result. Each alias is replaced in place by its operands; an operand the list already cites is not
+    repeated. Returns a rewritten copy and one repair per rewritten list (its original and rewritten citations); the
+    analyst's response object is never modified."""
+    prior = (context or {}).get("prior_state") or {}
+    if prior.get("status") != "available" or not isinstance(narrative, dict):
+        return narrative, []
+    shown, earlier = supplied_ids(context), set(prior_values(context))
+    operands = {c["id"]: [c["current_ref"], c["prior_ref"]] for c in context.get("comparisons", [])
+                if c.get("current_ref") in shown and c.get("prior_ref") in earlier}
+    repaired, repairs = json.loads(json.dumps(narrative)), []
+    for key in PRIOR_ADMITTING:
+        records = repaired.get(key)
+        for index, record in enumerate(records if isinstance(records, list) else []):
+            refs = record.get("evidence_ids") if isinstance(record, dict) else None
+            if (not isinstance(refs, list) or not all(isinstance(ref, str) for ref in refs)
+                    or len(set(refs)) != len(refs) or not any(ref in operands for ref in refs)
+                    or (key == "relationships" and record.get("carried_id") is None)):
+                continue
+            aliases = {ref: operands[ref] for ref in refs if ref in operands}
+            rewritten = []
+            for ref in refs:
+                for item in operands.get(ref, [ref]):
+                    if item not in rewritten and (item == ref or item not in refs):
+                        rewritten.append(item)
+            record["evidence_ids"] = rewritten
+            repairs.append({"path": f"{key}[{index}].evidence_ids", "aliases": aliases, "from": refs,
+                            "to": rewritten, "rule": COMPARISON_ALIAS})
+    return (repaired, repairs) if repairs else (narrative, [])
+
+
+def as_returned(narrative, repairs):
+    """The analyst's response as returned, rebuilt from an accepted narrative and its repairs."""
+    original = json.loads(json.dumps(narrative))
+    for repair in repairs or []:
+        key, index = re.fullmatch(r"(\w+)\[(\d+)\]\.evidence_ids", repair["path"]).groups()
+        original[key][int(index)]["evidence_ids"] = list(repair["from"])
+    return original
+
+
+def repair_citations(narrative, context, rules):
+    """The enabled deterministic repairs (`rules`, read before the request), applied to a copy before validation;
+    each is printed and recorded. Never raises on malformed output: it is returned unchanged for the validator."""
+    if context is None or COMPARISON_ALIAS not in rules:
+        return narrative, []
+    try:
+        repaired, repairs = canonicalize_comparison_aliases(narrative, context)
+    except (TypeError, AttributeError, KeyError, ValueError):
+        return narrative, []
+    for repair in repairs:
+        print(f"Citation repaired ({repair['rule']}): {repair['path']} "
+              + "; ".join(f"{alias} -> {', '.join(pair)}" for alias, pair in repair["aliases"].items()), flush=True)
+    return repaired, repairs
+
+
 def validate_narrative(narrative, packet, context=None, schema=None):
     """Mechanical grounding: schema, mode, references that exist in admitted evidence and were
     actually supplied in the analyst context, numeric placeholders, and trade/current-language rules.
@@ -745,6 +820,7 @@ def _synthesize_openrouter(packet, api_key, requester, full, context, on_request
     system, user = construct_prompt(packet, full=full, context=context)
     profile = edition_profile(packet["run"]["checkpoint"])
     analyst = analyst_model()
+    rules = enabled_repairs()  # a configuration fault fails here, before anything is paid for
     # The provider-enforced schema is the same factored form the prompt copy carries: the inlined contract,
     # small enough for Anthropic's strict-grammar compiler. `schema_hash` below records exactly this wire form.
     schema = factored_transport_schema(
@@ -816,12 +892,15 @@ def _synthesize_openrouter(packet, api_key, requester, full, context, on_request
                        provider_route=response.get("provider", "unknown"), response_id=response.get("id"),
                        finish_reason=served.get("finish_reason", "unknown") if isinstance(served, dict) else "unknown",
                        usage=_safe_usage(response))
-    narrative = _openrouter_narrative(response)
+    returned = _openrouter_narrative(response)
+    narrative, repairs = repair_citations(returned, None if full else context, rules)
+    attempt.update(repairs=repairs)
     try:
         narrative = validate_narrative(narrative, packet, None if full else context, NARRATIVE_SCHEMA if full else None)
     except ValueError as exc:
         diagnostic = _openrouter_diagnostic(response)
-        raise NarrativeRejected(f"{exc}; diagnostic={diagnostic}", narrative) from None
+        # The archived diagnostic is the response as returned, never the rewritten copy.
+        raise NarrativeRejected(f"{exc}; diagnostic={diagnostic}", returned) from None
     safe_usage = _safe_usage(response)
     choice = (response.get("choices") or [{}])[0]
     finish_reason = choice.get("finish_reason", "unknown") if isinstance(choice, dict) else "unknown"
@@ -846,6 +925,7 @@ def _synthesize_openrouter(packet, api_key, requester, full, context, on_request
                            finish_reason=finish_reason,
                            diagnostic=json.loads(_openrouter_diagnostic(response)),
                            requested_at=requested_at, response_id=response.get("id"), usage=safe_usage,
+                           repairs=repairs,
                            schema_hash=digest(schema),
                            prompt_hash=digest(dict(system=system, user=user)), evidence_hash=digest(packet))
 
@@ -859,6 +939,7 @@ def synthesize(packet, runner=subprocess.run, full=False, context=None, on_reque
         raise ValueError("Claude CLI is not installed")
     system, user = construct_prompt(packet, full=full, context=context, include_schema=False)
     analyst = analyst_model()
+    rules = enabled_repairs()
     profile = edition_profile(packet["run"]["checkpoint"])
     schema = NARRATIVE_SCHEMA if full else narrative_schema((context or {}).get("edition") or profile)
     argv = [executable, "--print", "--safe-mode", "--tools", "", "--strict-mcp-config",
@@ -890,14 +971,15 @@ def synthesize(packet, runner=subprocess.run, full=False, context=None, on_reque
     except (json.JSONDecodeError, TypeError, AttributeError):
         raise ValueError("Claude did not return a structured narrative") from None
     try:
-        validated = validate_narrative(narrative, packet, None if full else context, schema)
+        repaired, repairs = repair_citations(narrative, None if full else context, rules)
+        validated = validate_narrative(repaired, packet, None if full else context, schema)
     except (TypeError, AttributeError):
         raise ValueError("Claude did not return a structured narrative") from None
     except ValueError as exc:
         raise NarrativeRejected(str(exc), narrative) from None
     models = list(envelope.get("modelUsage", {}).keys())
     return validated, dict(route="claude-cli", requested_model=analyst["cli_model"], profile=profile["profile"],
-                           resolved_models=models or ["not exposed"],
+                           resolved_models=models or ["not exposed"], repairs=repairs,
                            schema_hash=digest(transport_schema(schema)),
                            prompt_hash=digest(dict(system=system, user=user)),
                            evidence_hash=digest(packet))

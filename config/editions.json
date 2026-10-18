@@ -5,6 +5,7 @@
     "model": "anthropic/claude-opus-5.5",
     "fallback_model": "anthropic/claude-fable-5",
     "cli_model": "sonnet",
+    "repairs": ["comparison-alias.v1"],
     "note": "One configured frontier analyst for every synthesis edition. MARKET_BRIEF_MODEL overrides the OpenRouter model ID (and disables the fallback); fallback_model is attempted once, only when OpenRouter reports the primary has no available endpoint. The resolved identity, route, whether fallback occurred, and usage are recorded per run."
   },
   "profiles": {

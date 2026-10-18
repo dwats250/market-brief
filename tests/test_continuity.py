@@ -531,11 +531,26 @@ def test_live_chain_advances_the_bundle_only_for_accepted_production_runs(tmp_pa
     assert context["prior_state"]["status"] == "available"
     evidence = json.loads((folder / "evidence.json").read_text())
     assert evidence["continuity"]["anchors"]["previous_close"]["session_date"] == "2026-09-04"
-    # A failed synthesis leaves every pointer untouched.
+    # A failed opening synthesis publishes as a refresh and never replaces the frozen interpretation (OD-1).
+    from market_brief.synthesize import NarrativeRejected
+    interpretation = bundle["interpretation"]
     cli = live_cli(monkeypatch, tmp_path, "2026-09-08T14:01:00+00:00", "OPEN_30M")
+    monkeypatch.setattr(cli, "synthesize",
+                        lambda packet, **kwargs: (_ for _ in ()).throw(NarrativeRejected("invalid", {})))
+    assert cli.main(["premarket", "--checkpoint", "OPEN_30M"]) == 0
+    bundle, _ = load_bundle(bundle_path(tmp_path))
+    assert bundle["interpretation"] == interpretation and bundle["latest"]["origin"]["checkpoint"] == "OPEN_30M"
+
+
+def test_a_failed_premarket_synthesis_has_no_interpretation_to_fall_back_to_and_leaves_every_pointer(
+        tmp_path, monkeypatch):
+    from market_brief.continuity import bundle_path
+    cli = live_cli(monkeypatch, tmp_path, "2026-09-04T20:03:00+00:00", "CLOSE_1M")
+    assert cli.main(["premarket", "--checkpoint", "CLOSE_1M"]) == 0
+    cli = live_cli(monkeypatch, tmp_path, "2026-09-08T12:45:00+00:00", "PREMARKET", intraday=False)
     monkeypatch.setattr(cli, "synthesize", lambda packet, **kwargs: (_ for _ in ()).throw(ValueError("invalid")))
     before = bundle_path(tmp_path).read_text()
-    assert cli.main(["premarket", "--checkpoint", "OPEN_30M"]) == 2
+    assert cli.main(["premarket", "--checkpoint", "PREMARKET"]) == 2
     assert bundle_path(tmp_path).read_text() == before
 
 

@@ -2,6 +2,8 @@
 
 from datetime import datetime, timezone
 
+import pytest
+from profiles import light_opening, light_profile  # noqa: F401  (fixture)
 from test_history_admission import packet_at
 from test_pipeline import fixture_packet, narrative
 
@@ -274,6 +276,7 @@ def test_headline_is_not_clipped_and_long_headlines_wrap():
     assert value["banner"]["title"] in page
 
 
+@pytest.mark.usefixtures("light_opening")
 def test_carried_watches_and_changes_render_from_the_saved_context():
     from test_continuity import carried_setup
 

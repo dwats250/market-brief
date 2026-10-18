@@ -5,6 +5,7 @@ import math
 
 import pytest
 from jsonschema import Draft202012Validator
+from profiles import light_profile
 from test_pipeline import fixture_packet, narrative
 
 from market_brief.context import edition_profile
@@ -58,7 +59,7 @@ def test_maximum_shape_has_measured_serialized_headroom(checkpoint):
 
 def test_light_maximum_shape_is_smaller_than_rich():
     rich = maximum_shape(narrative_schema(edition_profile("PREMARKET")))
-    light = maximum_shape(narrative_schema(edition_profile("OPEN_30M")))
+    light = maximum_shape(narrative_schema(light_profile()))
     assert len(json.dumps(light)) < len(json.dumps(rich)) * .85
 
 

@@ -457,7 +457,9 @@ def continuity_context(prior, comparisons, profile=None):
     """
     if prior["status"] != "available":
         return dict(prior_state=dict(status="cold_start", reason=prior["reason"]), comparisons=[])
-    bounded = bool(profile and profile.get("context") == "changed")
+    # A "changed" context, or a full catalog with "changed" comparisons (the opening profile, W43 S2e), bounds the
+    # continuity records the same way: only `changed` comparisons carry values.
+    bounded = bool(profile and (profile.get("context") == "changed" or profile.get("comparisons") == "changed"))
     citable = _citable_idents(prior, comparisons) if bounded else None
     changed_refs = {c["prior_ref"] for c in comparisons if c["status"] == "changed"}
     observed = set()

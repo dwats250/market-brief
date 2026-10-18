@@ -74,7 +74,7 @@ edition's word range covers ALL prose fields combined, including `character`,
 caveats, alternatives, attention reasons, watch criteria, relationships,
 changes, and carried-watch assessments. For a rich edition give roughly 80
 words to the summary, 100 to sections, 100 to watches, and 70–120 to the rest;
-spend the balance up to 500 only on distinct useful analysis. The range is
+spend the balance up to the top only on distinct useful analysis. The range is
 guidance, not a fill target: write less when coverage is thin, and zero is a
 valid answer for every optional array. Each field's or array's description
 states its maximum characters or items, a backstop, not a target; limits are

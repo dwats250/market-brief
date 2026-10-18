@@ -356,7 +356,7 @@ def test_provider_400_does_not_trigger_fallback_and_cannot_escape_the_approved_p
     assert "PRIVATE_RAW_SENTINEL" not in str(exc.value)
 
 
-@pytest.mark.parametrize("checkpoint,total", [("PREMARKET", 7000), ("OPEN_30M", 4500)])
+@pytest.mark.parametrize("checkpoint,total", [("PREMARKET", 7000), ("OPEN_30M", 7000)])
 def test_each_edition_sends_low_adaptive_effort_and_unchanged_total_ceiling(checkpoint, total):
     from test_contract import edition_response
 

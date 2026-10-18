@@ -16,6 +16,7 @@ from datetime import datetime
 from urllib.request import build_opener as real_build_opener
 
 import pytest
+from profiles import light_opening, light_profile  # noqa: F401  (fixture)
 from test_bls_calendar import FORBIDDEN, ICS, LIST, PAGES, Scripted, collected, network, releases, utc
 from test_cadence import Day, interpretation_fragments
 from test_continuity import PREMARKET_TUE, run_packet
@@ -481,6 +482,7 @@ def test_the_rich_analyst_reads_what_released_when_for_which_month_and_every_val
         coverage_date="2026-10-02")
 
 
+@pytest.mark.usefixtures("light_opening")
 def test_the_light_context_always_keeps_todays_release():
     rows, record, event = tuesday_release()
     _, _, _, context = light_edition(OPEN_30M_TUE, "OPEN_30M", "sample-open_30m-tue", intraday_value=0.21,
@@ -689,11 +691,11 @@ def test_a_release_morning_from_the_premarket_to_the_close(monkeypatch, tmp_path
     released = day.actuals("OPEN_1M")
     assert {row[0] for row in released} == set(EMPSIT_ACTUALS)
 
-    # 7:00 AM PT: the one light synthesis after the open reads the release whole; still one call.
+    # 7:00 AM PT: the one synthesis after the open (the opening profile) reads the release whole; still one call.
     assert day.release_run("2026-10-02T14:01:00+00:00", "OPEN_30M", EMPSIT_PAGE) == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]
     context = json.loads((day.folder("OPEN_30M", FRIDAY) / "analyst_context.json").read_text())
-    assert context["edition"]["profile"] == "light" and set(EMPSIT_ACTUALS) <= supplied_ids(context)
+    assert context["edition"]["profile"] == "opening" and set(EMPSIT_ACTUALS) <= supplied_ids(context)
     assert card_lines(macro(day.page("OPEN_30M", FRIDAY))) == SEPTEMBER_CARD
 
     # Hourly refreshes and the close: no calls, the same release, the same values, the same card.

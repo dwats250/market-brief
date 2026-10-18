@@ -18,6 +18,7 @@ from urllib.request import build_opener as real_build_opener
 from urllib.response import addinfourl
 
 import pytest
+from profiles import light_opening, light_profile  # noqa: F401  (fixture)
 from test_light_context import OPEN_30M_TUE, light_edition
 from test_pipeline import NOW, fixture_packet, narrative
 from test_provenance import drawer
@@ -346,6 +347,7 @@ def test_the_rich_analyst_reads_what_and_when_each_admitted_release_is(monkeypat
     assert model_packet(packet)["events"] == context["events"] == [NFP_EVENT]
 
 
+@pytest.mark.usefixtures("light_opening")
 def test_the_light_context_keeps_the_release_whole(monkeypatch):
     # 10:00 AM ET, the opening-structure update: the release is out, and it is still the day's release.
     packet, context = nfp_edition(monkeypatch, "OPEN_30M", "2026-10-02T14:00:00+00:00")

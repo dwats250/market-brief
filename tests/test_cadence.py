@@ -160,7 +160,7 @@ def test_only_the_two_synthesis_checkpoints_carry_an_edition_profile():
     assert set(editions_config()["editions"]) == set(SYNTHESIS_CHECKPOINTS)
     for checkpoint in CHECKPOINTS:
         if CHECKPOINT_KINDS[checkpoint] == "synthesis":
-            assert edition_profile(checkpoint)["profile"] in {"rich", "light"}
+            assert edition_profile(checkpoint)["profile"] in {"rich", "opening"}
         else:
             with pytest.raises(ValueError, match="deterministic checkpoint"):
                 edition_profile(checkpoint)

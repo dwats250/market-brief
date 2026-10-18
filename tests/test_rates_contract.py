@@ -5,6 +5,7 @@ import copy
 import hashlib
 
 import pytest
+from profiles import light_profile
 from test_history_admission import packet_at, utc
 from test_pipeline import fixture_packet, narrative
 
@@ -30,8 +31,11 @@ def test_the_narrative_schema_is_byte_identical():
     # The base contract itself (its default bounds are the rich profile's), then each edition's bounded form.
     base = s.NARRATIVE_SCHEMA
     assert (digest(base), digest(s.factored_transport_schema(base))) == SCHEMA_SHA256["rich"]
-    for profile, checkpoint in (("rich", "PREMARKET"), ("light", "OPEN_30M")):
-        schema = s.narrative_schema(edition_profile(checkpoint))
+    # The opening profile (OPEN_30M since W43) has the rich bounds, so its wire schema is the rich one, byte for byte;
+    # the light profile keeps its own.
+    for profile, edition in (("rich", edition_profile("PREMARKET")), ("rich", edition_profile("OPEN_30M")),
+                             ("light", light_profile())):
+        schema = s.narrative_schema(edition)
         assert (digest(schema), digest(s.factored_transport_schema(schema))) == SCHEMA_SHA256[profile], profile
     assert s.NARRATIVE_SCHEMA["properties"]["schema_version"] == {"const": "market-brief.narrative.v2"}
 

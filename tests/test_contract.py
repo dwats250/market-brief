@@ -4,6 +4,7 @@ import json
 import re
 
 import pytest
+from profiles import light_opening, light_profile  # noqa: F401  (fixture)
 from test_pipeline import fixture_packet, narrative
 
 from market_brief.evidence import ROOT
@@ -133,6 +134,7 @@ def test_each_edition_validates_a_complete_response_within_its_budget(now, check
         assert payload["selection"]["mode"] == "changed" and payload["selection"]["omitted_count"] > 0
 
 
+@pytest.mark.usefixtures("light_opening")
 def test_light_edition_rejects_responses_beyond_its_bounds():
     from test_history_admission import packet_at, utc
 
@@ -146,6 +148,7 @@ def test_light_edition_rejects_responses_beyond_its_bounds():
         validate_narrative(value, packet, context)
 
 
+@pytest.mark.usefixtures("light_opening")
 def test_omitted_light_context_rows_cannot_be_cited():
     from test_history_admission import packet_at, utc
 

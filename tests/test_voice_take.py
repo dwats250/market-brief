@@ -13,6 +13,7 @@ import re
 
 import pytest
 from jsonschema import Draft202012Validator
+from profiles import light_opening, light_profile  # noqa: F401  (fixture)
 from test_cadence import TUE, Day, interpretation_fragments
 from test_continuity import carried_setup, trimmed
 from test_contract import edition_response
@@ -190,6 +191,7 @@ def test_unknown_take_references_reject(ref):
         validate_narrative(with_take(ids=["QQQ-spread20", ref]), fixture_packet())
 
 
+@pytest.mark.usefixtures("light_opening")
 def test_light_context_omitted_evidence_cannot_back_the_take():
     packet, context, value = light()
     omitted = sorted(set(evidence_catalog(model_packet(packet))) - supplied_ids(context))

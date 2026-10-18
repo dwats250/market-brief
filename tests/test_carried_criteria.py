@@ -12,6 +12,7 @@ import json
 import re
 
 import pytest
+from profiles import light_opening  # noqa: F401  (fixture)
 from test_cadence import TUE, Day
 from test_continuity import (
     CLOSE_FRI,
@@ -205,6 +206,7 @@ def test_an_interpretation_frozen_before_criteria_were_kept_still_refreshes_with
 
 # --- what the change does not touch -------------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("light_opening")
 def test_the_frozen_criteria_never_reach_the_analyst_context():
     """The analyst's context is built from the admitted edition states, never from the frozen record. The light
     opening-structure context is byte for byte the same whether the bundle holds no interpretation, one that

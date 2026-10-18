@@ -106,7 +106,8 @@ def test_unknown_or_repeated_trigger_ids_fail_closed(ids, message):
         validate_narrative(value, incident_packet())
 
 
-@pytest.mark.parametrize("checkpoint, over", [("PREMARKET", 7), ("OPEN_30M", 5)])
+# Both synthesis editions select up to three attention items (OPEN_30M is the opening profile since W43).
+@pytest.mark.parametrize("checkpoint, over", [("PREMARKET", 7), ("OPEN_30M", 7)])
 def test_attention_bounds_still_hold_past_editorial_headroom(checkpoint, over):
     packet = incident_packet()
     packet["run"]["checkpoint"] = checkpoint

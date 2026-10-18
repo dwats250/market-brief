@@ -10,6 +10,7 @@ import json
 import re
 
 import pytest
+from profiles import light_opening, light_profile  # noqa: F401  (fixture)
 from test_pipeline import fixture_packet, narrative
 
 from market_brief import cli
@@ -93,6 +94,7 @@ def test_headroom_applies_to_counts_but_never_to_cuttingboard_or_structure():
     assert local["properties"]["sections"]["properties"]["macro"]["items"]["properties"]["text"]["maxLength"] == 240
 
 
+@pytest.mark.usefixtures("light_opening")
 def test_light_edition_counts_get_the_same_bounded_headroom():
     from test_contract import edition_response
     from test_history_admission import packet_at, utc

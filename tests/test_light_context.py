@@ -4,6 +4,7 @@ import copy
 import json
 
 import pytest
+from profiles import light_opening, light_profile  # noqa: F401  (fixture)
 from test_continuity import (
     AFTERNOON_TUE,
     CLOSE_FRI,
@@ -29,7 +30,9 @@ from market_brief.synthesize import compact_json, construct_prompt, validate_nar
 
 OPEN_1M_TUE = "2026-09-08T13:32:00+00:00"
 OPEN_30M_TUE = "2026-09-08T14:01:00+00:00"
-LIGHT = edition_profile("OPEN_30M")
+# OPEN_30M has used the opening profile since W43; this module tests the light profile through it explicitly.
+pytestmark = pytest.mark.usefixtures("light_opening")
+LIGHT = light_profile()
 RICH = edition_profile("PREMARKET")
 
 

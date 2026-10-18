@@ -88,7 +88,9 @@ class Day:
             (validated against the exact context), or the given one, or fails like a rejected response."""
             self.calls.append(packet["run"]["checkpoint"])
             if fail_synthesis:
-                raise ValueError("synthesis rejected")
+                # A paid response the validator rejected: the case a synthesis checkpoint degrades on (OD-1).
+                from market_brief.synthesize import NarrativeRejected
+                raise NarrativeRejected("synthesis rejected", {})
             live = value or edition_response(edition_profile(packet["run"]["checkpoint"]), context)
             if mutate:
                 mutate(live)
@@ -444,8 +446,9 @@ def test_a_failed_opening_structure_synthesis_leaves_refreshes_on_the_premarket_
     assert metadata["degraded_from"]["checkpoint"] == "OPEN_30M"
     assert metadata["interpretation"]["checkpoint"] == "PREMARKET"
     opening = day.page("OPEN_30M")
-    assert ('<div class="notice">The opening structure analysis due 7:00 AM PT was not accepted, so no new analysis '
-            'was published; the premarket analysis stands and the prices are this update&#39;s.</div>') in opening
+    assert ('<div class="notice">The opening structure analysis due 10:00 AM ET (7:00 AM PT) was not accepted, so no '
+            'new analysis was published; the premarket analysis stands and the prices are this update&#39;s.</div>'
+            ) in opening
     assert clock_lines(opening)[:2] == ["Prices · 7:01 AM PT", "Analysis · 6:00 AM PT · premarket"]
     assert "analyst call not accepted; deterministic refresh under interpretation run" in opening
     assert 'data-checkpoint="OPEN_30M"' in opening
@@ -676,3 +679,34 @@ def test_phone_width_has_no_horizontal_overflow(tmp_path):
     assert phone_layout_width(page, tmp_path) <= 390
     # The probe itself detects overflow: a 900 px box is reported.
     assert phone_layout_width(page.replace("<h1>", "<div style='width:900px'>x</div><h1>", 1), tmp_path) >= 900
+
+
+def test_only_an_attempted_production_generation_degrades(day):
+    """Owner correction after review: a refusal or fault before any request fails closed; it may never publish a
+    notice saying an analysis was not accepted."""
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
+
+    def refused(live):
+        raise ValueError("the paid synthesis attempt could not be recorded; no provider request was sent")
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", mutate=refused) == 2
+    assert day.published == ["PREMARKET"]
+
+
+def test_an_experiment_never_degrades_or_publishes(day):
+    from market_brief.continuity import bundle_path
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
+    before = bundle_path(day.root).read_text()
+    from market_brief.synthesize import NarrativeRejected
+
+    def rejected(live):
+        raise NarrativeRejected("rejected", live)
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", mutate=rejected, flags=("--experiment",)) == 2
+    assert day.published == ["PREMARKET"] and bundle_path(day.root).read_text() == before
+
+
+def test_a_checkpoint_whose_own_analysis_stands_is_never_called_rejected(day):
+    """A manual re-run of an accepted OPEN_30M that is then rejected keeps the accepted analysis and fails closed."""
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
+    assert day.run(f"{TUE}T14:05:00+00:00", "OPEN_30M", fail_synthesis=True) == 2
+    assert day.published == ["PREMARKET", "OPEN_30M"]

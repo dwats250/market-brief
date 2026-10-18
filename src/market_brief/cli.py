@@ -50,6 +50,7 @@ from .schedule import (
 )
 from .synthesize import (
     NARRATIVE_SCHEMA,
+    NarrativeRejected,
     as_returned,
     construct_prompt,
     editorial_notes,
@@ -257,6 +258,13 @@ def guard_manual_repay(args, session_date, checkpoint, target, metadata):
     if earlier:
         raise ValueError(f"paid synthesis of {checkpoint} already attempted for {session_date} ({earlier}); no "
                          "provider request was made (dispatch with repay to pay again)")
+
+
+def degradable(exc):
+    """Whether a synthesis failure may publish as the deterministic refresh (OD-1): the analysis was attempted and
+    not accepted, never a refusal or fault before any request."""
+    return (isinstance(exc, NarrativeRejected) or isinstance(getattr(exc, "attempt", None), dict)
+            or "edition budget" in str(exc))
 
 
 def record_rejection(folder, metadata, exc):
@@ -471,8 +479,14 @@ def run(args):
                 # collection under the session's last accepted interpretation (owner ruling OD-1). No second model
                 # call, nothing recollected, and it never counts as a synthesis: the frozen interpretation is not
                 # replaced. Without an accepted interpretation (a rejected PREMARKET) the run fails closed as before.
+                # Only a production generation that was actually attempted and not accepted degrades: a rejected
+                # response, a failure after the request was sent, or an over-budget context that could not be sent.
+                # A refusal before any request, an experiment or a commissioning run fails closed as before.
+                if not production or not degradable(exc):
+                    raise
                 interpretation, interpretation_note = admit_interpretation(bundle, packet)
-                if interpretation is None:
+                if interpretation is None or interpretation["origin"].get("checkpoint") == checkpoint:
+                    # No earlier analysis to stand, or this checkpoint's own analysis already stands.
                     raise
                 record_rejection(folder, metadata, exc)
                 degraded = dict(checkpoint=checkpoint, scheduled_at=checkpoint_data["scheduled_at"], reason=str(exc))
@@ -509,7 +523,8 @@ def run(args):
                                         degraded=degraded)
             except Exception as exc:  # noqa: BLE001 - any rendering defect is diagnosed like a rejection
                 # The accepted narrative is already on disk; nothing has been published.
-                raise ValueError(f"render failed after acceptance ({type(exc).__name__}: {exc})") from None
+                stage = "the degraded refresh" if degraded else "acceptance"
+                raise ValueError(f"render failed after {stage} ({type(exc).__name__}: {exc})") from None
             (folder / "brief.md").write_text(markdown)
             (folder / "brief.html").write_text(page)
             update_latest(RUN_ROOT, page)

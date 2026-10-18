@@ -66,12 +66,14 @@ def collected(now, texts):
         calls.append(url)
         if url.startswith(TREASURY):
             year = int(url.rsplit("=", 1)[1])
-            if year not in texts:
+            # The real curve (W43 S3a) is served only when a test supplies it as ("real", year).
+            key = ("real", year) if "daily_treasury_real_yield_curve" in url else year
+            if key not in texts:
                 raise SourceError("HTTP 404")
-            return texts[year]
+            return texts[key]
         raise SourceError("offline")
     raw = collect_live(now, fetcher=fetcher)
-    return raw, [url for url in calls if url.startswith(TREASURY)]
+    return raw, [url for url in calls if url.startswith(TREASURY) and "daily_treasury_real_yield_curve" not in url]
 
 
 def rates_packet(now, rows, events=(), context_items=(), checkpoint="PREMARKET", thresholds=None):

@@ -26,7 +26,7 @@ from .actuals import (
     release_rows,
 )
 from .evidence import ET as EASTERN
-from .evidence import timestamp
+from .evidence import ROOT, read_json, timestamp
 from .schedule import next_session_date
 
 TREASURY = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml"
@@ -133,6 +133,12 @@ def treasury_url(year):
     return f"{TREASURY}?data=daily_treasury_yield_curve&field_tdr_date_value={year}"
 
 
+def treasury_real_url(year):
+    """Treasury's official daily real (TIPS) par curve: the same host and feed family, fields `TC_<n>YEAR`, 5 to
+    30 years (there is no 2-year real yield)."""
+    return f"{TREASURY}?data=daily_treasury_real_yield_curve&field_tdr_date_value={year}"
+
+
 def treasury_entries(text, now):
     """One feed's entries dated before today (ET), as `(date, fields)`."""
     entries = []
@@ -168,6 +174,43 @@ def yield_rows(entries, retrieved):
                 metric="daily yield change", value=round((value-prior)*100), unit="bp",
                 baseline=f"daily observation {rows[-2][0]}", frequency="daily", observed_at=day,
                 retrieved_at=retrieved.isoformat(), source_id="treasury", status="BACKGROUND",
+                reason=""))
+    return result
+
+
+REAL_TERMS = (5, 10, 30)
+SOURCES_CONFIG = ROOT / "config/sources.json"
+
+
+def real_yields_on(path=SOURCES_CONFIG):
+    """The real curve's own off switch (`"real_yields": false` in config/sources.json): turns off this one feed and
+    its decomposition without touching anything else. Only an explicit false turns it off."""
+    return read_json(path).get("real_yields", True) is not False
+
+
+def real_yield_rows(entries, retrieved):
+    """Level and daily change rows of the official real par curve for the latest entry, built like `yield_rows`.
+
+    Kept apart from the nominal curve (its own source, topic and metrics) so a real-curve failure never touches
+    the nominal module, and so only a same-dated pair of the two curves is ever decomposed (`curve.py`)."""
+    rows = sorted(dict(entries).items())
+    if not rows:
+        raise SourceError("no prior daily real yield observation")
+    day, fields = rows[-1]
+    result = []
+    for term in REAL_TERMS:
+        raw = fields.get(f"TC_{term}YEAR")
+        value = float(raw) if raw else None
+        result.append(dict(id=f"treasury-real-{term}y", topic=f"US {term}Y real", metric="daily real par yield",
+            value=value, unit="% yield", baseline="daily Treasury real (TIPS) par curve, not an intraday quote",
+            frequency="daily", observed_at=day, retrieved_at=retrieved.isoformat(),
+            source_id="treasury-real", status="BACKGROUND", reason=""))
+        if len(rows) >= 2 and raw and rows[-2][1].get(f"TC_{term}YEAR"):
+            prior = float(rows[-2][1][f"TC_{term}YEAR"])
+            result.append(dict(id=f"treasury-real-{term}y-change", topic=f"US {term}Y real",
+                metric="daily real yield change", value=round((value-prior)*100), unit="bp",
+                baseline=f"daily observation {rows[-2][0]}", frequency="daily", observed_at=day,
+                retrieved_at=retrieved.isoformat(), source_id="treasury-real", status="BACKGROUND",
                 reason=""))
     return result
 
@@ -712,9 +755,16 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
         ("treasury", "US Treasury", "economic_series", TREASURY, treasury_url(year)),
         ("bls", "BLS calendar", "calendar", BLS, BLS),
         ("fed", "Federal Reserve releases", "news", FED, FED),
+        # After the calendar and the Fed, so a slow Treasury host can never spend their share of the deadline.
+        ("treasury-real", "US Treasury real yields", "economic_series", TREASURY, treasury_real_url(year)),
     ]
+    if not real_yields_on():
+        jobs.pop()
+        raw["sources"].append(source("treasury-real", "US Treasury real yields", "economic_series", TREASURY, now,
+                                     "UNAVAILABLE", "switched off in config/sources.json"))
     for ident, name, kind, url, request_url in jobs:
         record = source(ident, name, kind, url, now)
+        fallback = ""
         try:
             if ident == "bls":
                 sources, events, rows = bls_collection(now, deadline, fetcher)
@@ -723,19 +773,27 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
                 raw["observations"].extend(rows)
                 continue
             body = fetcher(request_url, deadline)
-            if ident == "treasury":
+            if ident in ("treasury", "treasury-real"):
                 entries = treasury_entries(body, now)
                 if len(entries) < 2:
                     # Early January: this year's feed holds fewer than two entries before today, so the previous
                     # year's feed supplies the level or its prior entry. This year's entries win a duplicate date.
+                    previous = treasury_url if ident == "treasury" else treasury_real_url
                     try:
-                        entries = [*treasury_entries(fetcher(treasury_url(year - 1), deadline), now), *entries]
-                    except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError):
-                        pass
+                        entries = [*treasury_entries(fetcher(previous(year - 1), deadline), now), *entries]
+                    except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:
+                        fallback = f"previous year's feed failed ({failure(exc)})"
             retrieved = datetime.now(timezone.utc)
             record["retrieved_at"] = retrieved.isoformat()
             if ident == "treasury":
                 raw["observations"].extend(yield_rows(entries, retrieved))
+            elif ident == "treasury-real":
+                if fallback and not entries:
+                    raise SourceError(f"no prior daily real yield observation; {fallback}")
+                raw["observations"].extend(real_yield_rows(entries, retrieved))
+                if fallback:
+                    # The level stands; the missing change is reported, never silently dropped.
+                    record.update(status="DEGRADED", reason=f"{fallback}, so no daily real yield change")
             else:
                 raw["context_items"].extend(fed_context(body, now))
         except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:

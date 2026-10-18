@@ -65,6 +65,11 @@ def test_a_stale_price_refusal_is_an_explained_collection_failure(day):  # noqa:
     (dict(pipeline="failure"), dict(validation="FAILED", kind="synthesis", error="unknown reference"),
      "synthesis_rejected"),
     (dict(), dict(validation="PASS", published=False), "recorded_without_page"),
+    # Review fixes: a crash after the run folder existed, and a failed continuity upload, are not push failures.
+    (dict(pipeline="failure", continuity="skipped", publish="skipped"), dict(validation="NOT_RUN"),
+     "pipeline_crashed"),
+    (dict(continuity="failure", publish="skipped", current="skipped", deploy="skipped"), dict(validation="PASS"),
+     "continuity_upload_failed"),
 ])
 def test_the_earliest_deciding_stage_names_the_class(steps, metadata, expected):
     assert outcome_class(dict(GREEN, **steps), metadata) == expected

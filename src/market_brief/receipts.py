@@ -43,10 +43,15 @@ def outcome_class(outcomes, metadata):
     if metadata is None:
         return "skipped" if outcomes["pipeline"] == "success" else "pipeline_crashed"
     validation, error = metadata.get("validation"), metadata.get("error") or ""
+    if outcomes["pipeline"] == "failure" and validation not in ("FAILED",):
+        # The pipeline step failed without a diagnosed refusal (a crash after the run folder existed).
+        return "pipeline_crashed"
     if validation == "FAILED":
         if "no timestamped current prints" in error or "has no observation from this session" in error:
             return "refused_stale_data"
         return "synthesis_rejected" if metadata.get("kind") == "synthesis" else "refused"
+    if outcomes["continuity"] == "failure":
+        return "continuity_upload_failed"
     if outcomes["publish"] != "success":
         return "push_failed"
     if outcomes["current"] == "success" and outcomes["deploy"] != "success":

@@ -582,13 +582,16 @@ def test_a_manual_dispatch_after_a_paid_attempt_is_refused_before_any_request(ac
     assert "paid synthesis of PREMARKET already attempted" in error and "no provider request was made" in error
 
 
-def test_a_manual_opening_dispatch_after_a_paid_attempt_publishes_the_refresh_without_paying(actions):
+def test_a_manual_opening_dispatch_after_a_paid_attempt_is_refused_and_claims_nothing(actions):
+    """A refusal before any request fails closed: no payment, no page, and no notice that an analysis was rejected."""
     actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
     actions.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", verdict="reject")
+    published = list(actions.published)
     manual = actions.run(f"{TUE}T14:40:00+00:00", "OPEN_30M", command="premarket")
-    assert actions.requests == ["PREMARKET", "OPEN_30M"]
+    assert actions.requests == ["PREMARKET", "OPEN_30M"] and actions.published == published
+    assert actions.runs[manual]["conclusion"] == "failure"
     metadata = actions.metadata(manual, "OPEN_30M")
-    assert metadata["validation"] == "DEGRADED" and "already attempted" in metadata["error"]
+    assert metadata["validation"] == "FAILED" and "already attempted" in metadata["error"]
     assert metadata["outside_window"]["scheduled_at"] == f"{TUE}T14:00:00+00:00"
 
 

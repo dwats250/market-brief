@@ -165,6 +165,7 @@ jobs:
         # of this workflow. The upload proves acceptance, so a push or Pages failure after it does not
         # disqualify the bundle; a cancelled run does. No eligible bundle is an explicit cold start; a restore
         # that cannot finish fails this step, so the run stops before collection and uploads no cold bundle.
+        id: restore
         if: steps.checkpoint.outputs.run == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -176,6 +177,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.cloudflare_wakeup != true && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief alpaca-probe --full
       - name: Collect, synthesize, validate, and render manually
+        id: manual
         if: github.event_name == 'workflow_dispatch' && inputs.cloudflare_wakeup != true && steps.checkpoint.outputs.run == 'true'
         env:
           COMMISSIONING: ${{ inputs.commissioning }}
@@ -199,17 +201,20 @@ jobs:
             python -m market_brief premarket --checkpoint "$CHECKPOINT"
           fi
       - name: Collect, synthesize, validate, and render from Cloudflare wake-up
+        id: wake
         if: inputs.cloudflare_wakeup == true && steps.checkpoint.outputs.run == 'true'
         env:
           # Lists earlier runs' paid-attempt records before a synthesis checkpoint may pay (actions: read).
           GH_TOKEN: ${{ github.token }}
         run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
       - name: Collect, synthesize, validate, and render on GitHub schedule
+        id: scheduled
         if: github.event_name != 'workflow_dispatch' && steps.checkpoint.outputs.run == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python -m market_brief schedule --checkpoint "${{ steps.checkpoint.outputs.checkpoint }}"
       - name: Upload accepted continuity bundle
+        id: continuity
         # Only after local acceptance: the bundle is written solely by accepted LIVE, non-experiment,
         # non-commissioning runs. This step inherits success() (no status function here, no
         # continue-on-error before it), so it runs only when the pipeline succeeded, and it precedes the
@@ -222,6 +227,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
       - name: Publish latest successful brief
+        id: publish
         # GitHub can refuse a push server-side with main unmoved (2026-10-12 OPEN_1M: "fatal error in commit_refs";
         # the next run's push, unchanged, landed). Only this run's own commit is pushed again, never forced: up to three
         # attempts, 10 s then 20 s apart, while main is still the commit this run checked out. If main has moved (anything
@@ -241,10 +247,11 @@ jobs:
             base=$(git rev-parse HEAD^)
             own=$(git rev-parse HEAD)
             for attempt in 1 2 3; do
-              if git push; then exit 0; fi
+              if git push; then echo "sha=$own" >> "${GITHUB_OUTPUT:-/dev/null}"; exit 0; fi
               remote=$(git ls-remote origin refs/heads/main | cut -f1) || remote=""
               if [ "$remote" = "$own" ]; then
                 echo "Published: main is this run's commit despite the refusal"
+                echo "sha=$own" >> "${GITHUB_OUTPUT:-/dev/null}"
                 exit 0
               fi
               if [ -n "$remote" ] && [ "$remote" != "$base" ]; then
@@ -319,6 +326,37 @@ jobs:
           path: runs/attempts/${{ steps.attempt.outputs.key }}.json
           if-no-files-found: error
           retention-days: 30
+      - name: Write this checkpoint's receipt
+        # Accounting only (W43 S1a): what each stage of this run did, from GitHub's step outcomes and the run's own
+        # metadata. Last, always(), never fatal: it can gate no continuity, publication or attempt record. Delivery to
+        # the reader stays "pending" here; a separate observer verifies the live page.
+        id: receipt
+        if: always() && steps.checkpoint.outputs.run == 'true' && inputs.commissioning != true && inputs.experiment != true
+        continue-on-error: true
+        env:
+          RECEIPT_CHECKPOINT: ${{ steps.checkpoint.outputs.checkpoint }}
+          RECEIPT_RESOLVE: ${{ steps.checkpoint.outcome }}
+          RECEIPT_RESTORE: ${{ steps.restore.outcome }}
+          RECEIPT_PIPELINE: ${{ steps.wake.outcome != 'skipped' && steps.wake.outcome || steps.manual.outcome != 'skipped' && steps.manual.outcome || steps.scheduled.outcome }}
+          RECEIPT_CONTINUITY: ${{ steps.continuity.outcome }}
+          RECEIPT_PUBLISH: ${{ steps.publish.outcome }}
+          RECEIPT_CURRENT: ${{ steps.current.outcome }}
+          RECEIPT_DEPLOY: ${{ steps.deployment.outcome }}
+          RECEIPT_PUBLISH_SHA: ${{ steps.publish.outputs.sha }}
+        run: |
+          python -m market_brief receipt
+          for record in runs/receipts/*.json; do
+            if [ -f "$record" ]; then echo "key=$(basename "$record" .json)" >> "$GITHUB_OUTPUT"; fi
+          done
+      - name: Upload the checkpoint receipt
+        if: always() && steps.receipt.outputs.key != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-brief-receipt-${{ steps.receipt.outputs.key }}
+          path: runs/receipts/${{ steps.receipt.outputs.key }}.json
+          if-no-files-found: error
+          retention-days: 90
 
   cloudflare-smoke:
     if: inputs.cloudflare_smoke == true && inputs.cloudflare_wakeup == true

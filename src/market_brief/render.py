@@ -1170,8 +1170,10 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         # (owner ruling OD-1); the page says so where the clocks are, so it never reads as a new analysis.
         failed = EDITION_WORDS.get(degraded["checkpoint"], "analysis")
         kept = EDITION_WORDS.get(interpreted.get("checkpoint"), "earlier")
-        truth = (f"The {failed} analysis due {pacific_time(degraded['scheduled_at'])} was not accepted, so no new "
-                 f"analysis was published; the {kept} analysis stands and the prices are this update's.")
+        due = timestamp(degraded["scheduled_at"])
+        clock = (f"{due.astimezone(ET):%-I:%M %p} ET ({due.astimezone(PACIFIC):%-I:%M %p} PT)")
+        truth = (f"The {failed} analysis due {clock} was not accepted, so no new analysis was published; the "
+                 f"{kept} analysis stands and the prices are this update's.")
     source_names = {s["id"]: s["name"] for s in packet["sources"]}
     # A row with no measurement shows its headline as the value: `item` lets the page stack and wrap it.
     evidence_rows = [dict(r, display=formatted(r) if "value" in r else r["title"], item="value" not in r,

@@ -746,9 +746,10 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
     year = now.astimezone(EASTERN).year
     jobs = [
         ("treasury", "US Treasury", "economic_series", TREASURY, treasury_url(year)),
-        ("treasury-real", "US Treasury real yields", "economic_series", TREASURY, treasury_real_url(year)),
         ("bls", "BLS calendar", "calendar", BLS, BLS),
         ("fed", "Federal Reserve releases", "news", FED, FED),
+        # After the calendar and the Fed, so a slow Treasury host can never spend their share of the deadline.
+        ("treasury-real", "US Treasury real yields", "economic_series", TREASURY, treasury_real_url(year)),
     ]
     for ident, name, kind, url, request_url in jobs:
         record = source(ident, name, kind, url, now)

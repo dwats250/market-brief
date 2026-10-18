@@ -16,7 +16,8 @@ CURVE_FIELDS = ("label", "sentence", "note", "pair", "inputs", "observed_at", "p
                 "reason", "release_note")
 # Metrics that describe the current window; large dated background (20-session returns, 50DMA
 # distances, spreads) is kept only when an anchor, a carried record, a trigger, or leadership cites it.
-CURRENT_METRICS = {"daily return", "premarket return", "intraday return", "daily yield change"}
+CURRENT_METRICS = {"daily return", "premarket return", "intraday return", "daily yield change",
+                   "daily real yield change", "daily inflation compensation change"}
 
 
 def editions_config():

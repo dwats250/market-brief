@@ -133,6 +133,12 @@ def treasury_url(year):
     return f"{TREASURY}?data=daily_treasury_yield_curve&field_tdr_date_value={year}"
 
 
+def treasury_real_url(year):
+    """Treasury's official daily real (TIPS) par curve: the same host and feed family, fields `TC_<n>YEAR`, 5 to
+    30 years (there is no 2-year real yield)."""
+    return f"{TREASURY}?data=daily_treasury_real_yield_curve&field_tdr_date_value={year}"
+
+
 def treasury_entries(text, now):
     """One feed's entries dated before today (ET), as `(date, fields)`."""
     entries = []
@@ -168,6 +174,36 @@ def yield_rows(entries, retrieved):
                 metric="daily yield change", value=round((value-prior)*100), unit="bp",
                 baseline=f"daily observation {rows[-2][0]}", frequency="daily", observed_at=day,
                 retrieved_at=retrieved.isoformat(), source_id="treasury", status="BACKGROUND",
+                reason=""))
+    return result
+
+
+REAL_TERMS = (5, 10, 30)
+
+
+def real_yield_rows(entries, retrieved):
+    """Level and daily change rows of the official real par curve for the latest entry, built like `yield_rows`.
+
+    Kept apart from the nominal curve (its own source, topic and metrics) so a real-curve failure never touches
+    the nominal module, and so only a same-dated pair of the two curves is ever decomposed (`curve.py`)."""
+    rows = sorted(dict(entries).items())
+    if not rows:
+        raise SourceError("no prior daily real yield observation")
+    day, fields = rows[-1]
+    result = []
+    for term in REAL_TERMS:
+        raw = fields.get(f"TC_{term}YEAR")
+        value = float(raw) if raw else None
+        result.append(dict(id=f"treasury-real-{term}y", topic=f"US {term}Y real", metric="daily real par yield",
+            value=value, unit="% yield", baseline="daily Treasury real (TIPS) par curve, not an intraday quote",
+            frequency="daily", observed_at=day, retrieved_at=retrieved.isoformat(),
+            source_id="treasury-real", status="BACKGROUND", reason=""))
+        if len(rows) >= 2 and raw and rows[-2][1].get(f"TC_{term}YEAR"):
+            prior = float(rows[-2][1][f"TC_{term}YEAR"])
+            result.append(dict(id=f"treasury-real-{term}y-change", topic=f"US {term}Y real",
+                metric="daily real yield change", value=round((value-prior)*100), unit="bp",
+                baseline=f"daily observation {rows[-2][0]}", frequency="daily", observed_at=day,
+                retrieved_at=retrieved.isoformat(), source_id="treasury-real", status="BACKGROUND",
                 reason=""))
     return result
 
@@ -710,6 +746,7 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
     year = now.astimezone(EASTERN).year
     jobs = [
         ("treasury", "US Treasury", "economic_series", TREASURY, treasury_url(year)),
+        ("treasury-real", "US Treasury real yields", "economic_series", TREASURY, treasury_real_url(year)),
         ("bls", "BLS calendar", "calendar", BLS, BLS),
         ("fed", "Federal Reserve releases", "news", FED, FED),
     ]
@@ -723,19 +760,22 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
                 raw["observations"].extend(rows)
                 continue
             body = fetcher(request_url, deadline)
-            if ident == "treasury":
+            if ident in ("treasury", "treasury-real"):
                 entries = treasury_entries(body, now)
                 if len(entries) < 2:
                     # Early January: this year's feed holds fewer than two entries before today, so the previous
                     # year's feed supplies the level or its prior entry. This year's entries win a duplicate date.
+                    previous = treasury_url if ident == "treasury" else treasury_real_url
                     try:
-                        entries = [*treasury_entries(fetcher(treasury_url(year - 1), deadline), now), *entries]
+                        entries = [*treasury_entries(fetcher(previous(year - 1), deadline), now), *entries]
                     except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError):
                         pass
             retrieved = datetime.now(timezone.utc)
             record["retrieved_at"] = retrieved.isoformat()
             if ident == "treasury":
                 raw["observations"].extend(yield_rows(entries, retrieved))
+            elif ident == "treasury-real":
+                raw["observations"].extend(real_yield_rows(entries, retrieved))
             else:
                 raw["context_items"].extend(fed_context(body, now))
         except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:

@@ -25,7 +25,12 @@ from .actuals import COMBINED, EVENT_TITLE, JOBS, PERCENT, REVISION, period_name
 from .continuity import CARRY_LIMIT, interpretation_record
 from .curve import (
     CHANGE,
+    IC_CHANGE,
+    IC_LEVEL,
+    IC_TENORS,
     LEVEL,
+    REAL_CHANGE,
+    REAL_LEVEL,
     SENTENCES,
     SPREAD_CHANGE,
     SPREAD_LEVEL,
@@ -99,7 +104,11 @@ RELEASE_LINES = (("Payrolls", ("nonfarm payroll change",)), ("Unemployment", ("u
                                "CPI-U all items less food and energy, 12-month change")))
 PAIR_WORDS = {"monthly change": "m/m", "12-month change": "y/y"}
 SHORT_MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-RATE_METRICS = {LEVEL, CHANGE, SPREAD_LEVEL, SPREAD_CHANGE}
+RATE_METRICS = {LEVEL, CHANGE, SPREAD_LEVEL, SPREAD_CHANGE, REAL_LEVEL, REAL_CHANGE, IC_LEVEL, IC_CHANGE}
+# The nominal = real + inflation compensation split (W43 S3a), with the caveat every appearance carries.
+PARTS_CAVEAT = ("Inflation compensation is the nominal yield minus the TIPS real yield at the same maturity. It "
+                "includes inflation risk and liquidity premiums, so it is not a pure inflation forecast, and a real "
+                "Treasury yield is not the borrowing cost a company or household pays.")
 # The rates module (R9): Treasury's official daily par curve, its spreads, the named move, and a small inline chart.
 CURVE_TITLE = "U.S. Treasury par curve"
 CURVE_CAPTIONS = {"current": "official daily observation", "older": "latest official daily observation",
@@ -696,6 +705,61 @@ def curve_chart(tenors, curve_date, prior_date, stale):
                 domain=[round(base, 4), round(base + span, 4)])
 
 
+def bridge_sentence(maturity, nominal, real, compensation):
+    """The deterministic takeaway of one maturity's change split, from whole basis points (PRD §6.2): offsetting legs
+    are said to offset and never given shares; an unchanged total whose parts moved says so."""
+    name = {"5Y": "5-year", "10Y": "10-year", "20Y": "20-year", "30Y": "30-year"}.get(maturity, maturity)
+
+    def signed(value):
+        return f"+{value} bp" if value > 0 else f"{MINUS}{abs(value)} bp" if value < 0 else "0 bp"
+
+    def moved(value, noun):
+        return f"{noun} {'rose' if value > 0 else 'fell'} {abs(value)} bp"
+    if nominal == real == compensation == 0:
+        return f"The {name} yield and both of its parts were unchanged."
+    if nominal == 0:
+        return (f"The {name} yield was unchanged, but not because nothing moved: the "
+                f"{moved(real, 'real yield')} and {moved(compensation, 'inflation compensation')}.")
+    direction = "rose" if nominal > 0 else "fell"
+    if real and compensation and (real > 0) != (compensation > 0):
+        return (f"The {name} yield {direction} only {abs(nominal)} bp because its parts offset: the "
+                f"{moved(real, 'real yield')} while {moved(compensation, 'inflation compensation')}.")
+    parts = (("real yield", real), ("inflation compensation", compensation))
+    lead, other = parts if abs(real) >= abs(compensation) else parts[::-1]
+    if other[1] == 0:
+        return (f"The {name} yield {direction} {abs(nominal)} bp, all of it in the {lead[0]}; the {other[0]} was "
+                "unchanged.")
+    if abs(lead[1]) >= 2 * abs(other[1]):
+        return (f"The {name} yield {direction} {abs(nominal)} bp, mostly through the {lead[0]} ({signed(lead[1])}); "
+                f"{moved(other[1], other[0])}.")
+    return (f"The {name} yield {direction} {abs(nominal)} bp, split between the real yield ({signed(real)}) and "
+            f"inflation compensation ({signed(compensation)}).")
+
+
+def rate_parts(facts, stale):
+    """Each maturity whose nominal and real yields share a date: its levels and, unless the curve is stale, its change
+    split, with the takeaway sentence. From this run's rows only; nothing is paired across dates (`curve.py`)."""
+    rows = {(r["topic"], r["metric"]): r for r in facts}
+    parts = []
+    for tenor in IC_TENORS:
+        level = rows.get((f"US {tenor} inflation compensation", IC_LEVEL))
+        nominal, real = rows.get((f"US {tenor}", LEVEL)), rows.get((f"US {tenor} real", REAL_LEVEL))
+        if not (level and nominal and real):
+            continue
+        change = None if stale else rows.get((f"US {tenor} inflation compensation", IC_CHANGE))
+        n_change, r_change = rows.get((f"US {tenor}", CHANGE)), rows.get((f"US {tenor} real", REAL_CHANGE))
+        split = None
+        if change and n_change and r_change:
+            split = dict(nominal=formatted(n_change), real=formatted(r_change), compensation=formatted(change),
+                         sentence=bridge_sentence(tenor, bp(n_change["value"]), bp(r_change["value"]),
+                                                  bp(change["value"])),
+                         since=short_date(prior_entry_date(change) or ""))
+        parts.append(dict(maturity=tenor, date=short_date(level["observed_at"]), nominal=formatted(nominal),
+                          real=formatted(real), compensation=formatted(level), split=split,
+                          ids=[r["id"] for r in (nominal, real, level, n_change, r_change, change) if r]))
+    return parts
+
+
 def rates_module(packet, facts, catalog):
     """The Macro & rates module (R9): caption, the four-tenor table, spread lines, the named curve move, the chart,
     and notes, all from this run's deterministic rows and curve record; the analyst's paragraphs follow it."""
@@ -736,9 +800,13 @@ def rates_module(packet, facts, catalog):
         next((legs["change"] for legs in tenors.values() if legs.get("change")), None))
     chart = curve_chart(tenors, record.get("observed_at"), prior_date, stale)
     proof_ids = [ident for row in yields for ident in row["ids"]] + [ident for line in lines for ident in line["ids"]]
+    parts = rate_parts(facts, stale)
+    proof_ids += [ident for part in parts for ident in part["ids"]]
     return dict(yields=yields, asof=asof, proof_ids=[ident for ident in proof_ids if ident in catalog],
                 curve=dict(title=CURVE_TITLE, caption=caption, stale=stale, spreads=lines, move=move, chart=chart,
-                           notes=notes))
+                           notes=notes, parts=parts, parts_caveat=PARTS_CAVEAT if parts else "",
+                           # One takeaway on the page: the 10-year's split; the other maturities are in the proof.
+                           lead_part=next((p for p in parts if p["maturity"] == "10Y"), parts[0] if parts else None)))
 
 
 def release_cards(rows, events, sources=()):
@@ -1398,6 +1466,14 @@ def markdown(view):
             if curve["move"]:
                 lines += ["", f"**{curve['move']['label']}** — {esc(curve['move']['sentence'])}"
                           + (f" {esc(curve['move']['note'])}" if curve["move"]["note"] else "")]
+            for part in [curve["lead_part"]] if curve.get("lead_part") else []:
+                line = (f"- {part['maturity']} {part['nominal']} = real {part['real']} + inflation compensation "
+                        f"{part['compensation']}")
+                if part["split"]:
+                    line += f". {esc(part['split']['sentence'])}"
+                lines.append(line)
+            if curve.get("parts_caveat"):
+                lines += ["", esc(curve["parts_caveat"])]
             for note in curve["notes"]:
                 lines += ["", esc(note)]
             lines.append("")

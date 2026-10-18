@@ -23,6 +23,12 @@ TENORS = ("2Y", "5Y", "10Y", "30Y")
 SPREADS = (("2s10s", "2Y", "10Y"), ("5s30s", "5Y", "30Y"))
 LEVEL, CHANGE = "daily par yield", "daily yield change"
 SPREAD_LEVEL, SPREAD_CHANGE = "curve spread", "daily spread change"
+# The official real (TIPS) par curve and the nominal-minus-real difference at the same maturity. Inflation compensation
+# is not expected inflation: it carries inflation risk and liquidity premiums, and every reader word says so.
+REAL_LEVEL, REAL_CHANGE = "daily real par yield", "daily real yield change"
+IC_LEVEL, IC_CHANGE = "par inflation compensation", "daily inflation compensation change"
+IC_FORMULA = "par-ic.v1"
+IC_TENORS = ("5Y", "10Y", "30Y")
 # A spread level is a level, not a move: its own unit keeps it unsigned on the page and outside move magnitudes.
 SPREAD_UNIT = "bp spread"
 SPREAD_FORMULA = "curve-spread.v1"
@@ -93,7 +99,8 @@ def stale_movement(packet, row):
     names no move), so it is not evidence of current movement for the analyst either: the authority filter and the
     deterministic comparisons leave it out. Levels stay, dated, and the row stays in the evidence record.
     """
-    return row.get("metric") in (CHANGE, SPREAD_CHANGE) and (packet.get("curve") or {}).get("freshness") == "stale"
+    return (row.get("metric") in (CHANGE, SPREAD_CHANGE, REAL_CHANGE, IC_CHANGE)
+            and (packet.get("curve") or {}).get("freshness") == "stale")
 
 
 def classify(d2, d10, long_change=None, threshold=3.0):
@@ -292,6 +299,52 @@ def curve_record(packet, tenors, spreads, threshold):
     return record
 
 
+def real_rates(packet):
+    """`{tenor: {"level": row, "change": row}}` from this run's usable real par-yield rows, paired like `rates`."""
+    result = {}
+    for row in packet.get("observations", []):
+        topic, metric = row.get("topic") or "", row.get("metric")
+        tenor = topic.removeprefix("US ").removesuffix(" real")
+        if (not topic.endswith(" real") or tenor not in IC_TENORS or metric not in (REAL_LEVEL, REAL_CHANGE)
+                or row.get("status") not in USABLE or not isinstance(row.get("value"), (int, float))):
+            continue
+        result.setdefault(tenor, {}).setdefault("level" if metric == REAL_LEVEL else "change", row)
+    for legs in result.values():
+        level, change = legs.get("level"), legs.get("change")
+        legs["change"] = change if level and change and _same_entry(level, change) else None
+        legs.setdefault("level", None)
+    return result
+
+
+def inflation_compensation_rows(nominal, real):
+    """Nominal minus real at one maturity, only when both curves report the same date (W43 S3a).
+
+    Computed in whole basis points from the two published two-decimal yields, so the level is exact to the
+    hundredth and nominal change = real change + inflation-compensation change holds exactly, by construction.
+    A change is formed only when both legs' changes are measured against the same prior date."""
+    rows = []
+    for tenor in IC_TENORS:
+        n_level, r_level = _leg(nominal, tenor, "level"), _leg(real, tenor, "level")
+        if not (n_level and r_level and n_level["observed_at"] == r_level["observed_at"]):
+            continue
+        common = dict(topic=f"US {tenor} inflation compensation", frequency="daily",
+                      observed_at=n_level["observed_at"], retrieved_at=r_level.get("retrieved_at"),
+                      source_id=r_level["source_id"], status="BACKGROUND", reason="", formula_version=IC_FORMULA,
+                      freshness=r_level.get("freshness"), expected_freshness=r_level.get("expected_freshness"))
+        level_bp = bp(n_level["value"] * 100) - bp(r_level["value"] * 100)
+        rows.append(dict(common, id=f"treasury-{tenor.lower()}-inflation-comp", metric=IC_LEVEL,
+                         value=round(level_bp / 100, 2), unit="% yield",
+                         baseline=(f"{tenor} nominal minus {tenor} real (TIPS) daily par yield, one daily entry; "
+                                   "includes inflation risk and liquidity premiums, not expected inflation"),
+                         input_ids=[n_level["id"], r_level["id"]]))
+        n_change, r_change = _leg(nominal, tenor, "change"), _leg(real, tenor, "change")
+        if n_change and r_change and n_change["baseline"] == r_change["baseline"]:
+            rows.append(dict(common, id=f"treasury-{tenor.lower()}-inflation-comp-change", metric=IC_CHANGE,
+                             value=bp(n_change["value"]) - bp(r_change["value"]), unit="bp",
+                             baseline=n_change["baseline"], input_ids=[n_change["id"], r_change["id"]]))
+    return rows
+
+
 def derive_curve(packet, thresholds=None):
     """Append the spread rows to `packet["derived"]` and save the curve record as `packet["curve"]`.
 
@@ -301,5 +354,6 @@ def derive_curve(packet, thresholds=None):
     tenors = rates(packet)
     spreads = spread_rows(tenors)
     packet["derived"].extend(spreads)
+    packet["derived"].extend(inflation_compensation_rows(tenors, real_rates(packet)))
     packet["curve"] = curve_record(packet, tenors, spreads, threshold)
     return packet

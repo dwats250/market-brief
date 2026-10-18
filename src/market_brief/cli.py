@@ -234,6 +234,31 @@ def merge_input(collected, supplied):
     return collected
 
 
+def guard_manual_repay(args, session_date, checkpoint, target, metadata):
+    """A manual production synthesis pays again only when the owner says so (W43 S2a).
+
+    The scheduled path never pays twice for a checkpoint (`scheduled()`); a manual dispatch bypasses that gate, so a
+    checkpoint whose paid attempt is already recorded is refused, before any request, unless `--repay` is given. A
+    manual run outside the checkpoint's due window is the owner's recovery: allowed and recorded as such."""
+    ready, info = due(target, checkpoint)
+    if not ready:
+        metadata["outside_window"] = dict(scheduled_at=info["scheduled_at"], collected_at=target.isoformat())
+        print(f"OUTSIDE WINDOW / {checkpoint} / manual run collected {target.isoformat(timespec='seconds')}; "
+              f"scheduled {info['scheduled_at']}", flush=True)
+    if getattr(args, "repay", False):
+        metadata["repay"] = True
+        print(f"REPAY / {checkpoint} / the owner asked for another paid attempt", flush=True)
+        return
+    try:
+        earlier = earlier_attempt(args, session_date, checkpoint)
+    except (ValueError, OSError, KeyError, TypeError, subprocess.TimeoutExpired):
+        raise ValueError(f"earlier paid attempts for {checkpoint} on {session_date} could not be checked; no provider "
+                         "request was made (dispatch with repay to pay regardless)") from None
+    if earlier:
+        raise ValueError(f"paid synthesis of {checkpoint} already attempted for {session_date} ({earlier}); no "
+                         "provider request was made (dispatch with repay to pay again)")
+
+
 def degradable(exc):
     """Whether a synthesis failure may publish as the deterministic refresh (OD-1): the analysis was attempted and
     not accepted, never a refusal or fault before any request."""
@@ -407,6 +432,8 @@ def run(args):
                                  prompt_hash=digest(dict(system=system, user=prompt)),
                                  evidence_hash=evidence_hash)
                 else:
+                    if production and not getattr(args, "scheduled", False):
+                        guard_manual_repay(args, packet["run"]["session"]["date"], checkpoint, target, metadata)
                     print("Evidence collected; requesting one isolated structured synthesis.", flush=True)
 
                     def requesting(attempt):
@@ -662,6 +689,7 @@ def scheduled(args):
                   f"({earlier})")
             return 0
     args.replay = False
+    args.scheduled = True  # this gate already established that the checkpoint was never paid for
     result = run(args)
     if result == 0:
         mark_checkpoint(RUN_ROOT, info["session_date"], args.checkpoint, now.isoformat())
@@ -686,6 +714,8 @@ def main(argv=None):
                         help="retain the run locally without publishing or recording success")
     parser.add_argument("--commissioning", action="store_true",
                         help="label a manual live run by its actual collection time and market phase")
+    parser.add_argument("--repay", action="store_true",
+                        help="manual synthesis: pay again although this checkpoint's attempt is already recorded")
     parser.add_argument("--continuity", type=Path,
                         help="replay only: continuity bundle to admit instead of the sample fixture")
     parser.add_argument("--from-file", type=Path, help="continuity-restore: install this bundle file")

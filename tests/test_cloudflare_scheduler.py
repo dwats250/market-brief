@@ -129,7 +129,9 @@ def test_the_worker_clears_only_wakes_the_workflow_names_as_its_own():
             "'Scheduled Market Brief' }}\n") in workflow
     inputs = top_level(workflow, "on")
     boolean = [line.strip()[:-1] for line, kind in zip(inputs, inputs[4:]) if kind.strip() == "type: boolean"]
-    assert boolean == ["commissioning", "experiment", "continuity_check", "cloudflare_wakeup", "cloudflare_smoke"]
+    # `repay` is a manual dispatch's input (W43 S2a); with cloudflare_wakeup false it never earns the wake title.
+    assert boolean == ["commissioning", "experiment", "continuity_check", "cloudflare_wakeup", "cloudflare_smoke",
+                       "repay"]
     assert worker_constant("WAKE_TITLE") == '"Cloudflare wake-up"'
     assert worker_constant("SCHEDULE_PATH") == '".github/workflows/schedule.yml"'
 

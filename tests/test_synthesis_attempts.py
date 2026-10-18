@@ -209,10 +209,11 @@ def test_a_double_fired_recovery_tick_pays_the_opening_synthesis_once(actions, c
     assert len(first.dispatches) == len(second.dispatches) == 1
     actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
     replacement = actions.run(f"{TUE}T14:01:53+00:00", "OPEN_30M", verdict="reject")
-    assert actions.runs[replacement]["conclusion"] == "failure"
+    # Rejected, so published as the deterministic refresh (OD-1); the checkpoint is complete and was paid once.
+    assert actions.runs[replacement]["conclusion"] == "success"
     capsys.readouterr()
     duplicate = actions.run(f"{TUE}T14:04:10+00:00", "OPEN_30M")
-    assert "SKIP / OPEN_30M / paid synthesis already attempted" in capsys.readouterr().out
+    assert "SKIP / OPEN_30M / already completed" in capsys.readouterr().out
     assert actions.requests == ["PREMARKET", "OPEN_30M"] and not actions.days[duplicate].attempts("OPEN_30M")
 
 
@@ -249,20 +250,23 @@ def test_a_manual_production_attempt_counts_and_experiments_stay_outside(actions
     assert actions.requests == ["PREMARKET"]
 
 
-# --- rejected analysis never becomes continuity or a page -------------------------------------------------
+# --- rejected analysis never becomes the interpretation; the checkpoint still publishes ----------------------
 
-def test_a_rejected_synthesis_advances_nothing_and_publishes_nothing(actions):
+def test_a_rejected_synthesis_freezes_nothing_and_publishes_the_refresh(actions):
     premarket = actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
     accepted = actions.bundle(premarket)
     rejected = actions.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", verdict="reject")
     day = actions.days[rejected]
-    # Its runner's bundle is exactly the restored one, and it uploaded only its archive and its attempt record.
-    assert json.loads(bundle_path(day.root).read_text()) == accepted
-    assert actions.names(rejected) == [f"market-brief-run-OPEN_30M-{rejected}", attempt(TUE, "OPEN_30M")]
-    assert actions.published == ["PREMARKET"]
+    # The frozen interpretation is exactly the restored one; the run published a refresh and recorded its paid call.
+    assert actions.bundle(rejected)["interpretation"] == accepted["interpretation"]
+    assert set(actions.names(rejected)) == {"market-brief-continuity", f"market-brief-run-OPEN_30M-{rejected}",
+                                            attempt(TUE, "OPEN_30M")}
+    assert actions.published == ["PREMARKET", "OPEN_30M"]
     folder = day.folder("OPEN_30M")
-    assert (folder / "narrative.rejected.json").exists() and not (folder / "brief.html").exists()
-    assert json.loads((folder / "metadata.json").read_text())["continuity"]["advanced"] is False
+    assert (folder / "narrative.rejected.json").exists() and (folder / "brief.html").exists()
+    metadata = json.loads((folder / "metadata.json").read_text())
+    assert metadata["validation"] == "DEGRADED" and metadata["synthesis"]["calls"] == 1
+    assert metadata["model"]["usage"]  # the paid call is accounted though its analysis was rejected
     # The next refresh carries the premarket interpretation; the attempt record is nowhere in continuity.
     refresh = actions.run(f"{TUE}T15:01:00+00:00", "HOURLY_1100")
     assert actions.metadata(refresh, "HOURLY_1100")["interpretation"]["checkpoint"] == "PREMARKET"

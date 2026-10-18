@@ -83,7 +83,7 @@ that concluded `success`, but the continuity upload comes before the push and th
 rejected after a concurrent merge, or a failed deployment, made an accepted bundle ineligible and the next
 runner rolled back to an older bundle or cold-started. `select_artifact` now also admits a run that concluded
 `failure` and checks the artifact's own name: the upload runs only when every earlier step succeeded, so the
-artifact proves acceptance (a workflow test pins that gate). A rejected synthesis still uploads nothing;
+artifact proves acceptance (a workflow test pins that gate). A rejected synthesis still uploads nothing (since W43, a rejected opening synthesis publishes as a refresh instead);
 cancelled and unfinished runs stay ineligible; admission and the publication, cadence and model-call rules
 are unchanged. One consequence follows from the bundle's completion proof: a queue-delayed wake of the same
 checkpoint after such a failure now skips where it used to run the checkpoint again (for a synthesis, a

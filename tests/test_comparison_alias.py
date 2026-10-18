@@ -45,8 +45,9 @@ def test_the_alias_becomes_its_two_operands_and_the_record_validates():
     repaired, repairs = canonicalize_comparison_aliases(value, context)
     assert value == original  # the analyst's response is kept as returned
     assert repaired["watch_updates"][0]["evidence_ids"] == ["SPY-intraday", "QQQ-daily", "premarket:SPY-intraday"]
-    assert repairs == [{"path": "watch_updates[0].evidence_ids[2]", "from": ALIAS, "to": OPERANDS,
-                        "rule": COMPARISON_ALIAS}]
+    assert repairs == [{"path": "watch_updates[0].evidence_ids", "aliases": {ALIAS: OPERANDS},
+                        "from": ["SPY-intraday", "QQQ-daily", ALIAS],
+                        "to": ["SPY-intraday", "QQQ-daily", "premarket:SPY-intraday"], "rule": COMPARISON_ALIAS}]
     assert validate_narrative(repaired, packet, context)
     # Nothing but the citation changed: the prose and every other field are the analyst's.
     stripped = copy.deepcopy(repaired)
@@ -60,7 +61,7 @@ def test_a_change_alias_is_rewritten_to_exactly_its_own_comparison():
                                   evidence_ids=[ALIAS])])
     repaired, repairs = canonicalize_comparison_aliases(value, context)
     assert repaired["changes"][0]["evidence_ids"] == OPERANDS
-    assert [r["path"] for r in repairs] == ["changes[0].evidence_ids[0]"]
+    assert [r["path"] for r in repairs] == ["changes[0].evidence_ids"]
     assert validate_narrative(repaired, packet, context)
 
 
@@ -137,10 +138,10 @@ def test_the_paid_path_repairs_records_and_still_makes_exactly_one_call(capsys):
     output, model = synthesize_openrouter(packet, api_key="k", requester=paid_response(value, calls), context=context)
     assert len(calls) == 1
     assert output["watch_updates"][0]["evidence_ids"][-1] == "premarket:SPY-intraday"
-    assert model["repairs"] == [{"path": "watch_updates[0].evidence_ids[2]", "from": ALIAS, "to": OPERANDS,
-                                 "rule": COMPARISON_ALIAS}]
+    assert [(r["path"], r["aliases"]) for r in model["repairs"]] == [
+        ("watch_updates[0].evidence_ids", {ALIAS: OPERANDS})]
     printed = capsys.readouterr().out
-    assert f"Citation repaired (comparison-alias.v1): watch_updates[0].evidence_ids[2] {ALIAS}" in printed
+    assert f"Citation repaired (comparison-alias.v1): watch_updates[0].evidence_ids {ALIAS} -> SPY-intraday" in printed
 
 
 def test_with_the_repair_disabled_the_paid_rejection_archives_the_response_as_returned(monkeypatch):
@@ -163,7 +164,7 @@ def test_a_repair_that_does_not_rescue_the_response_archives_the_original():
     with pytest.raises(synthesize.NarrativeRejected, match=ALIAS) as excinfo:
         synthesize.synthesize_openrouter(packet, api_key="k", requester=paid_response(value, []), context=context)
     assert excinfo.value.narrative == value
-    assert [r["path"] for r in excinfo.value.attempt["repairs"]] == ["watch_updates[0].evidence_ids[1]"]
+    assert [r["path"] for r in excinfo.value.attempt["repairs"]] == ["watch_updates[0].evidence_ids"]
 
 
 def test_the_repair_is_enabled_in_configuration():
@@ -177,7 +178,7 @@ def test_the_page_and_its_markdown_disclose_the_rewrite():
     value = opening(watch_updates=[incident_update(["SPY-intraday", "QQQ-daily", ALIAS])])
     repaired, repairs = canonicalize_comparison_aliases(value, context)
     markdown, page = render(packet, validate_narrative(repaired, packet, context), context, repairs=repairs)
-    line = f"watch_updates[0].evidence_ids[2]: {ALIAS} → SPY-intraday, premarket:SPY-intraday"
+    line = f"watch_updates[0]: {ALIAS} → SPY-intraday, premarket:SPY-intraday"
     assert "Citations rewritten from a comparison to the two observations it compares: " in page and line in page
     assert "Citations rewritten" in markdown and "→ SPY-intraday, premarket:SPY-intraday" in markdown
     _, plain = render(packet, validate_narrative(opening(), packet, context), context)
@@ -193,6 +194,49 @@ def test_a_stale_refresh_says_how_many_prints_were_too_old_and_when_the_feed_sto
             for i in range(21)]
     rows.append(dict(id="treasury-10y", frequency="daily", status="BACKGROUND", observed_at="2026-10-14"))
     assert missing_prints_reason(dict(observations=rows)) == (
-        "refresh has no timestamped current prints: 21 of 21 intraday prints are older than twenty minutes; the "
-        "newest was stamped 12:56:33 PM ET / 9:56:33 AM PT; the last accepted page stands")
-    assert "returned no intraday print" in missing_prints_reason(dict(observations=rows[-1:]))
+        "refresh has no timestamped current prints: 21 intraday prints (21 stale; the newest stale print was "
+        "stamped 12:56:33 PM ET / 9:56:33 AM PT); the last accepted page stands")
+    assert "the price source returned none" in missing_prints_reason(dict(observations=rows[-1:]))
+    odd = [dict(frequency="intraday", status="UNAVAILABLE", observed_at="2026-10-15T20:00:30Z"),
+           dict(frequency="intraday", status="STALE", observed_at=12345),
+           dict(frequency="intraday", status="INVALID", observed_at="not a time")]
+    assert missing_prints_reason(dict(observations=odd)) == (
+        "refresh has no timestamped current prints: 3 intraday prints (1 invalid, 1 stale, 1 unavailable); "
+        "the last accepted page stands")
+
+
+def test_malformed_or_repeated_citation_lists_are_left_exactly_as_returned():
+    packet, context, _ = carried_setup()
+    for refs in (["SPY-intraday", {"x": 1}, ALIAS], ["SPY-intraday", "SPY-intraday", ALIAS], [ALIAS, ALIAS]):
+        value = opening(watch_updates=[incident_update(refs)])
+        assert canonicalize_comparison_aliases(value, context) == (value, [])
+        with pytest.raises(ValueError):
+            validate_narrative(value, packet, context)
+    assert canonicalize_comparison_aliases(opening(watch_updates="not a list"), context)[1] == []
+
+
+def test_an_operand_already_cited_is_not_repeated_and_the_original_can_be_rebuilt():
+    from market_brief.synthesize import as_returned
+    packet, context, _ = carried_setup()
+    value = opening(watch_updates=[incident_update([ALIAS, "QQQ-daily", "SPY-intraday"])])
+    repaired, repairs = canonicalize_comparison_aliases(value, context)
+    assert repaired["watch_updates"][0]["evidence_ids"] == ["premarket:SPY-intraday", "QQQ-daily", "SPY-intraday"]
+    assert validate_narrative(repaired, packet, context)
+    assert as_returned(repaired, repairs) == value
+
+
+@pytest.mark.parametrize("setting", [None, "comparison-alias.v1", [1]])
+def test_a_malformed_repair_setting_fails_before_any_request(setting, monkeypatch):
+    from market_brief import synthesize
+    config = synthesize.read_json(synthesize.ROOT / "config/editions.json")
+    config["analyst"]["repairs"] = setting
+    with pytest.raises(ValueError, match="analyst.repairs must be a list"):
+        synthesize.enabled_repairs(config)
+    monkeypatch.setattr(synthesize, "enabled_repairs", lambda config=None: (_ for _ in ()).throw(
+        ValueError("analyst.repairs must be a list of rule names")))
+    packet, context, _ = carried_setup()
+    calls = []
+    with pytest.raises(ValueError, match="analyst.repairs"):
+        synthesize.synthesize_openrouter(packet, api_key="k", requester=paid_response(opening(), calls),
+                                         context=context)
+    assert calls == []

@@ -720,7 +720,8 @@ def test_a_rejected_opening_synthesis_keeps_the_release_card_and_is_not_retried(
     assert day.release_run("2026-10-02T13:00:00+00:00", "PREMARKET", EMPSIT_PAGE, intraday=False) == 0
     assert card_lines(macro(day.page("PREMARKET", FRIDAY))) == SEPTEMBER_CARD  # the 9:00 premarket reads it itself
     assert day.release_run("2026-10-02T13:31:00+00:00", "OPEN_1M", EMPSIT_PAGE) == 0
-    assert day.release_run("2026-10-02T14:01:00+00:00", "OPEN_30M", EMPSIT_PAGE, fail_synthesis=True) == 2
+    assert day.release_run("2026-10-02T14:01:00+00:00", "OPEN_30M", EMPSIT_PAGE, fail_synthesis=True) == 0
+    assert card_lines(macro(day.page("OPEN_30M", FRIDAY))) == SEPTEMBER_CARD  # the degraded refresh keeps it
     assert day.release_run("2026-10-02T15:00:00+00:00", "HOURLY_1100", EMPSIT_PAGE) == 0
     hourly = day.page("HOURLY_1100", FRIDAY)
     assert day.calls == ["PREMARKET", "OPEN_30M"]  # the rejection was the one attempt; the refresh never retries

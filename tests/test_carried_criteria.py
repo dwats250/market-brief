@@ -156,7 +156,7 @@ def production_close(value):
     return dict(empty_bundle(), close=rehashed(handoff), updated_at=CLOSE_FRI, updated_by_run=packet["run"]["run_id"])
 
 
-def test_a_rejected_synthesis_moves_no_pointer_and_the_refreshes_keep_the_frozen_criteria(day):
+def test_a_rejected_synthesis_freezes_nothing_and_the_refreshes_keep_the_frozen_criteria(day):
     """A day whose opening-structure synthesis fails: the premarket carries the previous close's live watch and
     freezes it with its criteria, the rejected update moves nothing, and the refreshes keep rendering the
     premarket's record, criteria included, at the −0.91% print Friday's author saw (Tuesday prints −0.53%)."""
@@ -166,11 +166,12 @@ def test_a_rejected_synthesis_moves_no_pointer_and_the_refreshes_keep_the_frozen
     frozen = next(w for w in record["prior_state"]["watches"] if w["hypothesis"] == QUESTION)
     assert (frozen["confirmation"], frozen["contradiction"]) == (CONFIRM, CHANGES_IT)
     assert frozen["lifecycle"] == "active" and frozen["horizon"]["phrase"] == "Into the next session"
-    before = bundle_path(day.root).read_bytes()
-    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", fail_synthesis=True) == 2
-    assert bundle_path(day.root).read_bytes() == before  # every pointer, the frozen record included
-    assert day.metadata("OPEN_30M")["continuity"]["advanced"] is False
-    assert day.published == ["PREMARKET"]
+    premarket = day.bundle()["premarket"]
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", fail_synthesis=True) == 0
+    # Published as a refresh (OD-1): the observed record advances, the frozen interpretation and premarket do not.
+    assert day.bundle()["interpretation"] == record and day.bundle()["premarket"] == premarket
+    assert day.metadata("OPEN_30M")["validation"] == "DEGRADED"
+    assert day.published == ["PREMARKET", "OPEN_30M"]
     assert day.run(f"{TUE}T15:00:00+00:00", "HOURLY_1100") == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]  # the refresh did not retry the analyst
     assert day.bundle()["interpretation"] == record

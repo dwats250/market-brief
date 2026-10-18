@@ -810,7 +810,8 @@ def since_caption(anchors, unpublished=()):
     return "vs " + " and ".join(parts) if parts else None
 
 
-def presentation(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None):
+def presentation(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None,
+                 degraded=None):
     if interpretation is None:
         interpretation = interpretation_record(packet, narrative, context)
     narrative = interpretation["narrative"]
@@ -1135,7 +1136,9 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         generated_utc=actual_started_at,
         evidence_cutoff_utc=packet["run"]["target_time"],
         checkpoint=checkpoint, kind=kind,
-        synthesis=("this edition's one analyst call" if kind == "synthesis" else
+        synthesis=(f"analyst call not accepted; deterministic refresh under interpretation run "
+                   f"{interpreted.get('run_id') or 'sample'}" if degraded else
+                   "this edition's one analyst call" if kind == "synthesis" else
                    f"none; deterministic {kind} under interpretation run {interpreted.get('run_id') or 'sample'}"),
         interpretation=dict(run_id=interpreted.get("run_id"), checkpoint=interpreted.get("checkpoint"),
                             evidence_cutoff=interpreted.get("target_time")),
@@ -1148,7 +1151,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                         changed=sum(1 for c in run_comparisons if c.get("status") == "changed")),
         cuttingboard=cuttingboard_line,
         # Deterministic citation repairs this edition's analyst response received before validation (OD-1).
-        repairs=[f"{r['path']}: {r['from']} → {', '.join(r['to'])}" for r in repairs or []],
+        repairs=[f"{r['path'].removesuffix('.evidence_ids')}: {alias} → {', '.join(pair)}"
+                 for r in repairs or [] for alias, pair in r["aliases"].items()],
         providers=[dict(name=s["name"], provider=s.get("provider"), feed=s.get("feed"),
                         data_delay=s.get("data_delay")) for s in packet["sources"]
                    if s.get("provider") or s.get("feed") or s.get("data_delay")],
@@ -1161,6 +1165,13 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         phase = f", {PHASE_PHRASES[checkpoint]}" if checkpoint in PHASE_PHRASES else ""
         truth = (f"LIVE COMMISSIONING RUN — collected {pacific_time(actual_started_at)}{phase}, "
                  "not a scheduled checkpoint.")
+    if degraded:
+        # A synthesis checkpoint whose analysis was rejected publishes as a refresh under the earlier analysis
+        # (owner ruling OD-1); the page says so where the clocks are, so it never reads as a new analysis.
+        failed = EDITION_WORDS.get(degraded["checkpoint"], "analysis")
+        kept = EDITION_WORDS.get(interpreted.get("checkpoint"), "earlier")
+        truth = (f"The {failed} analysis due {pacific_time(degraded['scheduled_at'])} was not accepted, so no new "
+                 f"analysis was published; the {kept} analysis stands and the prices are this update's.")
     source_names = {s["id"]: s["name"] for s in packet["sources"]}
     # A row with no measurement shows its headline as the value: `item` lets the page stack and wrap it.
     evidence_rows = [dict(r, display=formatted(r) if "value" in r else r["title"], item="value" not in r,
@@ -1490,11 +1501,11 @@ def markdown(view):
     return "\n".join(lines)
 
 
-def render(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None):
+def render(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None, degraded=None):
     """Render one edition. A synthesis edition passes its narrative (and freezes it on the way); a
     deterministic refresh passes the frozen `interpretation` record it carries. `glance` is the optional overseas
     line's view (`glance.view`), kept out of the packet so it never reaches evidence, continuity or the analyst."""
-    view = presentation(packet, narrative, context, interpretation, glance, repairs)
+    view = presentation(packet, narrative, context, interpretation, glance, repairs, degraded)
     env = Environment(loader=FileSystemLoader(ROOT / "templates"),
                       autoescape=select_autoescape(default=True))
     template = env.get_template("brief.html.j2")

@@ -387,12 +387,10 @@ def test_the_alternate_season_wake_never_retries_or_reruns_the_opening_structure
         day, capsys, first_attempt_fails):
     """PDT: the 14:01 UTC wake is the 7:00 update's one natural attempt. The 14:31 UTC wake exists for
     PST's open +1M; at 7:31 PDT it resolves to SKIP and never reaches the analyst, whether the first
-    attempt failed or succeeded."""
+    attempt failed or succeeded. A rejected attempt still publishes the checkpoint as a refresh (OD-1)."""
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
     assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M", command="schedule") == 0
-    expected = 2 if first_attempt_fails else 0
-    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", command="schedule", fail_synthesis=first_attempt_fails) \
-        == expected
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", command="schedule", fail_synthesis=first_attempt_fails) == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"] and len(day.attempts("OPEN_30M")) == 1
     # 7:31 PDT: the scheduler resolves nothing, and an explicit OPEN_30M dispatch is outside its window.
     freeze_clock(day.monkeypatch, f"{TUE}T14:31:00+00:00")
@@ -401,7 +399,7 @@ def test_the_alternate_season_wake_never_retries_or_reruns_the_opening_structure
     assert day.run(f"{TUE}T14:31:00+00:00", "OPEN_30M", command="schedule") == 0
     assert "SKIP / OPEN_30M / outside checkpoint window" in capsys.readouterr().out
     assert day.calls == ["PREMARKET", "OPEN_30M"] and len(day.attempts("OPEN_30M")) == 1
-    assert day.published == ["PREMARKET", "OPEN_1M"] + ([] if first_attempt_fails else ["OPEN_30M"])
+    assert day.published == ["PREMARKET", "OPEN_1M", "OPEN_30M"]
     # The hourly refreshes that follow are unaffected and still make no analyst call.
     assert day.run(f"{TUE}T15:01:00+00:00", "HOURLY_1100", command="schedule") == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]
@@ -434,11 +432,23 @@ def test_a_queue_delayed_earlier_wake_cannot_repeat_a_completed_checkpoint_on_a_
 
 
 def test_a_failed_opening_structure_synthesis_leaves_refreshes_on_the_premarket_interpretation(day):
+    """A rejected opening analysis still publishes its checkpoint as the deterministic refresh of the same collection
+    under the premarket interpretation, says so on the page, and freezes nothing (owner ruling OD-1)."""
     assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
     premarket = day.bundle()["interpretation"]["content_hash"]
-    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", fail_synthesis=True) == 2
-    assert day.calls == ["PREMARKET", "OPEN_30M"] and day.published == ["PREMARKET"]
+    assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", fail_synthesis=True) == 0
+    assert day.calls == ["PREMARKET", "OPEN_30M"] and day.published == ["PREMARKET", "OPEN_30M"]
     assert day.bundle()["interpretation"]["content_hash"] == premarket  # a rejected synthesis freezes nothing
+    metadata = day.metadata("OPEN_30M")
+    assert metadata["validation"] == "DEGRADED" and metadata["error"] == "synthesis rejected"
+    assert metadata["degraded_from"]["checkpoint"] == "OPEN_30M"
+    assert metadata["interpretation"]["checkpoint"] == "PREMARKET"
+    opening = day.page("OPEN_30M")
+    assert ('<div class="notice">The opening structure analysis due 7:00 AM PT was not accepted, so no new analysis '
+            'was published; the premarket analysis stands and the prices are this update&#39;s.</div>') in opening
+    assert clock_lines(opening)[:2] == ["Prices · 7:01 AM PT", "Analysis · 6:00 AM PT · premarket"]
+    assert "analyst call not accepted; deterministic refresh under interpretation run" in opening
+    assert 'data-checkpoint="OPEN_30M"' in opening
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
     page = day.page("HOURLY_1300")
     assert clock_lines(page)[:2] == ["Prices · 10:00 AM PT", "Analysis · 6:00 AM PT · premarket"]

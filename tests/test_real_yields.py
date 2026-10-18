@@ -5,10 +5,11 @@ bond market was closed Monday Oct 12). Oct 15 is the W42 weekly's omitted decomp
 6 bp, inflation compensation 3 bp. Oct 16's legs offset: -1 = -4 + 3, and the 30-year was unchanged while its parts
 moved 2 bp each way."""
 
+import json
 from pathlib import Path
 
 import pytest
-from test_curve import collected, utc
+from test_curve import collected, feed, utc
 
 from market_brief.collect import TREASURY
 from market_brief.curve import IC_CHANGE, IC_LEVEL, inflation_compensation_rows, rates, real_rates
@@ -187,3 +188,45 @@ def test_the_page_carries_one_split_and_its_caveat(retrieval_clock):
     assert lead["maturity"] == "10Y" and lead["split"]["sentence"].startswith("The 10-year yield fell 9 bp")
     assert "treasury-10y-inflation-comp-change" in module["proof_ids"]
     assert "treasury-real-30y" in module["proof_ids"]  # the other maturities stay one tap away
+
+
+def real_feed(*entries):
+    """`test_curve.feed` with the real curve's `TC_` fields."""
+    return feed(*entries).replace("BC_", "TC_")
+
+
+JANUARY_REAL = real_feed(("2026-01-02", {"5Y": "1.20", "10Y": "1.90", "30Y": "2.50"}))
+DECEMBER_REAL = real_feed(("2025-12-31", {"5Y": "1.18", "10Y": "1.87", "30Y": "2.49"}))
+
+
+def test_a_failed_previous_year_real_feed_is_reported_not_dropped(retrieval_clock):
+    retrieval_clock["now"] = now = utc("2026-01-05T14:00:00+00:00")  # one real entry this year (January 2)
+    raw, _ = collected(now, {("real", 2026): JANUARY_REAL})  # the 2025 real request fails
+    rows, real = by_id(raw["observations"]), next(s for s in raw["sources"] if s["id"] == "treasury-real")
+    assert rows["treasury-real-10y"]["value"] == 1.90 and "treasury-real-10y-change" not in rows
+    assert real["status"] == "DEGRADED"
+    assert real["reason"] == "previous year's feed failed (HTTP 404), so no daily real yield change"
+    # With nothing before today in either year, the source is unavailable and still names the failed fallback.
+    retrieval_clock["now"] = now = utc("2026-01-02T14:00:00+00:00")
+    raw, _ = collected(now, {("real", 2026): JANUARY_REAL})
+    real = next(s for s in raw["sources"] if s["id"] == "treasury-real")
+    assert real["status"] == "UNAVAILABLE" and "previous year's feed failed (HTTP 404)" in real["reason"]
+    # A served previous year completes the change and the source is simply available.
+    retrieval_clock["now"] = now = utc("2026-01-05T14:00:00+00:00")
+    raw, _ = collected(now, {("real", 2026): JANUARY_REAL, ("real", 2025): DECEMBER_REAL})
+    rows, real = by_id(raw["observations"]), next(s for s in raw["sources"] if s["id"] == "treasury-real")
+    assert rows["treasury-real-10y-change"]["value"] == 3 and (real["status"], real["reason"]) == ("AVAILABLE", "")
+
+
+def test_the_real_curve_has_its_own_off_switch(retrieval_clock, monkeypatch, tmp_path):
+    from market_brief import collect
+    assert collect.real_yields_on()  # shipped on
+    for setting, on in (({"real_yields": False}, False), ({"real_yields": True}, True), ({}, True)):
+        (tmp_path / "sources.json").write_text(json.dumps(setting))
+        assert collect.real_yields_on(tmp_path / "sources.json") is on
+    monkeypatch.setattr(collect, "real_yields_on", lambda: False)
+    packet, ic = derived_on("2026-10-16", retrieval_clock)
+    assert ic == {} and not real_rates(packet)
+    assert rates(packet)["10Y"]["level"]["value"] == 5.10  # the nominal curve and everything else is untouched
+    real = next(s for s in packet["sources"] if s["id"] == "treasury-real")
+    assert (real["status"], real["reason"]) == ("UNAVAILABLE", "switched off in config/sources.json")

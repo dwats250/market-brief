@@ -1,5 +1,6 @@
 {
   "version": "v1",
+  "real_yields": true,
   "wired": [
     "Treasury daily yield XML",
     "Treasury daily real (TIPS) yield XML",

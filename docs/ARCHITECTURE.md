@@ -292,8 +292,8 @@ every acceptance record, so a weekend or holiday run never consumes the next ses
 this repository's own runs count (a fork's pull_request run can execute its own edit of the workflow). An
 attempt that bills nothing once the record is written (authentication, rate limit, 5xx, timeout) still
 consumes the checkpoint. Experiment and commissioning runs pay under the owner's hand and are never recorded;
-a manual production dispatch is recorded but not gated, so inside the window it pays a second time: that is
-the owner's override and the recovery after a failed or unanswered check.
+a manual production dispatch is recorded and, since W43, refused before any request when this checkpoint's paid
+attempt is already recorded, unless it is dispatched with `repay`: the owner's explicit override and recovery.
 A rejected generation's metadata records the call it was: `synthesis.calls`, the route, the requested model
 and, when a response arrived, its usage and cost. A `NEXT_BRIEF` watch horizon resolves to the next synthesis checkpoint,
 the next time an analyst can judge it; refreshes in between only carry it. A watch's criteria carry

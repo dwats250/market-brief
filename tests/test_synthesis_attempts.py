@@ -565,3 +565,38 @@ def test_every_run_that_can_pay_waits_for_the_previous_one_to_finish():
     assert top_level(text, "concurrency") == ["  group: market-brief-pages", "  cancel-in-progress: false"]
     assert "actions: read" in "\n".join(top_level(text, "permissions"))
     assert "\n    concurrency:" not in text.split("\njobs:\n", 1)[1]  # no job overrides it
+
+
+# --- W43 S2a: a manual production synthesis pays again only when the owner says so -------------------------
+
+def test_a_manual_dispatch_after_a_paid_attempt_is_refused_before_any_request(actions, capsys):
+    """The manual path (`premarket --checkpoint`) bypasses `scheduled()`. It used to pay again inside the window by
+    design; now a recorded attempt refuses it before any request, and without an earlier analysis to stand it fails
+    closed, as a rejected PREMARKET does."""
+    actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False, verdict="reject")
+    capsys.readouterr()
+    manual = actions.run(f"{TUE}T13:08:00+00:00", "PREMARKET", intraday=False, command="premarket")
+    assert actions.requests == ["PREMARKET"]
+    assert actions.runs[manual]["conclusion"] == "failure"
+    error = actions.metadata(manual, "PREMARKET")["error"]
+    assert "paid synthesis of PREMARKET already attempted" in error and "no provider request was made" in error
+
+
+def test_a_manual_opening_dispatch_after_a_paid_attempt_publishes_the_refresh_without_paying(actions):
+    actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False)
+    actions.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", verdict="reject")
+    manual = actions.run(f"{TUE}T14:40:00+00:00", "OPEN_30M", command="premarket")
+    assert actions.requests == ["PREMARKET", "OPEN_30M"]
+    metadata = actions.metadata(manual, "OPEN_30M")
+    assert metadata["validation"] == "DEGRADED" and "already attempted" in metadata["error"]
+    assert metadata["outside_window"]["scheduled_at"] == f"{TUE}T14:00:00+00:00"
+
+
+def test_repay_is_the_owners_explicit_second_payment(actions, capsys):
+    actions.run(f"{TUE}T13:01:00+00:00", "PREMARKET", intraday=False, verdict="reject")
+    capsys.readouterr()
+    manual = actions.run(f"{TUE}T13:08:00+00:00", "PREMARKET", intraday=False, command="premarket",
+                         flags=("--repay",))
+    assert "REPAY / PREMARKET" in capsys.readouterr().out
+    assert actions.requests == ["PREMARKET", "PREMARKET"]
+    assert actions.runs[manual]["conclusion"] == "success" and actions.metadata(manual, "PREMARKET")["repay"] is True

@@ -48,6 +48,11 @@ on:
         required: false
         default: false
         type: boolean
+      repay:
+        description: Manual synthesis only; pay again although this checkpoint's paid attempt is already recorded
+        required: false
+        default: false
+        type: boolean
       liveness_recovery:
         description: Set by the Cloudflare wake-up when it cleared a stalled run; printed in the log only. Leave empty
         required: false
@@ -176,6 +181,9 @@ jobs:
           COMMISSIONING: ${{ inputs.commissioning }}
           EXPERIMENT: ${{ inputs.experiment }}
           CHECKPOINT: ${{ steps.checkpoint.outputs.checkpoint }}
+          REPAY: ${{ inputs.repay }}
+          # A manual production synthesis whose paid attempt is already recorded is refused unless repay is set.
+          GH_TOKEN: ${{ github.token }}
         run: |
           # An experiment runs the checkpoint it was dispatched with; only a commissioning
           # experiment resolves the market phase from the clock.
@@ -185,6 +193,8 @@ jobs:
             python -m market_brief premarket --checkpoint "$CHECKPOINT" --experiment
           elif [ "$COMMISSIONING" = "true" ]; then
             python -m market_brief premarket --commissioning
+          elif [ "$REPAY" = "true" ]; then
+            python -m market_brief premarket --checkpoint "$CHECKPOINT" --repay
           else
             python -m market_brief premarket --checkpoint "$CHECKPOINT"
           fi

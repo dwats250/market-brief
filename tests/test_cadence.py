@@ -55,7 +55,7 @@ class Day:
 
     def run(self, now, checkpoint, *, intraday=True, value=None, mutate=None, last_history_date="2026-09-04",
             print_at=None, fail_synthesis=False, command="premarket", scale_last_close=None,
-            prints=(("SPY", -0.53), ("QQQ", -0.61), ("XLI", 0.4)), wire=False, collect=None):
+            prints=(("SPY", -0.53), ("QQQ", -0.61), ("XLI", 0.4)), wire=False, collect=None, flags=()):
         freeze_clock(self.monkeypatch, now)
         raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
         raw["mode"] = "LIVE"
@@ -101,7 +101,7 @@ class Day:
         self.monkeypatch.setattr(cli, "RUN_ROOT", self.root)
         self.monkeypatch.setattr(cli, "update_latest", lambda root, page: None)
         self.monkeypatch.setattr(cli, "publish_latest", lambda root: self.published.append(checkpoint))
-        return cli.main([command, "--checkpoint", checkpoint])
+        return cli.main([command, "--checkpoint", checkpoint, *flags])
 
     def attempts(self, checkpoint, session=TUE):
         prefix = f"live-{checkpoint.lower()}-"

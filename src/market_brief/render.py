@@ -810,7 +810,7 @@ def since_caption(anchors, unpublished=()):
     return "vs " + " and ".join(parts) if parts else None
 
 
-def presentation(packet, narrative=None, context=None, interpretation=None, glance=None):
+def presentation(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None):
     if interpretation is None:
         interpretation = interpretation_record(packet, narrative, context)
     narrative = interpretation["narrative"]
@@ -1147,6 +1147,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                         comparisons=len(run_comparisons),
                         changed=sum(1 for c in run_comparisons if c.get("status") == "changed")),
         cuttingboard=cuttingboard_line,
+        # Deterministic citation repairs this edition's analyst response received before validation (OD-1).
+        repairs=[f"{r['path']}: {r['from']} → {', '.join(r['to'])}" for r in repairs or []],
         providers=[dict(name=s["name"], provider=s.get("provider"), feed=s.get("feed"),
                         data_delay=s.get("data_delay")) for s in packet["sources"]
                    if s.get("provider") or s.get("feed") or s.get("data_delay")],
@@ -1482,15 +1484,17 @@ def markdown(view):
               f"Continuity: {esc(technical['continuity']['status'])}"
               + (f" — {esc(technical['continuity']['reason'])}" if technical["continuity"]["reason"] else ""), "",
               esc(technical["cuttingboard"]), "",
+              *([f"Citations rewritten from a comparison to the two observations it compares: "
+                 f"{esc('; '.join(technical['repairs']))}", ""] if technical["repairs"] else []),
               "Model-assisted interpretation; factual rows are deterministic.", ""]
     return "\n".join(lines)
 
 
-def render(packet, narrative=None, context=None, interpretation=None, glance=None):
+def render(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None):
     """Render one edition. A synthesis edition passes its narrative (and freezes it on the way); a
     deterministic refresh passes the frozen `interpretation` record it carries. `glance` is the optional overseas
     line's view (`glance.view`), kept out of the packet so it never reaches evidence, continuity or the analyst."""
-    view = presentation(packet, narrative, context, interpretation, glance)
+    view = presentation(packet, narrative, context, interpretation, glance, repairs)
     env = Environment(loader=FileSystemLoader(ROOT / "templates"),
                       autoescape=select_autoescape(default=True))
     template = env.get_template("brief.html.j2")

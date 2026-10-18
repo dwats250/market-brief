@@ -39,6 +39,8 @@ from .metrics import annotate_magnitude, derive
 from .render import render
 from .schedule import (
     CHECKPOINTS,
+    ET,
+    VANCOUVER,
     checkpoint_kind,
     checkpoint_session,
     current_phase,
@@ -230,6 +232,22 @@ def merge_input(collected, supplied):
     return collected
 
 
+def missing_prints_reason(packet):
+    """Why a refresh has no current print, from the packet: none returned, or how many came back too old and when the
+    newest was stamped (2026-10-15 HOURLY_1400: the feed stopped at 12:56 ET, an hour before the run)."""
+    prints = [r for r in packet["observations"] if r.get("frequency") == "intraday" and r.get("observed_at")]
+    stale = [r for r in prints if r.get("status") == "STALE"]
+    if not prints:
+        detail = "the price source returned no intraday print"
+    else:
+        newest = timestamp(max(prints, key=lambda r: timestamp(r["observed_at"]))["observed_at"])
+        clock = (f"{newest.astimezone(ET):%-I:%M:%S %p} ET / "
+                 f"{newest.astimezone(VANCOUVER):%-I:%M:%S %p} PT")
+        detail = (f"{len(stale)} of {len(prints)} intraday prints are older than twenty minutes; "
+                  f"the newest was stamped {clock}")
+    return f"refresh has no timestamped current prints: {detail}; the last accepted page stands"
+
+
 def sample_interpretation(packet, prior, comparisons):
     """A fictional replay of a deterministic checkpoint renders the fixture narrative as the carried
     interpretation, dated to the session's premarket so the two clocks read as they would in production."""
@@ -390,7 +408,7 @@ def run(args):
                 if interpretation is None:
                     raise ValueError(interpretation_note)
                 if not packet["coverage"].get("current_premarket"):
-                    raise ValueError("refresh has no timestamped current prints; the last accepted page stands")
+                    raise ValueError(missing_prints_reason(packet))
             state = carried_state(packet, prior, comparisons, interpretation, __version__)
             closing = state["observed"]["data_status"]
             if kind == "close" and closing["status"] not in CLOSING_DATA_FOR_HANDOFF:
@@ -406,7 +424,8 @@ def run(args):
         published = False
         if interpretation is not None:
             try:
-                markdown, page = render(packet, narrative, context, interpretation=interpretation, glance=overseas)
+                markdown, page = render(packet, narrative, context, interpretation=interpretation, glance=overseas,
+                                        repairs=(metadata.get("model") or {}).get("repairs"))
             except Exception as exc:  # noqa: BLE001 - any rendering defect is diagnosed like a rejection
                 # The accepted narrative is already on disk; nothing has been published.
                 raise ValueError(f"render failed after acceptance ({type(exc).__name__}: {exc})") from None
@@ -443,6 +462,10 @@ def run(args):
         if isinstance(attempt, dict):
             # A request was sent: the rejection is recorded as the paid call it was, at what it cost when known.
             metadata.update(model_route=attempt.get("route", metadata["model_route"]), model=attempt)
+            usage = attempt.get("usage")
+            if isinstance(usage, dict) and usage:
+                # The log line an accepted call prints, so a rejected call's cost is visible without the artifact.
+                print("Synthesis usage (not accepted): " + " ".join(f"{k}={v}" for k, v in usage.items()), flush=True)
         rejected = getattr(exc, "narrative", None)
         if rejected is not None:
             # The generated output is the diagnostic; keep it beside the evidence it failed against.

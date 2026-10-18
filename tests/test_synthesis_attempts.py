@@ -541,6 +541,11 @@ def test_only_a_record_uploaded_by_this_workflow_on_the_branch_counts(monkeypatc
 
 def test_the_workflow_uploads_every_paid_attempt_last_and_the_scheduler_can_list_it():
     steps = workflow_steps("brief")
+    # The checkpoint receipt (W43 S1a) follows the attempt record: accounting about the run, after everything it
+    # describes, and never fatal; it is pinned in test_receipts. Every step that can gate precedes the attempt record.
+    receipts = [step for step in steps if "receipt" in step["code"].split("\n", 1)[0].lower()]
+    assert len(receipts) == 2 and steps[-2:] == receipts
+    steps = steps[:-2]
     naming = [i for i, step in enumerate(steps) if re.search(r"^        id: attempt$", step["code"], re.M)]
     uploads = [i for i, step in enumerate(steps) if f"name: {cli.ATTEMPT_ARTIFACT}-" in step["code"]]
     # The last two steps: after the pipeline, the continuity upload and every publication step, so this record

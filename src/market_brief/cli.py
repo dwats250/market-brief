@@ -36,6 +36,7 @@ from .continuity import (
 )
 from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_json, timestamp
 from .metrics import annotate_magnitude, derive
+from .receipts import build_receipt, write_receipt
 from .render import render
 from .schedule import (
     CHECKPOINTS,
@@ -700,7 +701,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="One local pre-market briefing, grounded in evidence")
     parser.add_argument("command", choices=["premarket", "schedule", "resolve-scheduled",
                                              "alpaca-probe", "open", "publish", "continuity-restore",
-                                             "glance-baseline"])
+                                             "glance-baseline", "receipt"])
     parser.add_argument("--replay", action="store_true", help="offline fictional evidence + narrative")
     parser.add_argument("--input", type=Path, help="sourced input JSON; SAMPLE for replay, LIVE otherwise")
     parser.add_argument("--synthesize", action="store_true", help="call Claude even for SAMPLE evidence")
@@ -750,6 +751,12 @@ def main(argv=None):
             return 0
         if args.command == "schedule":
             return scheduled(args)
+        if args.command == "receipt":
+            # Accounting only, after everything else: it reads the step outcomes and this run's metadata.
+            receipt = build_receipt(os.environ, RUN_ROOT, datetime.now(timezone.utc))
+            path = write_receipt(RUN_ROOT, receipt)
+            print(f"RECEIPT / {receipt['checkpoint']} / {receipt['outcome']} / delivery {receipt['delivery']}: {path}")
+            return 0
         return run(args)
     except (ValueError, OSError, KeyError, TypeError) as exc:
         # Input/provider/model contents and credential-bearing exceptions never enter logs.

@@ -1,6 +1,7 @@
 # Decisions
 
 - Deterministic collection happens before AI synthesis.
+- The project charter (`docs/PROJECT_CHARTER.md`, 2026-10-19) holds the standing principles, the research components' boundaries and the proposed graduation criteria. It is guidance, not status: the criteria are targets to judge the system against, read from records it already keeps, and never a new monitoring service. Runtime authority moves off GitHub only after a replacement has shadowed production and the owner has decided it.
 - `OBSERVED`, `INTERPRETATION`, and `WATCH` remain separate.
 - Cuttingboard is optional, read-only context and never writable authority.
 - PRE-MARKET is the first shipping cadence.

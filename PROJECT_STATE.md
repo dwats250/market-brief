@@ -1,6 +1,29 @@
 # Project State
 
-## Now
+*Purpose, principles and proposed graduation criteria: [docs/PROJECT_CHARTER.md](docs/PROJECT_CHARTER.md). This file
+records what runs and what is next; dated sections below are kept as written, and later sections and
+[DECISIONS.md](DECISIONS.md) supersede earlier ones.*
+
+## Current status (2026-10-19)
+
+- **Production:** the Cloudflare scheduler Worker wakes `schedule.yml`; GitHub Actions collects, synthesizes (PREMARKET
+  and OPEN_30M only, Opus 5.5 through OpenRouter), validates, carries continuity as Actions artifacts and publishes to
+  GitHub Pages. Cuttingboard is not requested by scheduled runs.
+- **W43 (PRs #56–#60, merged 2026-10-17; first live session 2026-10-19):** a rejected opening analysis publishes as a
+  refresh under the standing interpretation, comparison aliases are rewritten before validation, a manual repeat of a
+  paid synthesis needs `repay`, every checkpoint run writes a receipt, OPEN_30M reads the full evidence record (the
+  `opening` profile, replacing light), and Treasury real yields with matched-date inflation compensation join the
+  rates module. The rulings are in DECISIONS.
+- **Coordinator (under evaluation, not in production):** a Cloudflare Durable Object that would hold claims, payment,
+  continuity and the reader page. G1–G2 are built and tested locally and on staging on the unmerged branch
+  `feat/coordinator-g1-g2`; G3 (five sessions of out-of-band shadow replay with identical decisions) is in preparation,
+  with one session replayed as PASS. Production keeps the coordinator off; staging deploys, the replay window, merging
+  and any move of authority each need owner authorization. See ARCHITECTURE, "Runtime today and the coordinator under
+  evaluation".
+- **Not built:** Market Memory and the Week Ahead beyond slice D1 (the analyst model); a unified research dashboard
+  (an idea only).
+
+## Now (v0.1 onward, chronological)
 
 Scheduled and commissioning briefs collect deterministically, save the exact analyst context, synthesize
 once through OpenRouter under an edition budget profile, validate fail-closed (references must exist in

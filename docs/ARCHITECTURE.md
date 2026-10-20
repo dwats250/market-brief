@@ -1,5 +1,35 @@
 # Architecture: scripts with a thin CLI
 
+*Reading this file: the sections from Recommendation through Local persistence are the v0 design record
+(September 2026) and keep their original wording, including plans later superseded; Freshness and source failures
+is kept current. Global Equity Proxies, Continuity, Cadence and Structured synthesis output budgets describe the
+system as built. Where a design section and [DECISIONS.md](../DECISIONS.md) disagree, the decision is current.*
+
+## Runtime today and the coordinator under evaluation
+
+As of 2026-10-19, production runs entirely on GitHub, with Cloudflare only as a clock:
+
+- **Wake-up:** the Cloudflare Worker in `cloudflare/` sends a `workflow_dispatch` to `schedule.yml` at its cron
+  candidates and clears a never-started wake that holds the queue ([cloudflare/README.md](../cloudflare/README.md)).
+  It holds no market or continuity state.
+- **Execution:** GitHub Actions runs `schedule.yml`, one run at a time. The Python scheduler resolves the checkpoint.
+- **Continuity:** the hashed bundle is a GitHub Actions artifact, restored from this repository's own main-branch runs
+  (thirty-day horizon). Paid-attempt records and run receipts are Actions artifacts too.
+- **Publication:** the run commits `publish/index.html` to `main` and deploys GitHub Pages.
+- **Model:** one synthesis route, OpenRouter, pinned to Anthropic, primary Opus 5.5 with one bounded fallback
+  (`config/editions.json`). The isolated Claude CLI route from the v0 design below still exists in code; scheduled
+  production does not use it.
+
+Under evaluation, not in production: a Cloudflare **coordinator**, one Worker with one SQLite-backed Durable Object
+that would be the single authority for execution claims, payment authorization, accepted continuity and the reader
+page. Its protocol, Worker, Python client and tests exist on an unmerged branch (`feat/coordinator-g1-g2`); it is
+deployed to a staging Worker only, the client is off by default, and no production run consults it. Its gates are
+G1–G2 (correctness locally and on staging, including a recovery drill) and G3 (five consecutive production sessions
+replayed out of band with identical decisions, continuity and pages). G3 preparation has replayed one session with
+a PASS; the five-session window has not begun. Any move of authority to it, and any production environment for it,
+needs separate owner decisions. GitHub would remain the repository of record either way
+([PROJECT_CHARTER.md](PROJECT_CHARTER.md)).
+
 ## Recommendation
 
 Build a small Python package with an argparse entry point, ordinary HTTP
@@ -54,6 +84,8 @@ stdin, no shell interpolation, isolated working directory, tools disabled, and a
 timeout. Do not assume a subscription implies API access. If that route lacks
 required isolation/structured output, report the concrete integration limitation;
 do not build a provider abstraction platform. No model setup was tested tonight.
+*(Superseded: production synthesizes through OpenRouter; see Runtime today above and
+Structured synthesis output budgets below.)*
 
 ## Evidence packet v0
 
@@ -250,7 +282,7 @@ previous close and a run without session observations leaves the last close unto
 `schedule.CHECKPOINT_KINDS` is the one statement of the day, and every checkpoint is anchored to
 the exchange session (never to a Pacific wall clock; British Columbia no longer follows New York's
 seasonal offset): `PREMARKET` (NYSE open −30 minutes, rich) and `OPEN_30M` (open +30 minutes,
-light) are the only `synthesis` checkpoints and the only checkpoints with an edition profile.
+the `opening` profile since W43; it was light before) are the only `synthesis` checkpoints and the only checkpoints with an edition profile.
 `OPEN_1M` (open +1 minute) and `HOURLY_1100` … `HOURLY_1500` (exchange-clock hours inside the
 session) are `refresh` checkpoints; `CLOSE_1M` (close +1 minute) is the `close`. Times are displayed
 in Pacific time, so the opening-structure update reads 7:00 AM PT in New York daylight time and
@@ -324,7 +356,7 @@ provided snapshot file; no repository path traversal or callback can write back.
 ## Structured synthesis output budgets
 
 `config/editions.json` sets total generation ceilings of 7,000 rich / 4,500 light
-tokens, hard maximum-exposure limits rather than expected usage, and requests `reasoning={effort: "low", exclude: true}`. The configured analyst (Opus 5.5 since 2026-09-27)
+tokens (the `opening` profile OPEN_30M has used since W43 takes the rich ceiling), hard maximum-exposure limits rather than expected usage, and requests `reasoning={effort: "low", exclude: true}`. The configured analyst (Opus 5.5 since 2026-09-27)
 always thinks adaptively: the old 1,024-token request was not a guaranteed reservation.
 [Anthropic's model-specific effort guidance](https://platform.claude.com/docs/en/build-with-claude/effort)
 identifies effort as a behavioral control; only total `max_tokens` is a hard cap.
@@ -367,7 +399,7 @@ unknown, never zero. Neither reasoning text nor encrypted reasoning is persisted
 Response-healing stays enabled: OpenRouter documents it as free CPU-side repair,
 not model generation, and it cannot recover max-token truncation.
 
-Per request, maximum requested paid output is 7,000 tokens (rich) or 4,500 (light),
+Per request, maximum requested paid output is 7,000 tokens (rich, opening) or 4,500 (light),
 including hidden reasoning. At an output rate of R dollars per million tokens,
 output exposure is 0.007 * R or 0.0045 * R dollars, plus input charges. There is
 exactly ONE client request, including on timeout, HTTP failure, malformed transport,
@@ -376,7 +408,10 @@ Provider fallback is disabled and parameter support is required. No second model
 repair call or paid fallback is added. Live verification requires owner authorization;
 see [the investigation and one-call criteria](SYNTHESIS_COST_CONTAINMENT.md).
 
-## Operational hold, 2026-09-10
+## Operational hold, 2026-09-10 (lifted 2026-09-11)
+
+*Historical record. The hold was lifted on 2026-09-11 and recurring scheduling has run since; see
+[PROJECT_STATE.md](../PROJECT_STATE.md).*
 
 Cloudflare's live `market-brief-scheduler` cron list was set to `[]` through the
 trigger-only API; deployed code and repository source were not changed. The GitHub

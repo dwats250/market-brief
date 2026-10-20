@@ -1,421 +1,245 @@
-# Architecture: scripts with a thin CLI
+# Architecture
 
-*Reading this file: the sections from Recommendation through Local persistence are the v0 design record
-(September 2026) and keep their original wording, including plans later superseded; Freshness and source failures
-is kept current. Global Equity Proxies, Continuity, Cadence and Structured synthesis output budgets describe the
-system as built. Where a design section and [DECISIONS.md](../DECISIONS.md) disagree, the decision is current.*
+This is how Market Brief works today (October 2026). The original September design, written before any of it was
+built, is kept unchanged in [history/2026-09-07-v0-architecture.md](history/2026-09-07-v0-architecture.md). Some of its
+plans happened, some changed and some were dropped. When this page and [DECISIONS.md](../DECISIONS.md) disagree on a
+detail, DECISIONS is the precise rule and this page needs fixing.
 
-## Runtime today and the coordinator under evaluation
+The short version: it's a small Python package with a command-line entry point, ordinary HTTP collectors, JSON files
+on disk, one model adapter and one HTML template. There's no service, database, queue or framework, and no long-running
+process. The interesting parts are the rules about time, evidence and state, not the plumbing.
 
-As of 2026-10-19, production runs entirely on GitHub, with Cloudflare only as a clock:
+## The pieces
 
-- **Wake-up:** the Cloudflare Worker in `cloudflare/` sends a `workflow_dispatch` to `schedule.yml` at its cron
-  candidates and clears a never-started wake that holds the queue ([cloudflare/README.md](../cloudflare/README.md)).
-  It holds no market or continuity state.
-- **Execution:** GitHub Actions runs `schedule.yml`, one run at a time. The Python scheduler resolves the checkpoint.
-- **Continuity:** the hashed bundle is a GitHub Actions artifact, restored from this repository's own main-branch runs
-  (thirty-day horizon). Paid-attempt records and run receipts are Actions artifacts too.
-- **Publication:** the run commits `publish/index.html` to `main` and deploys GitHub Pages.
-- **Model:** one synthesis route, OpenRouter, pinned to Anthropic, primary Opus 5.5 with one bounded fallback
-  (`config/editions.json`). The isolated Claude CLI route from the v0 design below still exists in code; scheduled
-  production does not use it.
-
-Under evaluation, not in production: a Cloudflare **coordinator**, one Worker with one SQLite-backed Durable Object
-that would be the single authority for execution claims, payment authorization, accepted continuity and the reader
-page. Its protocol, Worker, Python client and tests exist on an unmerged branch (`feat/coordinator-g1-g2`); it is
-deployed to a staging Worker only, the client is off by default, and no production run consults it. Its gates are
-G1–G2 (correctness locally and on staging, including a recovery drill) and G3 (five consecutive production sessions
-replayed out of band with identical decisions, continuity and pages). G3 preparation has replayed one session with
-a PASS; the five-session window has not begun. Any move of authority to it, and any production environment for it,
-needs separate owner decisions. GitHub would remain the repository of record either way
-([PROJECT_CHARTER.md](PROJECT_CHARTER.md)).
-
-## Recommendation
-
-Build a small Python package with an argparse entry point, ordinary HTTP
-collectors, explicit JSON records, one configured model adapter, and Markdown /
-HTML templates. This combines script simplicity with a repeatable command. No
-service, database, queue, framework, or long-running agent is needed.
-
-Proposed flow:
-
-```text
-permitted feeds + local sourced inputs + optional published Cuttingboard
-                            |
-                 collect and normalize
-                            |
-           deterministic metrics + coverage checks
-                            |
-   evidence.json (full record, stable metric identity, deterministic comparisons)
-                            |
-   analyst_context.json (bounded projection + prior structured state + comparisons)
-                            |
-              one configured analyst synthesis (edition budget profile)
-                            |
-   validate: references exist in evidence AND were supplied; continuity records
-                            |
-   narrative.json + edition_state.json (+ session_handoff.json after a substantiated close)
-                            |
-                  brief.md + brief.html · continuity bundle
-```
-
-Two modules carry the v0.1 additions: `context.py` (projection and edition profiles) and
-`continuity.py` (admission, comparisons, packaging, state validation, bundle persistence). Everything
-else extends the existing modules. There is still no database, service, queue, or provider registry.
-
-## Deterministic responsibility
-
-The program owns session dates, clocks, provenance, prices, units, returns,
-benchmark spreads, history windows, trigger conditions, deltas, source failure
-states, literal Cuttingboard quotations, and all factual display rows. The model
-owns selection, synthesis, readable organization, competing explanations, and
-conditional watches. It does not calculate historical significance from memory.
-
-Source selection occurs before synthesis. The model receives a bounded packet,
-not API credentials, arbitrary filesystem access, a browser, or trading tools.
-Source text is untrusted quoted material; instructions inside an article cannot
-change the task, request credentials, or trigger a tool call.
-
-Use one existing, locally configured model route whose documented noninteractive
-JSON input/output path is verified during implementation. This may be an
-authenticated local CLI or an API adapter; implement only one. The initial plan
-prefers a local CLI already available to Dustin, with an explicit argv array and
-stdin, no shell interpolation, isolated working directory, tools disabled, and a
-timeout. Do not assume a subscription implies API access. If that route lacks
-required isolation/structured output, report the concrete integration limitation;
-do not build a provider abstraction platform. No model setup was tested tonight.
-*(Superseded: production synthesizes through OpenRouter; see Runtime today above and
-Structured synthesis output budgets below.)*
-
-## Evidence packet v0
-
-Use schema version `market-brief.evidence.v0`. Required top-level records:
-
-| Record | Required contents |
+| Module | Job |
 |---|---|
-| run | ID, checkpoint, target time, exchange session/date, collection start/end, code/config versions, mode LIVE or SAMPLE |
-| sources | Source ID, kind, canonical URL, retrieval time, observation/publication date, coverage, delay, usage/retention/LLM-sharing status |
-| observations | ID, instrument/series/event ID, metric, typed value or null, unit, observation time/date, source ID, status, baseline and session where relevant |
-| derived | ID, value/unit, formula version, input observation IDs, window, adjustment basis, coverage denominator |
-| events | ID, title, scheduled time with timezone or date/time-unknown, status, source ID, checked time |
-| context_items | ID, short factual abstract, publication time, event time if known, source ID, affected topic; no full articles |
-| attention | Symbol, horizon, trigger ID, supporting metric IDs, benchmark, effective date, expires after session |
-| cuttingboard | Available/absent/stale/invalid, source URL, capture time, generation ID/time, literal allowed fields, adapter version |
-| previous | Previous accepted brief ID or null; no fabricated baseline |
-| coverage | Required/optional domains, availability, reason, usable horizon; report status READY, PARTIAL, or INSUFFICIENT |
+| `schedule.py` | The exchange calendar: which checkpoint is due, its kind (synthesis, refresh or close), and the next one |
+| `collect.py` | HTTP collection from Alpaca, Treasury, BLS, the Fed and (optionally) Cuttingboard, with bounded timeouts |
+| `actuals.py` | Reading BLS release values (CPI, Employment Situation) once the scheduled release time has passed |
+| `evidence.py` | Admitting raw observations: clocks, freshness, identity, coverage, and the record the model is allowed to see |
+| `metrics.py`, `curve.py` | Deterministic calculations: returns, spreads, 50-day averages, magnitudes, Treasury curve spreads and moves |
+| `context.py` | Building the bounded analyst context for a synthesis, under its edition's budget profile |
+| `synthesize.py` | The one model request, and validating what comes back |
+| `continuity.py` | Comparisons across runs, watch and relationship state, the frozen analysis, and the continuity bundle |
+| `render.py` + `templates/brief.html.j2` | The page (HTML, plus a Markdown edition with the same facts) |
+| `receipts.py` | The per-run receipt |
+| `glance.py` | The Global Equity Proxies line (display only) |
+| `cli.py` | Wiring it together: `premarket`, `schedule`, `publish`, `continuity-restore` and friends |
 
-Numbers must be finite; missing is null with a reason, never zero. Datetimes are
-timezone-aware UTC; display ET using America/New_York. Daily series use an
-observation date and frequency, never a fabricated midnight intraday quote.
-Preserve actual feed, instrument type, currency, contract month when applicable,
-and adjustment basis. No merging of different instruments under a convenient
-label: DXY is not a broad trade-weighted dollar series; futures are not spot;
-UCO is a leveraged fund, not crude oil.
+Configuration is plain JSON: `config/editions.json` (the analyst and the budget profiles), `config/sources.json`
+(what's wired and what's deferred), `config/universe.json` (about twenty ETFs and large caps, with their benchmarks)
+and `config/magnitude.json` (the thresholds for "small" and "large" moves). The prompt is `prompts/synthesis.md`.
 
-## Freshness and source failures
+## Runtime: what actually runs where
 
-A live run keeps four clocks apart:
+Production is all GitHub, with Cloudflare used only as a clock.
 
-| Clock | What it is | Where it lives | What it decides |
-|---|---|---|---|
-| Run start | When the run began | `collection_started_at`, `actual_started_at`, "Generated UTC" | The session, the date and the windows that collection runs on |
-| Observation window | Each request's own span, closing when its response arrives | Each row's `retrieved_at` and its source's checked time | The latest trade a response can report: an IEX trade is bounded by the snapshot response that reported it |
-| Evidence cutoff | When collection finished | `run.target_time`, "Evidence cutoff UTC" | Ages (live, delayed, stale) and "future"; no row may be observed after it |
-| Session cutoff | The exchange's regular-session close for this run's session | `run.session.close` | What a print can stand for: a trade after the close is after-hours, never a closing, near-close or session print |
+GitHub's own `schedule` trigger fires too late and too unreliably to run a brief on, so `schedule.yml` has no cron. A
+Cloudflare Worker (`cloudflare/`) wakes it with a `workflow_dispatch` one minute past each hour from 13:00 to 21:00 UTC,
+plus a :31 wake for the open +1 minute refresh. Those times cover both New York seasons. Most wakes resolve to SKIP;
+the Python scheduler decides what's actually due from the NYSE calendar, holidays and early closes. The Worker holds
+no market data or state. It does one other job: if a wake has been sitting in GitHub's queue without ever getting a
+runner (it happened on 2026-09-30 and blocked the rest of the afternoon), it cancels that one stuck run before the next
+dispatch. The rules for that are deliberately narrow; see [cloudflare/README.md](../cloudflare/README.md).
 
-Collect within five minutes. Intraday observations after the evidence cutoff are excluded or need a new
-target or run. Until 2026-10-11 the evidence cutoff was the run's start, so a trade reported during collection
-read as "future", and the busiest tickers lost their current prints. The session cutoff is a separate bound
-(2026-10-12): a later evidence cutoff never admits an after-hours trade into regular-session analysis. At the
-4:01 PM close snapshot, an IEX trade stamped after 4:00:00 PM is refused and named in Coverage limitations.
-A symbol the collector cannot give a current print is never dropped silently. Its source reads Degraded, and
-the reason names each such symbol and why. For
-premarket v0, accept timestamped delayed prices up to 20 minutes old, visibly
-labeled DELAYED; this is a design tolerance, not an assertion of real-time access.
-Quotes of unknown age are UNKNOWN, not current. Baseline spreads need compatible
-sessions/adjustments and observation times within five minutes of one another.
-Do not compare evidence from opposite sides of a material release as simultaneous.
+Each run then goes through these steps inside one GitHub Actions job:
 
-Previous-close data must match the last completed exchange session. Daily yields
-use their own business/release calendar and stated date. A value can be valid
-background while ineligible for the current banner. Check calendars during the
-run; a cached calendar checked within 24 hours may be used with that age shown.
-Expired calendar coverage is unknown, never "no events." Check earnings for the
-attention names only. Report confirmed timing, tentative timing, or unknown.
+1. **Resolve** the checkpoint, or skip. A synthesis is only due within twenty minutes of its scheduled time, so a
+   late wake can't turn into a second paid attempt. Refreshes and the close get forty-five minutes, since a late
+   deterministic run costs nothing.
+2. **Restore** the last accepted continuity bundle from an Actions artifact (details below).
+3. **Collect, calculate, synthesize or carry, validate and render.**
+4. **Upload** the new continuity bundle, but only if every earlier step succeeded.
+5. **Publish**: commit `publish/index.html` to `main` (never force-pushed, at most three tries, and it stops if `main`
+   has moved) and deploy GitHub Pages, but only from a checkout that holds `main`'s page. That way a delayed duplicate
+   run can't put an older page back.
+6. **Account**: archive the run's evidence and metadata, upload the paid-attempt record if there is one, and write the
+   receipt. These steps run whatever happened earlier and can't block continuity or publication.
 
-Each collector gets a bounded timeout, at most one retry for a transient error,
-and explicit rate-limit handling within the run deadline. No infinite retries,
-feed substitution, or hidden use of stale cache. Distinguish 401/403, rate limit,
-malformed response, unavailable, stale, and conflicting sources. Never log auth
-headers or credential-bearing URLs. A failed optional source degrades its section.
+The workflow has one concurrency group (`market-brief-pages`) without cancel-in-progress, so runs are strictly one at a
+time. A few other things live in the same workflow: commissioning runs (a live brief at the current market phase,
+never published as production), experiments (a chosen checkpoint, not published), and a continuity check.
 
-READY for the initial pre-market brief requires SPY/QQQ valid previous-session
-history, event-calendar coverage checked for the session, and valid narrative
-references. Current premarket direction is a separate coverage flag, never
-implied by READY. Missing one equity anchor or part of the configured calendar
-coverage produces PARTIAL with a prominent limitation. Missing both equity anchors
-or all usable calendar coverage produces INSUFFICIENT: save diagnostics/evidence,
-return nonzero, do not replace the last accepted brief. READY requires successful
-checks of the configured BLS and BEA schedules and Fed calendar for the session;
-this is still a bounded calendar, not proof of every possible catalyst. A partial
-report cannot pass full first-live acceptance. Model failure or invalid narrative
-also returns nonzero and never updates the latest-success pointer.
+## Collection and evidence
 
-## Minimal history and deterministic calculations
+The sources are Alpaca (IEX trades and split-adjusted daily bars for the universe), the U.S. Treasury (the daily
+nominal par curve and, since W43, the real TIPS curve), BLS (the release calendar, plus CPI and Employment Situation
+values on release mornings), and the Federal Reserve's press-release feed. The list of what's wired and what's
+deliberately not (live yields, futures, VIX, breadth, general news) is in `config/sources.json`, and the original
+source research is in [DATA_SOURCES.md](DATA_SOURCES.md).
 
-Keep up to 65 completed daily OHLC bars per selected equity/ETF locally, with
-split adjustment and price-return semantics explicitly fixed. Require a source
-whose daily bar session definition is known; do not call an extended-hours daily
-aggregate the regular-session close. If needed, derive the regular close from a
-known regular-session bar and record that basis. Cross-source or corporate-action
-basis conflicts invalidate the affected metric until reconciled.
+Every observation becomes a typed row with a stable identity (instrument, metric, window, benchmark, basis), a value
+and unit, the time it was observed, the time it was retrieved, its source and a status. The admission rules are where
+most of the care goes:
 
-- Daily price return: `100 * (C[t] / C[t-1] - 1)`; retain the last five.
-- 20-session price return: `100 * (C[t] / C[t-20] - 1)`; needs 21 closes.
-- Relative spread: asset 20-session return minus benchmark return in percentage
-  points, with matching dates and basis. It is not a ratio or an independent
-  factor estimate when constituents overlap their benchmark.
-- SMA50: arithmetic mean of the last 50 completed closes. A transition needs
-  both today's and yesterday's close-minus-SMA50 signs, requiring 51 closes.
-  Trigger only on opposite nonzero signs; equality alone is not a cross.
-- Yield change: `(yield_percent_now - yield_percent_base) * 100` basis points.
+- An intraday print more than twenty minutes old is STALE; one to twenty minutes is DELAYED. IEX is one exchange's
+  trades, so a "current print" here is the latest IEX trade, and it's labelled that way.
+- A trade stamped after the regular-session close is after-hours. It's refused as session evidence and named, never
+  used as a closing print.
+- Daily rows (closes, yields) are dated, not clocked, and they're background, never "now".
+- A BLS release value is current only in the session that published it, and only if the page proves it's the
+  scheduled release (its official time and reference month match the calendar).
+- Anything missing is named as missing with a reason. There are exactly three words for absence on the page:
+  `no print`, a plain dash for "not applicable", and `not collected`.
 
-No 200-day state, ATR normalization, support/resistance inference, or "largest
-move in two weeks" claim in v0. Those require separately defined history and
-metrics; the model cannot supply them. No actual index contribution without
-dated weights. Counted sector ETF participation is labeled as such, not breadth
-of index constituents or exchanges.
+A run keeps four clocks apart, because mixing them up caused real bugs:
 
-## Synthesis and rendering contract
+| Clock | What it is | What it decides |
+|---|---|---|
+| Run start | When the run began (`collection_started_at`, "Generated UTC") | The session, the date and the collection windows |
+| Observation window | Each request's own span, ending when its response arrives | The latest trade a response can report |
+| Evidence cutoff | When collection finished (`run.target_time`) | Ages (live, delayed, stale); nothing may be observed after it |
+| Session cutoff | The exchange's regular-session close | What a print can stand for: anything later is after-hours |
 
-Ask the model for `market-brief.narrative.v0` JSON: banner interpretation,
-executive summary, section paragraphs, selected attention IDs, and up to three
-watches. Each paragraph has evidence IDs, a claim class, uncertainty, and an
-alternative explanation where causality is proposed. A watch has condition,
-observable confirmation, and contradiction; it is never an order instruction.
+The evidence cutoff used to be the run's start. A trade that happened during the few seconds of collection then looked
+like it came from the future and was silently dropped, which hit the busiest tickers hardest (NVDA had no current
+print on 25 of 35 in-session pages in the week of 5 October). That's why the cutoff is now the end of collection and
+why nothing is dropped without a reason.
 
-Observation rows and Cuttingboard status are rendered directly from validated
-evidence. The model may reference values but cannot replace these rows. Reject
-unknown IDs, invalid JSON, nonfinite numbers, unexpected fields, and unsupported
-numeric references. Citation existence does not prove entailment: human spot
-checking remains necessary, especially for causal language. Do not claim an
-automatic validator can establish narrative truth.
+## Calculations
 
-One synthesis call is the normal path. On invalid output, save a short error and
-an explicitly labeled evidence-only diagnostic; do not publish it as a successful
-AI brief or recursively ask models to repair one another. HTML escapes all source
-and model text, uses inline CSS/system fonts, and contains no active remote
-scripts, tracking, or remote images. Markdown and HTML share the same facts and
-source references. Preserve readable sign, unit, source, and age at narrow widths.
+All of it is ordinary arithmetic in versioned code, so it's easy to check:
 
-## Local persistence and later increments
+- Daily return `100 × (C[t] / C[t−1] − 1)`, the last five kept; a 20-session return (needs 21 closes).
+- Relative spread: an instrument's 20-session return minus its benchmark's, in percentage points (sectors against SPY,
+  large caps against QQQ, silver and miners against gold). It's not a factor model, and the benchmark overlaps its
+  constituents.
+- Distance from the 50-day average, and a 50-day cross only when yesterday's and today's signs actually differ.
+- Treasury changes in whole basis points; 2s10s and 5s30s spreads as long minus short; and a named curve move
+  (bear steepener, parallel shift and so on) from an ordered rule table in `curve.py` (`curve-move.v2`). The model
+  never names the curve move itself.
+- Inflation compensation is the nominal yield minus the real yield, in whole basis points, and only when both curves
+  share a date. The page calls it that, never "expected inflation".
+- Comparisons across runs are keyed by identity. The same value seen again is `no_new_observation`, a missing one is
+  `unavailable`, an incompatible one is `not_comparable`, and only a genuinely new observation is `changed`.
 
-Use ignored `runs/<session>/<checkpoint>-<UTC timestamp>/` folders holding
-evidence.json, narrative.json, metadata.json, brief.md, and brief.html. Metadata
-includes model/version, prompt hash, source/config IDs, hashes, validation result,
-elapsed time, and previous brief ID. Secrets and private reasoning traces are
-never retained. Update the local latest-success pointer atomically only after
-validation; retain partial diagnostics separately. Retries get new IDs.
+Rates are never coloured on the page. Rising yields aren't good or bad, and colour would suggest they are.
 
-Cache permitted daily bars, normalized observations, and brief summaries locally;
-do not commit real data by default. Initial retention: 65 daily bars per symbol
-and 30 days of normalized run evidence/reports, or the source's shorter permitted
-retention. Raw responses are ephemeral. Do not prune automatically in v0; document
-a later manual cleanup command rather than introducing a background job.
+## Synthesis
+
+Only `PREMARKET` and `OPEN_30M` call the model. Each builds an `analyst_context.json`: the admitted rows the model may
+cite (one copy of each fact), the deterministic comparisons, the structured prior state (open watches with their
+criteria, relationships, the closing character), the day's events and the output schema. No prior prose goes in.
+The context is saved exactly as sent and hashed, so any synthesis can be replayed offline without paying again.
+
+Budgets come from `config/editions.json`. PREMARKET uses the `rich` profile. OPEN_30M has used the `opening` profile
+since W43: the full evidence record, but only the comparisons that changed. Both are capped at a 64,000-byte context
+and 7,000 output tokens. Those caps are hard exposure limits, not targets. A smaller `light` profile is still defined
+and tested, but nothing uses it. The prompt has an 11,000-byte ceiling.
+
+There's exactly one request per synthesis. The model is Opus 5.5 through OpenRouter, pinned to Anthropic's endpoints,
+with structured output. If OpenRouter says the primary has no available endpoint at all (a routing failure, before
+anything is billed), one call goes to the fallback model. Nothing else retries: not a timeout, not a bad answer, not a
+5xx. There's no repair conversation either. The provider-enforced schema is kept inside the size Anthropic's grammar
+compiler has accepted (it rejected a slightly larger one once), and every bound is enforced again locally.
+
+## Validation
+
+Validation is code, and it fails closed. The answer must parse against the narrative schema
+(`market-brief.narrative.v2`), and then:
+
+- every evidence reference has to exist in the admitted evidence **and** in the context the model was shown;
+- numbers appear only as placeholders that resolve to rows the record cites; any other digit in the prose is
+  rejected, apart from a few fixed labels such as `10Y`, `2s10s` or `50-day`;
+- a "change" can cite only the two observations of the comparison it names;
+- attention items have to be admitted deterministic triggers;
+- the take and the attention reasons can't use trade language (buy, sell, entry, target, sizing, order).
+
+One narrow repair is allowed: if the model cites a comparison by its id where operand rows belong, and both operands
+were supplied, the id is rewritten to those two rows before validation. That's logged and kept with the original
+response.
+
+Passing validation shows the citations exist. It doesn't prove the prose is right, and I still read it.
+
+**When validation fails.** Nothing that failed is ever published as analysis. What the reader sees depends on whether
+there's an accepted analysis to fall back on:
+
+- **A rejected `PREMARKET`** publishes nothing. The page stays on the last accepted brief, which is yesterday's close.
+- **A rejected `OPEN_30M`** (or a failure after its request was sent, or a context over budget) publishes as a refresh:
+  fresh numbers under the premarket analysis, with a note that the opening update wasn't accepted and which analysis
+  stands. The run is recorded as `DEGRADED`, the checkpoint counts as done and it isn't paid for twice.
+
+Either way the paid call is recorded as a call, with its usage and cost, and the response is archived for diagnosis.
+
+## Continuity
+
+Continuity is what lets a refresh at 1 PM know what the morning said, and lets tomorrow's premarket rule on today's
+watches.
+
+All of it is in one file, `runs/continuity/bundle.json` (`market-brief.continuity-bundle.v1`), with every record
+content-hashed. It holds the previous close's handoff, this session's premarket anchor, the latest accepted edition,
+and the **interpretation** slot: the last accepted synthesis of the session, frozen with every row it cited at the
+values the model saw, the prior state it assessed and its watch horizons. A refresh renders that frozen record under
+its own fresh numbers and never writes the slot. Only a new accepted synthesis replaces it.
+
+Code assigns every watch and relationship id; the model proposes new ones and assesses old ones but never names or
+renames them. A watch carries its confirm and changes-it criteria at the values its author saw, so a threshold never
+drifts with newer data. A later synthesis can call it strengthened, weakened or reversed. If it can't be judged
+(missing or incomparable evidence), it's unresolved, and when its horizon passes it expires. At most three watches and
+three relationships carry forward.
+
+The close is a snapshot. Because a provider's official daily bar isn't available until the next day, a close run may
+use clearly labelled PROVISIONAL prints from the last fifteen minutes of the session. It hands the session off only if
+it actually observed the session.
+
+On GitHub the bundle is restored before collection from the newest unexpired artifact of this repository's own
+`schedule.yml` runs on `main`. "Own" is checked by repository id, because a fork's pull request can run a modified
+workflow and upload an artifact with the same name. A run whose only failure was in publishing still counts, because
+the bundle upload happens only after everything before it succeeded. If no bundle is eligible, the run cold-starts and
+says so on the page. If restoring fails partway, the run stops before collecting, because a cold bundle would
+otherwise overwrite good state. Artifacts expire after thirty days, so this is short-term operational memory, not
+long-term storage.
+
+## Accounting: attempts and receipts
+
+Two small records exist only for bookkeeping. Nothing restores, admits or renders them.
+
+- **Paid attempts.** Immediately before a production synthesis sends its request, it writes
+  `runs/attempts/<session>-<checkpoint>.json`; no record, no request. The workflow uploads it whatever happens next.
+  Before paying, the scheduler looks for a local record or an uploaded one and skips if it finds either. If it can't
+  check, it doesn't pay. A manual rerun of a paid checkpoint is refused unless dispatched with `repay`.
+- **Receipts** (`market-brief.receipt.v1`, since W43). Every checkpoint run writes one as its last step: each stage's
+  outcome, the publish commit, validation result, the paid call's model, tokens and cost, and a single outcome class
+  (`published`, `published_degraded`, `refused_stale_data`, `synthesis_rejected`, `push_failed`, `deploy_failed`,
+  `skipped` and so on). They're kept for ninety days. A receipt records what GitHub said happened. Whether a reader
+  actually saw the page is checked separately.
 
 ## Global Equity Proxies
 
-One optional line under the clocks shows five US-listed country ETFs: EWY (Korea), EWJ (Japan), EWT (Taiwan), EWH
-(Hong Kong) and EWG (Germany). Each shows its current print against its previous US close, with the US session date.
+One collapsed line under the clocks shows five US-listed country ETFs (EWY, EWJ, EWT, EWH, EWG) against their previous
+US close. They're proxies, not the foreign indices: dollar-priced funds trading in US hours, carrying currency moves.
+No free source I could find allowed public display of the native indices. The line costs one snapshot request, uses
+the same freshness rules, sits outside the evidence and the model's context, and fails quietly. An optional static
+baseline (`config/glance_baseline.json`, built with `python -m market_brief glance-baseline --from-file closes.csv`)
+bolds a move larger than 95% of the fund's daily moves; without it nothing is bolded.
 
-**What they are.** Proxies, not the foreign indices: funds priced in US dollars during US hours, carrying currency
-moves. They do not report the latest foreign sessions. No free source permits public display of the native indices
-(2026-10-13), so the owner chose these.
+## The coordinator experiment (not in production)
 
-**Collection.** One IEX snapshot request per LIVE run, on the existing Alpaca integration (same host and keys). The
-existing freshness rules (`normalize_observation`) apply: stale, future and after-hours prints show as "—", with the
-reason in the expanded view. The snapshot's own response time is its cutoff.
+The weak spots in the runtime above are all about where authority lives. Payment dedupe depends on artifact listings
+and a concurrency group, continuity depends on artifact retention and GitHub's run history, and the reader page is a
+commit to `main`. They work, but they're spread across GitHub features that weren't designed for this.
 
-**Isolation.** Code lives in `src/market_brief/glance.py`. It is display only: not in the packet, so evidence,
-continuity and the analyst's context are unchanged. Any failure is a quiet "unavailable" line. Rendering falls back to
-the edition without the line.
+The experiment is a Cloudflare coordinator: one Worker with one SQLite-backed Durable Object that would be the single
+authority for execution claims, payment authorization, accepted continuity and the reader page. A run claims its
+checkpoint, asks permission at the moment it would pay, saves its candidate state and has it accepted in order. The
+protocol, Worker, Python client and tests are on the unmerged branch `feat/coordinator-g1-g2`.
 
-**Highlight (optional).** A static baseline, `config/glance_baseline.json`, holds each fund's sorted absolute daily
-moves (about three years). A move larger than 95% of them is bold. Build it once:
-`python -m market_brief glance-baseline --from-file closes.csv`, with columns `symbol,date,close`. Without the file,
-nothing is marked.
+Where it stands:
 
-## Continuity (v0.1)
+- **G1–G2** (correct claims, payment, ordering, idempotent retries, real process kills, a point-in-time recovery
+  drill): passing locally and on a staging Worker.
+- **G3** (shadow equivalence): completed production runs are replayed out of band into an isolated coordinator, and
+  it has to make exactly the same decisions, with byte-identical continuity and pages, for five consecutive sessions.
+  One session has replayed cleanly. The five-session window hasn't started.
+- **Production:** the client is off by default and no production run talks to it. There's no production environment
+  for it. Deploying the newer staging build, running the replay window, merging, and moving any authority over are
+  each separate decisions I haven't made yet.
 
-Every observation and derived row carries a stable `identity` (instrument, metric, window,
-benchmark, basis). Comparisons across runs use that identity, never the run-local evidence ID:
-the same measurement observed again is `no_new_observation`, an absent measurement is
-`unavailable`, incompatible units or intraday prints from different sessions are
-`not_comparable`, and only a genuinely new observation of the same identity is `changed`.
+Either way, GitHub stays the home of the code and its history.
 
-Premarket admits only the previous exchange session's accepted `session_handoff.json`
-(calendar-aware across holidays). Intraday and close editions admit this session's premarket
-anchor and the latest accepted edition. Prior state reaches the analyst as structured hypotheses
-(watch criteria, relationship statements, closing character) namespaced `anchor:evidence-id`;
-no prior headline or prose is ever in the prompt, and prior refs can ground only the
-`changes`, `relationships`, and `watch_updates` records.
+## What isn't here
 
-Deterministic code assigns every watch and relationship ID (`watch-<run_id>-<n>`), resolves
-horizons from the exchange calendar (NEXT_BRIEF is the next scheduled checkpoint, only tomorrow
-after the close), computes evaluability (`assessable`, `missing_evidence`, `not_comparable`) from
-the comparisons, and appends the analyst's assessment. A watch without comparable current
-evidence can only be `unresolved`; `reversed` retires it; a passed horizon expires it. At most
-three watches and three relationships carry forward.
-
-A post-close run classifies its closing data: `COMPLETED_SESSION`, `PROVISIONAL_NEAR_CLOSE`
-(labeled), `EARLIER_HISTORY_ONLY`, or `NONE`. Because the provider's completed daily bar is
-admitted only from the next day and the scheduler fires 30–40 minutes late, a CLOSE_1M run may
-admit one labeled `PROVISIONAL` print per instrument: an intraday trade from the final fifteen
-minutes before the exchange close, collected within ninety minutes after it. It is rendered,
-cited, and carried with that status and never presented as an official closing bar. Only the
-first two classifications produce a close handoff; the
-bundle's close pointer and edition pointers are separate, so a premarket never overwrites the
-previous close and a run without session observations leaves the last close untouched.
-
-## Cadence: two syntheses, deterministic refreshes
-
-`schedule.CHECKPOINT_KINDS` is the one statement of the day, and every checkpoint is anchored to
-the exchange session (never to a Pacific wall clock; British Columbia no longer follows New York's
-seasonal offset): `PREMARKET` (NYSE open −30 minutes, rich) and `OPEN_30M` (open +30 minutes,
-the `opening` profile since W43; it was light before) are the only `synthesis` checkpoints and the only checkpoints with an edition profile.
-`OPEN_1M` (open +1 minute) and `HOURLY_1100` … `HOURLY_1500` (exchange-clock hours inside the
-session) are `refresh` checkpoints; `CLOSE_1M` (close +1 minute) is the `close`. Times are displayed
-in Pacific time, so the opening-structure update reads 7:00 AM PT in New York daylight time and
-8:00 AM PT in standard time. A refresh collects, normalizes, derives, compares and
-publishes exactly as a synthesis does, but instead of calling the analyst it admits the bundle's
-`interpretation` slot: the last accepted synthesis of this session, frozen as a hashed continuity
-record (`kind: interpretation`) holding the narrative, every row it cites at the values the
-analyst saw, the prior state it assessed, its resolved watch horizons and its selected triggers.
-The page renders that record under this run's observed record and states both clocks. A refresh
-advances `latest` with a `carried` edition state (fresh snapshots, the carried assessment
-unchanged) and never writes the interpretation slot. Fail-closed rules: a refresh without a
-same-session interpretation or without timestamped current prints publishes nothing; a close
-without any observation from the session publishes nothing and does not hand off; a close without
-an interpretation still hands the observed session off, without a page. Cloudflare wakes one minute
-past each hour 13:00–21:00 UTC plus the :31 candidates, never two wakes within a minute; the Python
-scheduler resolves the checkpoint, skips hourly refreshes at or after an early close, and stays
-idempotent per checkpoint. A synthesis checkpoint is due only within twenty minutes of its scheduled
-minute (`schedule.TOLERANCE_MINUTES`), so the :31 UTC wake that serves the other New York season's
-open +1M (10:31 ET or 8:31 ET here) resolves to SKIP and can never become a second paid attempt at
-the opening-structure update; refreshes and the close keep a forty-five-minute window because a late
-deterministic run costs nothing. The restored continuity bundle is also a completion proof: a wake
-whose checkout predates an earlier run's publish still skips a checkpoint the bundle already records.
-It proves only acceptance, so a paid attempt has its own record: a production synthesis writes
-`runs/attempts/<session>-<checkpoint>.json` immediately before its provider request is sent (no record,
-no request), and the workflow's last, `always()` steps upload it as `market-brief-attempt-<session>-<checkpoint>`
-whatever the synthesis then did. Before a synthesis checkpoint pays, `scheduled()` looks for this
-workspace's record and lists that artifact name (a `schedule.yml` run on `main`, whatever it concluded);
-either one means SKIP, and a listing it cannot read means no request and a failed run. The workflow's one
-concurrency group starts no run before the previous one has finished, uploads included, so a later runner
-inside the window sees the record whenever the attempting runner lived to upload it (a lost runner cannot,
-and is the residual). A run that holds the group without ever starting would hold it indefinitely (2026-09-30,
-#203), so before each dispatch the Worker normal-cancels one never-started Cloudflare wake (no runner, no step) once
-it is the synthesis window old, which it first is at the next wake, when a later checkpoint has superseded it, and
-only while the run before it got a runner within that window; anything it cannot establish leaves every run alone,
-and the next run's log prints the Worker's note (`cloudflare/README.md`). Pages is deployed only when the run's
-checkout holds `main`'s `publish/`, so a duplicate or queue-delayed wake never redeploys an older page. The record is attempt accounting, never
-continuity: nothing admits, restores or renders it. It is keyed by the run's own exchange-calendar date, like
-every acceptance record, so a weekend or holiday run never consumes the next session's checkpoint, and only
-this repository's own runs count (a fork's pull_request run can execute its own edit of the workflow). An
-attempt that bills nothing once the record is written (authentication, rate limit, 5xx, timeout) still
-consumes the checkpoint. Experiment and commissioning runs pay under the owner's hand and are never recorded;
-a manual production dispatch is recorded and, since W43, refused before any request when this checkpoint's paid
-attempt is already recorded, unless it is dispatched with `repay`: the owner's explicit override and recovery.
-A rejected generation's metadata records the call it was: `synthesis.calls`, the route, the requested model
-and, when a response arrived, its usage and cost. A `NEXT_BRIEF` watch horizon resolves to the next synthesis checkpoint,
-the next time an analyst can judge it; refreshes in between only carry it. A watch's criteria carry
-the rows they quote at the values their author saw (`values` on the watch record), so a carried
-criterion never drifts with newer data; a later synthesis may reassess or replace it.
-
-The bundle (`runs/continuity/bundle.json`, schema `market-brief.continuity-bundle.v1`, every
-record content-hashed) is written only by accepted LIVE, non-experiment, non-commissioning runs.
-On Actions it is restored before collection from the newest unexpired artifact of this repository's own
-main-branch run of the schedule workflow and uploaded after acceptance, before the push and the Pages
-deployment. Own means the run's `head_repository` is the `repository` that owns it, by their integer ids (the
-schema marks both required, but a deleted fork's head comes back null, so missing, null or malformed origin
-is not eligible): a fork's pull_request run executes its own edit of the workflow, so name, branch, path and
-conclusion alone would admit its artifact, and the bundle's content hashes are public digests, not
-signatures. R2's attempt lookup applies the same check to its run details. The upload
-step runs only when every earlier step succeeded, so the artifact itself proves acceptance: a run that
-failed only in publication stays eligible, a run that failed earlier uploaded nothing, and a cancelled or
-unfinished run is not eligible. Each run's evidence, context, narrative, and metadata are archived for
-thirty days outside Pages and Git. Missing, stale, corrupt, or foreign state is an explicit cold start
-with its reason in the brief.
-
-No shared storage or writable mount with Cuttingboard. New report writes must
-resolve under this project's local run root, with symlink escapes rejected. The
-optional Cuttingboard collector uses an allowlisted HTTPS GET or an explicitly
-provided snapshot file; no repository path traversal or callback can write back.
-
-
-## Structured synthesis output budgets
-
-`config/editions.json` sets total generation ceilings of 7,000 rich / 4,500 light
-tokens (the `opening` profile OPEN_30M has used since W43 takes the rich ceiling), hard maximum-exposure limits rather than expected usage, and requests `reasoning={effort: "low", exclude: true}`. The configured analyst (Opus 5.5 since 2026-09-27)
-always thinks adaptively: the old 1,024-token request was not a guaranteed reservation.
-[Anthropic's model-specific effort guidance](https://platform.claude.com/docs/en/build-with-claude/effort)
-identifies effort as a behavioral control; only total `max_tokens` is a hard cap.
-Reported reasoning tokens remain billable even when their content is excluded.
-Do not describe a fixed portion of either ceiling as reserved for final JSON.
-
-The schema bounds prose by role (80–360 characters, with a 160-character
-headline), limits citations to four sufficient references per record, and bounds
-identifier lengths. The already-forbidden Cuttingboard narrative array is empty by
-schema as well as semantic validation. The rich word target is still 350–500 across
-ALL prose, including watches and continuity; light targets remain edition-specific.
-Schema character bounds are backstops, not targets or a global word-count constraint.
-No source, evidence row, timestamp, coverage caveat, comparison or prior state is
-removed. Two forms of one contract exist: the local schema with every bound, used
-by `validate_narrative`, and the wire schema from `transport_schema`, fully inlined
-and restricted to Anthropic's documented structured-output subset (types, required,
-enums, `minItems` 0/1, no schema references) with every bound restated as a field
-description. Bounds are enforced after generation; the provider is not relied on
-for them. OpenRouter retains the wire copy in the user message because the earlier
-Azure omission experiment failed banner validation despite strict response_format.
-The isolated CLI receives the wire schema only through `--json-schema`. Both routes
-record the wire schema hash, and compact wire JSON preserves saved evidence/continuity hashes.
-
-`tests/test_synthesis_budget.py` fills all arrays and prose fields with representative
-identifiers: rich is 10,414 compact bytes, light 7,921. Byte/3 estimates occupy about
-50% / 59% of their total ceilings before adaptive reasoning. This is a deterministic
-size regression check, not a native tokenizer or a guarantee for adversarial strings,
-maximum-length identifiers, JSON whitespace, or unbounded adaptive reasoning.
-Normal 350–500-word prose should use substantially less than this stress shape.
-
-A `finish_reason=length` response fails as an output-budget exhaustion before JSON
-parsing or semantic validation, even if response healing produced parseable JSON.
-Sanitized diagnostics retain response ID, resolved model, native finish reason,
-nested numeric token/cost accounting, provider and content bytes. Valid completion
-minus reasoning counts are separately labeled non-reasoning completion tokens;
-they are not a tokenizer measurement of visible content. The documented
-`X-OpenRouter-Metadata: enabled` header requests routing/healing telemetry; only
-allowlisted numeric/boolean healing details are retained. Missing accounting is
-unknown, never zero. Neither reasoning text nor encrypted reasoning is persisted.
-Response-healing stays enabled: OpenRouter documents it as free CPU-side repair,
-not model generation, and it cannot recover max-token truncation.
-
-Per request, maximum requested paid output is 7,000 tokens (rich, opening) or 4,500 (light),
-including hidden reasoning. At an output rate of R dollars per million tokens,
-output exposure is 0.007 * R or 0.0045 * R dollars, plus input charges. There is
-exactly ONE client request, including on timeout, HTTP failure, malformed transport,
-truncation or validation failure; a timeout can follow a billable generation.
-Provider fallback is disabled and parameter support is required. No second model,
-repair call or paid fallback is added. Live verification requires owner authorization;
-see [the investigation and one-call criteria](SYNTHESIS_COST_CONTAINMENT.md).
-
-## Operational hold, 2026-09-10 (lifted 2026-09-11)
-
-*Historical record. The hold was lifted on 2026-09-11 and recurring scheduling has run since; see
-[PROJECT_STATE.md](../PROJECT_STATE.md).*
-
-Cloudflare's live `market-brief-scheduler` cron list was set to `[]` through the
-trigger-only API; deployed code and repository source were not changed. The GitHub
-`schedule.yml` workflow was also disabled to block late wakes while Cron changes
-propagate. Both remain paused pending explicit owner authorization. A single paid
-verification does not authorize restoring recurring scheduling. The report linked
-above records deployment identity, pause evidence, and the one-manual-call procedure.
+No intraday yields (the Treasury curve is the previous business day's official curve, and the page says so), no
+futures, no VIX, no broad breadth, no general news search, no index constituent weights, and no OHLC candles (only
+closes are kept). No trading interface of any kind. Some of these are deferred and some are just out of scope; the
+reasons are in [DECISIONS.md](../DECISIONS.md) and `config/sources.json`.

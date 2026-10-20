@@ -1,27 +1,30 @@
 # Project State
 
-*Purpose, principles and proposed graduation criteria: [docs/PROJECT_CHARTER.md](docs/PROJECT_CHARTER.md). This file
-records what runs and what is next; dated sections below are kept as written, and later sections and
-[DECISIONS.md](DECISIONS.md) supersede earlier ones.*
+*What I'm aiming for and why is in [docs/PROJECT_CHARTER.md](docs/PROJECT_CHARTER.md), and how the system works now
+is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). This file is what's running and what's next. The dated entries
+below are kept as they were written, so a later entry (or [DECISIONS.md](DECISIONS.md)) wins over an earlier one.*
 
 ## Current status (2026-10-19)
 
-- **Production:** the Cloudflare scheduler Worker wakes `schedule.yml`; GitHub Actions collects, synthesizes (PREMARKET
-  and OPEN_30M only, Opus 5.5 through OpenRouter), validates, carries continuity as Actions artifacts and publishes to
-  GitHub Pages. Cuttingboard is not requested by scheduled runs.
-- **W43 (PRs #56–#60, merged 2026-10-17; first live session 2026-10-19):** a rejected opening analysis publishes as a
-  refresh under the standing interpretation, comparison aliases are rewritten before validation, a manual repeat of a
-  paid synthesis needs `repay`, every checkpoint run writes a receipt, OPEN_30M reads the full evidence record (the
-  `opening` profile, replacing light), and Treasury real yields with matched-date inflation compensation join the
-  rates module. The rulings are in DECISIONS.
-- **Coordinator (under evaluation, not in production):** a Cloudflare Durable Object that would hold claims, payment,
-  continuity and the reader page. G1–G2 are built and tested locally and on staging on the unmerged branch
-  `feat/coordinator-g1-g2`; G3 (five sessions of out-of-band shadow replay with identical decisions) is in preparation,
-  with one session replayed as PASS. Production keeps the coordinator off; staging deploys, the replay window, merging
-  and any move of authority each need owner authorization. See ARCHITECTURE, "Runtime today and the coordinator under
-  evaluation".
-- **Not built:** Market Memory and the Week Ahead beyond slice D1 (the analyst model); a unified research dashboard
-  (an idea only).
+**Production.** The Cloudflare Worker wakes `schedule.yml` on the exchange clock. GitHub Actions does everything else:
+it collects, runs the two daily syntheses (PREMARKET and OPEN_30M, Opus 5.5 through OpenRouter), validates, carries
+continuity as Actions artifacts and publishes to GitHub Pages. Scheduled runs don't request Cuttingboard.
+
+**W43** (PRs #56 to #60, merged 2026-10-17, first live session 2026-10-19). A rejected opening update now publishes
+as a refresh under the premarket analysis instead of publishing nothing. A comparison id cited where its two rows
+belong is rewritten before validation. A manual rerun of a paid checkpoint needs `repay`. Every checkpoint run writes
+a receipt. OPEN_30M reads the full evidence record (the `opening` profile, replacing `light`). Treasury real yields and
+matched-date inflation compensation joined the rates module. The rulings are in DECISIONS.
+
+**Coordinator experiment** (not in production). A Cloudflare Durable Object that would hold claims, payment,
+continuity and the reader page. G1 and G2 pass locally and on staging, on the unmerged branch
+`feat/coordinator-g1-g2`. G3, five consecutive sessions of out-of-band replay with identical decisions, is being
+prepared: one session has replayed cleanly. Production keeps it off. Deploying the newer build to staging, running
+the replay window, merging and moving any authority each need my go-ahead. See ARCHITECTURE, "The coordinator
+experiment".
+
+**Not built.** Market Memory and the Week Ahead beyond slice D1 (moving the analyst to Opus 5.5), and any shared
+dashboard across the projects.
 
 ## Now (v0.1 onward, chronological)
 
@@ -59,7 +62,7 @@ snapshots, the carried assessment labeled with the checkpoint that interpreted i
 clocks and the scheduler's next update (since the Rates & Reading Pass: Prices, Analysis, Next). The standalone rich close
 edition and the AFTERNOON synthesis are gone; `schedule.CHECKPOINT_KINDS` is the one statement of the day
 and `config/editions.json` profiles only the two synthesis checkpoints. Presentation polish landed with it:
-one table clock with per-row exceptions, the three-word absence vocabulary (`no print`, `—`, `not
+one table clock with per-row exceptions, the three-word absence vocabulary (`no print`, a dash, `not
 collected`), unsigned neutral zero, `vs SPY` / `vs QQQ` headers with the window in the caption, the Basis
 line moved to Technical details, a readable `--faint`, sentence-case watch metadata, "What changed" with an
 anchor sub-caption, verdict-first relationship bullets, trigger tags on flagged names, figure clocks only

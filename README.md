@@ -1,115 +1,109 @@
 # Market Brief
 
-Market Brief is an evidence-first market briefing desk: deterministic market data first, model-assisted interpretation
-second. It publishes one rich premarket brief and one interpretive update after the open each trading day, then keeps
-the page fresh with deterministic updates that never call a model or rewrite the accepted analysis.
+Market Brief started as a market note I read before and during the US trading day. It's grown into the centre of a
+small research system I've been building around it, but the note is still the heart of it. It collects market data
+on a schedule and asks a model to interpret it only twice a day: once before the open and once thirty minutes after.
+For the rest of the session the page keeps refreshing its numbers without calling the model again, and the morning's
+analysis stays exactly as it was accepted.
 
-It is also the base of a small personal market research program. The [project charter](docs/PROJECT_CHARTER.md) sets
-out its principles, its sibling components and the targets it is maturing toward.
+It started because I was putting together the same picture by hand every morning: the indices, the sectors, a handful
+of big names, the Treasury curve, metals, and whatever BLS was releasing that day. Gathering it was tedious. The part I
+actually enjoyed was working out what had changed and whether yesterday's read still held up. So I wanted something
+that did the gathering reliably and was honest about the interpreting.
 
-## The problem it solves
+Most of the engineering goes into keeping those two jobs apart. External sources (Alpaca, the U.S. Treasury, BLS, the
+Federal Reserve) supply the observations. My code admits them, timestamps them, and does every calculation on top of
+them: returns, spreads, curve moves, comparisons with the last session. The model gets a prepared, size-limited record
+and writes the interpretation, but it can't put a figure of its own into the text, and every claim has to cite
+evidence that's actually in the record it was given. Code does that checking too. If the answer fails, it's never
+published as analysis. Before the open that means the last good page stays up. After the open the page still
+updates, but with fresh numbers under the morning's analysis and a plain note that the new one wasn't accepted. It's
+happened a few times in production, and I'd rather lose an update than publish one I can't check.
 
-Following a market session well means assembling indices, sectors, important names, rates, metals and scheduled
-releases, then asking what changed and what it means. Collection is repetitive and error-prone; interpretation needs
-attention. A generic AI market summary does both badly: it mixes facts with invented numbers, cannot say when a value
-was observed, and rewrites yesterday's story without saying whether yesterday's reading held up.
+It isn't a trading system. It doesn't tell me what to buy, and nothing in it can place an order. It's a reading tool.
+Lately it's also become the base for a few side projects I'm using to learn more about options, rates and how market
+data actually behaves. The [project charter](docs/PROJECT_CHARTER.md) explains where that's going.
 
-Market Brief automates collection, keeps every fact traceable to a timestamped source, and spends model judgment only
-where it adds something. It is a reader's note meant to be read in a few minutes, not a trading signal.
+## A trading day
 
-## How a trading day runs
-
-| Checkpoint | Market timing | Role | Analyst calls |
+| Checkpoint | When | What it does | Model calls |
 |---|---|---|---:|
-| `PREMARKET` | NYSE open −30m | Flagship rich brief: prior close, overnight/premarket context, continuity, watches | 1 |
-| `OPEN_1M` | Open +1m | Deterministic opening-print refresh | 0 |
-| `OPEN_30M` | Open +30m | Opening-structure interpretation over the full evidence record; final routine synthesis of the day | 1 |
-| `HOURLY_1100` … `HOURLY_1500` | Exchange-clock hours inside the session | Deterministic numbers/state refresh under the frozen interpretation | 0 |
-| `CLOSE_1M` | Close +1m | Deterministic close snapshot and continuity handoff | 0 |
+| `PREMARKET` | 30 minutes before the NYSE open | The main read: prior close, overnight and premarket moves, rates, today's releases, open questions from yesterday | 1 |
+| `OPEN_1M` | 1 minute after the open | First opening prints, under the premarket analysis | 0 |
+| `OPEN_30M` | 30 minutes after the open | The opening-structure update: what the open did to the premarket read | 1 |
+| `HOURLY_1100` … `HOURLY_1500` | On the hour, exchange time | Fresh numbers under the opening analysis | 0 |
+| `CLOSE_1M` | 1 minute after the close | Closing snapshot, and the handoff to tomorrow's premarket | 0 |
 
-Checkpoint timing is anchored to the NYSE session, including holidays and early closes. Pacific time is presentation
-only.
+Times follow the NYSE calendar, including holidays and early closes. The page shows them in Pacific time because
+that's where I read it.
 
-**Why only two paid syntheses.** Interpretation is valuable at two moments: before the open, when the overnight
-picture is set, and thirty minutes in, once the open has shown its structure. After that, most intraday movement
-updates numbers rather than meaning. Refreshing the numbers deterministically keeps the page current at no model cost,
-keeps the day's reading stable instead of drifting with every print, and leaves one clear record of what was believed
-and when. A second paid call for the same checkpoint is refused unless the owner explicitly asks for it.
+### Why only two model calls
 
-Every page names three clocks: **Prices** (the latest current equity print in its tables, or `prior close <date>`),
-**Analysis** (when the interpretation was made, and by which edition) and **Next** (the next scheduled update, which
-reads `Update due … has not published` once it is overdue). Each row keeps its own observation clock. Treasury rates
-carry their own date: they are the official daily par curve from the previous business day, never an intraday quote.
+There are really only two moments in a day when fresh interpretation earns its cost. One is before the open, when the
+overnight picture is set. The other is half an hour in, once the open has shown whether that picture survived. After
+that, most of what happens intraday changes the numbers more than the meaning.
 
-## Evidence → synthesis → continuity → publication
+So the rest of the day is deterministic. Each refresh collects, calculates and renders exactly as a synthesis does,
+but instead of calling the model it carries the accepted analysis forward, frozen, with the values the analyst
+actually saw. That keeps the page current for free, stops the story drifting with every print, and leaves one clear
+record of what the analysis said and when. Each checkpoint gets at most one paid attempt, even across separate
+runners, unless I explicitly ask to pay again.
+
+Because the numbers and the analysis can be different ages, every page shows three clocks: **Prices** (the latest
+print in the tables), **Analysis** (when the interpretation was written, and by which edition) and **Next** (the next
+scheduled update, which turns into "Update due … has not published" in the browser if it's late). Treasury rates carry
+their own date, since the official par curve is published once a day for the previous business day.
+
+## How it runs
 
 ```text
-  Cloudflare Worker (cron) ── wakes ──▶ GitHub Actions: schedule.yml (one run at a time)
+  Cloudflare Worker (cron)  ──wakes──▶  GitHub Actions: schedule.yml, one run at a time
                                               │
-     restore the last accepted continuity bundle (Actions artifact, hash-checked)
+     resolve the checkpoint from the exchange calendar (or skip)
+     restore the last accepted continuity bundle (an Actions artifact, hash-checked)
                                               │
-     collect: Alpaca IEX prints and daily bars · Treasury nominal and real curves ·
-              BLS calendar and release values · Federal Reserve releases
+     collect:  Alpaca IEX prints and daily bars · Treasury nominal and real curves ·
+               BLS calendar and release values · Federal Reserve press releases
                                               │
-     deterministic evidence: normalized rows, returns, spreads, curve moves, comparisons
+     evidence: admitted rows with observation times, returns, spreads, curve moves, comparisons
                                               │
-          ┌───────────── synthesis checkpoint? ─────────────┐
-          │ yes                                             │ no
-  bounded analyst context → one model call            carry the frozen
-  → fail-closed validation                            accepted interpretation
-          └──────────────────────┬──────────────────────────┘
-                                 │
-     deterministic renderer → upload continuity → commit publish/index.html → GitHub Pages
-                                 │
-     receipt: each stage's outcome and any paid call, recorded whatever happened
+            ┌──────────── synthesis checkpoint? ────────────┐
+            │ yes                                           │ no
+   bounded analyst context → one model call          carry the frozen
+   → validation by code                              accepted analysis
+            └─────────────────────┬─────────────────────────┘
+                                  │
+     render HTML → upload continuity → commit publish/index.html → GitHub Pages
+     write a receipt for the run: each stage's outcome and any paid call
 ```
 
-The analyst (Opus 5.5 through OpenRouter, pinned to Anthropic) receives a bounded, versioned context: the admitted
-evidence, prior structured state and the output schema. It never fetches anything. Its answer is accepted only if every
-reference it cites exists in admitted evidence and in the context it was shown. A rejected answer never replaces the
-last accepted page; a rejected opening update publishes as a refresh under the premarket analysis and says so.
+Cloudflare is only the clock here. GitHub Actions runs everything, the continuity bundle lives as an Actions artifact,
+and the page is served from GitHub Pages. The analyst is Opus 5.5 through OpenRouter, pinned to Anthropic's own
+endpoints, with one fallback model used only when the primary has no endpoint available.
 
-Continuity is one chain: previous close → premarket → opening structure → intraday refreshes → close handoff. Prior
-state is carried as structured records (watches with their criteria, relationships, closing character), never as old
-prose. See [Architecture](docs/ARCHITECTURE.md) for the full contract.
+Continuity is a single chain: previous close → premarket → opening structure → refreshes → close handoff. What carries
+forward is structured state (watches with their criteria, relationships, the closing character of the session), never
+the old prose. A watch says what would confirm it and what would change it, and a later synthesis has to rule on it.
 
-## What makes it different from a generated market summary
+The [architecture overview](docs/ARCHITECTURE.md) goes through all of this properly.
 
-- **Deterministic facts.** Prices, returns, spreads, yields, windows and comparisons are calculated by code from
-  named sources. The model may cite them through placeholders; it cannot write a number of its own.
-- **Visible provenance.** Every claim opens to the rows behind it, with their source and observation clock.
-- **Honest absence.** A missing value reads `no print`, `—` or `not collected` with a reason, never zero or silence.
-- **Fail closed.** Missing continuity, invalid evidence or a rejected synthesis does not overwrite the last accepted
-  brief.
-- **Frozen analysis.** A refresh cannot quietly rewrite the interpretation that was paid for and accepted.
-- **Testable watches.** Each watch states what would confirm it and what would change it, at the values its author
-  saw, and a later synthesis judges it.
-- **No trading authority.** The brief explains and tracks market structure. It never grants permission to trade.
+## What I'm experimenting with
 
-## The wider research program
+I'd like this to need less of GitHub at runtime over time, while keeping GitHub for the code and its history. The
+experiment right now is a Cloudflare coordinator: one Durable Object that would hold execution claims, payment
+authorization, accepted continuity and the reader page in one place, instead of spreading them across workflow
+artifacts and a concurrency group. It's built and tested locally and on a staging Worker, and I'm replaying real
+production runs against it to see whether it would have made exactly the same decisions. It has no production role,
+and it won't get one until that replay has held for five straight sessions and I've decided to move anything over.
 
-Market Brief is one of four independent components. Each has its own repository or directory, schedule, storage and
-development lifecycle; none runs inside another.
+There are also three separate projects nearby: Market Lab (hypothesis testing against its own observations), Options
+Observatory (option chains, volatility and liquidity) and [Cuttingboard](https://github.com/dwats250/cuttingboard)
+(lightweight market-structure observations). They run on their own. None of them depends on this one, and this one
+doesn't depend on them. The [charter](docs/PROJECT_CHARTER.md) describes how they fit together.
 
-- **Market Brief** (here): ongoing interpretation of the session and structured watches.
-- **Market Lab** (separate, private): experimentation and hypothesis testing against its own observations.
-- **Options Observatory** (local, unpublished): option prices, volatility, Greeks, liquidity and extended-hours
-  market structure.
-- **[Cuttingboard](https://github.com/dwats250/cuttingboard)**: lightweight, independent market-structure
-  observations. Market Brief can quote its published contract as optional, read-only context; scheduled production
-  does not request it ([boundary](docs/CUTTINGBOARD_BOUNDARY.md)).
+## Setup
 
-**Direction.** The longer-term aim is a self-hostable research workspace that needs little maintenance: GitHub kept
-for the code and its history, and runtime duties moved off it only where evidence shows that is safer. One step is
-being explored now: a Cloudflare coordinator that would hold execution claims, payment authorization, accepted
-continuity and the reader page in one place. It is built and tested on staging only; production still runs entirely
-on GitHub Actions and Pages, with Cloudflare only waking the workflow. A unified dashboard across the components is an
-idea, not a plan: if built, it would read their published outputs and decide nothing. See the
-[charter](docs/PROJECT_CHARTER.md) for status and graduation criteria.
-
-## Setup and development
-
-Python 3.11+.
+Python 3.11 or later.
 
 ```bash
 python -m venv .venv
@@ -118,44 +112,46 @@ python -m venv .venv
 .venv/bin/ruff check src tests
 ```
 
-Commands:
+The quickest way to see a brief is a replay, which uses fictional fixture data, no network and no model:
 
 ```bash
-python -m market_brief premarket --replay                     # fictional replay evidence, no network, no model
-python -m market_brief premarket --replay --continuity PATH   # replay against another bundle
-python -m market_brief schedule --checkpoint PREMARKET
-python -m market_brief continuity-restore --from-file bundle.json
-python -m market_brief publish
-python -m market_brief open
+python -m market_brief premarket --replay                     # render a fictional premarket brief
+python -m market_brief premarket --replay --continuity PATH   # replay against another continuity bundle
+python -m market_brief open                                   # open the latest render
 ```
 
-Replay output is explicitly labeled and cannot masquerade as live production. Live runs need Alpaca and OpenRouter
-keys (and `BLS_CONTACT` for BLS requests); scheduled production supplies them as GitHub Actions secrets.
+Replay pages are labelled SAMPLE and can't be published as live. Live runs need Alpaca and OpenRouter keys, plus
+`BLS_CONTACT` for BLS requests (their firewall turns away anonymous clients). In production these are GitHub Actions
+secrets. Other commands:
 
-## Output and evidence
+```bash
+python -m market_brief schedule --checkpoint PREMARKET            # what the workflow runs
+python -m market_brief continuity-restore --from-file bundle.json
+python -m market_brief publish                                    # copy the latest page to publish/index.html
+```
 
-The latest rendered brief is written to `output/latest.html`. `python -m market_brief publish` copies only the
-human-facing HTML to `publish/index.html` for static hosting.
+## What a run leaves behind
 
-Each run under `runs/<session>/<mode>-<checkpoint>-<time>-<id>/` records the evidence and metadata needed to explain
-what happened. Synthesis runs also save `analyst_context.json` and `narrative.json`; deterministic updates record the
-interpretation they carried instead of generating another. Accepted production continuity lives in
-`runs/continuity/bundle.json` and is restored from and uploaded to GitHub Actions artifacts. A production synthesis
-writes `runs/attempts/<session>-<checkpoint>.json` before its provider request is sent, so the scheduler never pays
-twice for a checkpoint.
+The latest render goes to `output/latest.html`, and `publish` copies only that page to `publish/index.html`.
 
-Rendered fictional examples live in `examples/editions/`. They are replays of the fixture at each checkpoint's clock
-(13:00, 13:31, 14:01, 17:01 and 20:03 UTC on 2026-09-08), each in a fresh run root, with SPY −0.53%, QQQ −0.61%,
-XLI +0.40% and GLD −0.20% prints injected at the checkpoint's clock (19:59:58 for the close) on every edition but the
-premarket, and `--full-packet` for the opening structure; the run-id suffix is the only thing that changes between
-regenerations.
+Each run writes a folder under `runs/<session>/<mode>-<checkpoint>-<time>-<id>/` with the evidence and metadata needed
+to explain what happened. A synthesis also saves the exact `analyst_context.json` the model read and the
+`narrative.json` it returned; a refresh records which analysis it carried. Accepted continuity is
+`runs/continuity/bundle.json`. A production synthesis writes `runs/attempts/<session>-<checkpoint>.json` before it
+sends the request, which is how a second runner knows not to pay again.
 
-## Documentation
+Rendered fictional examples are in `examples/editions/`. They replay the fixture at each checkpoint's clock (13:00,
+13:31, 14:01, 17:01 and 20:03 UTC on 2026-09-08), each in a fresh run root, with SPY −0.53%, QQQ −0.61%, XLI +0.40%
+and GLD −0.20% prints injected at the checkpoint's clock (19:59:58 for the close) on every edition but the premarket,
+and `--full-packet` for the opening structure. Only the run-id suffix changes between regenerations.
 
-- [Project charter](docs/PROJECT_CHARTER.md): purpose, principles, ecosystem, graduation criteria
-- [Project state](PROJECT_STATE.md): what is running now and what comes next
-- [Decisions](DECISIONS.md): the engineering decisions and the reasons for them
-- [Architecture](docs/ARCHITECTURE.md): evidence, freshness, continuity, cadence and synthesis contracts
-- [Product](docs/PRODUCT.md) · [Brief schema](docs/BRIEF_SCHEMA.md) · [Visual language](docs/VISUAL_LANGUAGE.md)
-- [Data sources](docs/DATA_SOURCES.md) · [Cuttingboard boundary](docs/CUTTINGBOARD_BOUNDARY.md)
-- [Cloudflare scheduler](cloudflare/README.md) · [Synthesis cost containment](docs/SYNTHESIS_COST_CONTAINMENT.md)
+## More reading
+
+- [Project charter](docs/PROJECT_CHARTER.md): what I'm aiming for, the principles, the nearby projects
+- [Architecture](docs/ARCHITECTURE.md): how the current system works
+- [Project state](PROJECT_STATE.md): what's running now and what's next, with dated history
+- [Decisions](DECISIONS.md): each engineering decision and why it was made
+- [Brief schema](docs/BRIEF_SCHEMA.md) · [Visual language](docs/VISUAL_LANGUAGE.md) · [Product](docs/PRODUCT.md)
+- [Data sources](docs/DATA_SOURCES.md) · [Cuttingboard boundary](docs/CUTTINGBOARD_BOUNDARY.md) ·
+  [Cloudflare scheduler](cloudflare/README.md)
+- [History](docs/history/2026-09-07-v0-architecture.md): the original September architecture document

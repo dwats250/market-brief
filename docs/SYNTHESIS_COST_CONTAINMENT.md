@@ -1,6 +1,9 @@
-# Production synthesis cost containment — 2026-09-10
+# Production synthesis cost containment, 2026-09-10
 
-## Operational pause — remains in force
+*Historical record. The pause described here was lifted on 2026-09-11, and scheduling has run since. Current cost
+rules are in [ARCHITECTURE.md](ARCHITECTURE.md) and [DECISIONS.md](../DECISIONS.md).*
+
+## Operational pause (in force when written; lifted 2026-09-11)
 
 Before investigating the urgent addendum, the four live Cron Triggers on
 `market-brief-scheduler` were removed using Cloudflare's trigger-only
@@ -304,7 +307,7 @@ claims, never missing support; the prompt says so explicitly.
 | Local contract maximum prose characters, rich | 62,660 | 6,180 (enforced after generation) |
 | Maximum-shape rich JSON, representative IDs | 70,979 bytes | 10,414 bytes |
 | Maximum-shape light JSON, representative IDs | 60,161 bytes | 7,921 bytes |
-| New rich cold-start stress shape, no updates/changes | — | 8,595 bytes |
+| New rich cold-start stress shape, no updates/changes | n/a | 8,595 bytes |
 | Rich useful prose target | 350–500 words | 350–500 across all prose |
 | Reasoning control | Requested 1,024; not a native cap on Fable 5.1 | `effort: low`; route translation undocumented, verified by the first call's reasoning accounting |
 | Total completion ceiling, rich / light (hard exposure limit) | 5,524 / 3,524 | 7,000 / 4,500 |

@@ -44,7 +44,17 @@ from .curve import (
     rates,
     spread_rows,
 )
-from .evidence import ET, PLACEHOLDER, ROOT, USABLE, evidence_catalog, read_json, timestamp
+from .evidence import (
+    ET,
+    INTRADAY_YIELD_METRICS,
+    PLACEHOLDER,
+    ROOT,
+    USABLE,
+    equity_print,
+    evidence_catalog,
+    read_json,
+    timestamp,
+)
 from .metrics import rank_by_spread
 from .schedule import CHECKPOINT_KINDS, checkpoint_kind, next_checkpoint, session_relation
 
@@ -809,6 +819,40 @@ def rates_module(packet, facts, catalog):
                            lead_part=next((p for p in parts if p["maturity"] == "10Y"), parts[0] if parts else None)))
 
 
+INTRADAY_TITLE = "Intraday yields"
+INTRADAY_CAPTION = "Cboe yield indices · delayed · not the official par curve"
+# The 2Y position is kept and always reads `no print`: Cboe serves no 2-year index and nothing fills it.
+INTRADAY_TENORS = ("13W", "2Y", "5Y", "10Y", "30Y")
+
+
+def intraday_yields(packet):
+    """The Cboe intraday block under the par-curve module, from this run's rows only: each level with its whole-bp
+    change against the index's prior close; a level the intraday rules withheld (older than twenty minutes, after the
+    close) reads `no print` and its change is blank. Nothing here reaches `curve.py`, the spreads, the move or the
+    chart. None when the run holds no Cboe quote."""
+    rows = [r for r in packet["observations"] if r.get("metric") in INTRADAY_YIELD_METRICS]
+    if not rows:
+        return None
+    usable = [r for r in rows if r["status"] in USABLE and r.get("value") is not None]
+    result = []
+    for tenor in INTRADAY_TENORS:
+        level = next((r for r in usable if r["topic"] == f"US {tenor}" and r["metric"] == "intraday yield"), None)
+        change = next((r for r in usable if r["topic"] == f"US {tenor}" and r["metric"] == "intraday yield change"
+                       and level and r["observed_at"] == level["observed_at"]), None)
+        result.append(dict(maturity=tenor, level=cell(level, absent=NO_PRINT), change=cell(change, absent=""),
+                           ids=[r["id"] for r in (level, change) if r]))
+    if usable:
+        clock = pacific_time(max(usable, key=lambda r: timestamp(r["observed_at"]))["observed_at"])
+    else:
+        dated = [r for r in rows if r.get("observed_at")]
+        latest = pacific_time(max(dated, key=lambda r: timestamp(r["observed_at"]))["observed_at"]) if dated else ""
+        why = ("older than 20 minutes" if any(r["status"] == "STALE" for r in rows) else "after the close"
+               if any("after-hours" in (r.get("reason") or "") for r in rows) else "not admitted")
+        clock = f"last print {latest} · {why}, not shown" if latest else f"{why}, not shown"
+    return dict(title=INTRADAY_TITLE, caption=INTRADAY_CAPTION, clock=clock, rows=result,
+                proof_ids=[ident for row in result for ident in row["ids"]])
+
+
 def release_cards(rows, events, sources=()):
     """One card per admitted release, from this run's rows (the observed clock): its official time, family, reference
     month and values, and the IDs of the calendar events it has now happened for, which leave What matters next."""
@@ -983,10 +1027,12 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         facts.append({**row, "display": formatted(row), "direction": direction(row),
                       "measure": measure_label(row, session), "observed_label": observed_label(row["observed_at"])})
     history_symbols = {h["symbol"] for h in packet["history"]}
-    equity = [r for r in facts if r["topic"] in history_symbols or r["frequency"] == "intraday"]
+    equity = [r for r in facts if r["topic"] in history_symbols or equity_print(r)]
     treasuries = [r for r in facts if r["topic"].startswith("US ") and r["metric"] in RATE_METRICS]
     releases = [r for r in facts if r["frequency"] == "release"]
-    other_macro = [r for r in facts if r not in equity and r not in treasuries and r not in releases]
+    other_macro = [r for r in facts if r not in equity and r not in treasuries and r not in releases
+                   and r["metric"] not in INTRADAY_YIELD_METRICS]
+    intraday = intraday_yields(packet)
     # After a close whose daily bar is not yet published, the retained daily return is two
     # sessions old relative to the completed session and must not pose as today.
     daily_today = not packet.get("history_lag")
@@ -1334,7 +1380,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                       lookback={s: v for s, v in packet.get("lookback", {}).items() if v["r20"] != "available"}),
         macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]], releases=cards,
                    yields=yields, yields_asof=module["asof"], curve=module["curve"], facts=other_macro,
-                   yields_proof=refs(module["proof_ids"], catalog),
+                   yields_proof=refs(module["proof_ids"], catalog), intraday_yields=intraday,
+                   intraday_proof=refs(intraday["proof_ids"], catalog) if intraday else [],
                    facts_proof=refs([row["id"] for row in other_macro], catalog)),
         sectors=dict(rows=sector_rows, change_label=sector_change, asof=sector_asof, proof=proof(sector_rows),
                      spread_label="20-session return spread vs SPY, strongest to weakest"),
@@ -1442,7 +1489,7 @@ def markdown(view):
     lines.append("")
     mac = view["macro"]
     cross = view["cross_asset"]
-    if mac["paragraphs"] or mac["releases"] or mac["curve"] or mac["facts"] or cross["rows"]:
+    if mac["paragraphs"] or mac["releases"] or mac["curve"] or mac["intraday_yields"] or mac["facts"] or cross["rows"]:
         lines += ["## Macro & rates", ""]
         for card in mac["releases"]:
             lines += [f"**ECONOMIC RELEASE** · {card['time']} · {esc(card['title'])} · {esc(card['period'])}", ""]
@@ -1479,6 +1526,13 @@ def markdown(view):
             for note in curve["notes"]:
                 lines += ["", esc(note)]
             lines.append("")
+        if mac["intraday_yields"]:
+            block = mac["intraday_yields"]
+            lines += [f"**{block['title'].upper()}** · {esc(block['clock'])}", "", "| Maturity | Yield | Change |",
+                      "|---|---:|---:|"]
+            lines += [f"| {row['maturity']} | {row['level']['display']} | {row['change']['display']} |"
+                      for row in block["rows"]]
+            lines += ["", esc(block["caption"]), ""]
         for p in mac["paragraphs"]:
             lines += [para(p), ""]
         if mac["yields"]:

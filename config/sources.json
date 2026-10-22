@@ -9,6 +9,7 @@
     "Federal Reserve press-release RSS",
     "Alpaca historical daily bars (IEX, split-adjusted)",
     "Alpaca IEX current snapshots",
+    "Cboe Treasury yield indices, delayed quotes (13W/5Y/10Y/30Y; no 2Y index): display-only intraday block, never the par curve or analyst evidence",
     "sourced local input",
     "optional published Cuttingboard contract"
   ],

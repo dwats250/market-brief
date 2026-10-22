@@ -30,6 +30,14 @@ NEAR_CLOSE_GRACE = timedelta(minutes=90)
 # and that month's previous and revised estimates. Only release rows carry these fields.
 RELEASE_FIELDS = ("reference_period", "revised_month", "revised_from", "revised_to")
 REFERENCE_MONTH = re.compile(r"\d{4}-(?:0[1-9]|1[0-2])")
+# Cboe's delayed Treasury yield indices (`collect.cboe_yields`) are intraday rows but not equity prints: they never make
+# a page current, a close provisional or a refresh publishable, and never reach the curve (their metrics are their own).
+INTRADAY_YIELD_METRICS = {"intraday yield", "intraday yield change"}
+
+
+def equity_print(row):
+    """A timestamped current equity print: an intraday row that is not a Cboe yield-index quote."""
+    return row.get("frequency") == "intraday" and row.get("metric") not in INTRADAY_YIELD_METRICS
 
 
 def timestamp(value):
@@ -306,14 +314,19 @@ def finalize_coverage(packet):
     missing += [f"{s['name']}: {s['reason'] or s['status']}" for s in packet["sources"]
                 if s["status"] != "AVAILABLE"]
     missing += [f"{r['topic']}: {r['reason']}" for r in packet["observations"]
-                if r["status"] not in USABLE]
+                if r["status"] not in USABLE and r["metric"] not in INTRADAY_YIELD_METRICS]
+    withheld = {}
+    for r in packet["observations"]:  # one line per reason for the Cboe quotes, not one per row
+        if r["status"] not in USABLE and r["metric"] == "intraday yield":
+            withheld.setdefault(r["reason"], []).append(r["topic"].removeprefix("US "))
+    missing += [f"Cboe intraday yields {', '.join(tenors)}: {reason}" for reason, tenors in withheld.items()]
     missing += packet.get("history_errors", [])
     if packet.get("history_lag"):
         lag = packet["history_lag"]
         missing.append(f"Daily history through {lag['history_through']}: the completed "
                        f"{lag['completed_session']} daily bar was not yet published, so 20D, "
                        "relative, and 50D context lag one session")
-    intraday = [r for r in packet["observations"] if r["frequency"] == "intraday" and r["status"] in USABLE]
+    intraday = [r for r in packet["observations"] if equity_print(r) and r["status"] in USABLE]
     has_current = bool(intraday)
     provisional = bool(intraday) and all(r["status"] == "PROVISIONAL" for r in intraday)
     if provisional:

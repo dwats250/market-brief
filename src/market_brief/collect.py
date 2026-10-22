@@ -39,7 +39,13 @@ CB = "https://dwats250.github.io/cuttingboard/contract.json"
 ALPACA_DATA = "https://data.alpaca.markets"
 ALPACA_BARS = f"{ALPACA_DATA}/v2/stocks/bars"
 ALPACA_SNAPSHOTS = f"{ALPACA_DATA}/v2/stocks/snapshots"
-HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA)}
+# Cboe's delayed Treasury yield indices (price = yield x 10): a separate intraday lane, never the official par curve.
+# cdn.cboe.com answers with a cross-host 307 to cdn-api.cboe.com, which `SameHostRedirect` refuses, so the target is
+# requested directly. Cboe serves no 2-year index (`_2YY` is 403): 2Y is never filled from anything.
+CBOE = "https://cdn-api.cboe.com/api/global/delayed_quotes/quotes"
+CBOE_YIELDS = (("13W", "IRX"), ("5Y", "FVX"), ("10Y", "TNX"), ("30Y", "TYX"))
+CBOE_BASELINE = "Cboe yield index, delayed quote, not the official par curve"
+HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA, CBOE)}
 ALPACA_UNIVERSE = (
     "SPY", "QQQ", "XLK", "XLF", "XLE", "XLI", "XLY", "XLP", "XLV", "XLU",
     "XLB", "XLRE", "XLC", "GLD", "GDX", "AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG",
@@ -57,10 +63,12 @@ class SourceError(ValueError):
 
 def allowed(url):
     """An allowlisted host over HTTPS; on BLS, only the calendar file, the monthly List View pages and the two
-    current-edition release pages."""
+    current-edition release pages; on Cboe, only the four yield-index quotes."""
     parts = urlsplit(url)
     if parts.scheme != "https" or parts.hostname not in HOSTS:
         return False
+    if parts.hostname == urlsplit(CBOE).hostname:
+        return url in {cboe_yield_url(symbol) for _, symbol in CBOE_YIELDS}
     return (parts.hostname != urlsplit(BLS).hostname or url == BLS or url in RELEASE_PAGES
             or bool(BLS_LIST.fullmatch(url)))
 
@@ -127,6 +135,58 @@ def xml_root(text):
     if "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper():
         raise SourceError("XML declarations rejected")
     return ET.fromstring(text)
+
+
+def cboe_yield_url(symbol):
+    return f"{CBOE}/_{symbol}.json"
+
+
+def cboe_yield_rows(quotes, retrieved):
+    """Level and change rows from Cboe's delayed index quotes `{symbol: payload}`: level = price / 10 in % yield, change
+    in whole bp against the index's prior close ((price - prior) x 10), clocked by Cboe's own last trade time in UTC.
+    Their metrics are not the curve's, so `curve.rates` never reads them."""
+    rows = []
+    for label, symbol in CBOE_YIELDS:
+        if symbol not in quotes:
+            continue
+        data = quotes[symbol]["data"]
+        price, prior = data["current_price"], data["prev_day_close"]
+        if not (finite_number(price) and finite_number(prior)) or data.get("symbol") != f"^{symbol}":
+            raise SourceError(f"{label}: malformed index quote")
+        common = dict(topic=f"US {label}", frequency="intraday",
+                      observed_at=timestamp(data["last_trade_time"]).isoformat(), retrieved_at=retrieved.isoformat(),
+                      source_id="cboe-yields", status="AVAILABLE", reason="")
+        ident = f"cboe-yield-{label.lower()}"
+        rows.append(dict(common, id=ident, metric="intraday yield", value=round(price / 10, 4), unit="% yield",
+                         baseline=CBOE_BASELINE))
+        rows.append(dict(common, id=f"{ident}-change", metric="intraday yield change",
+                         value=round((price - prior) * 10), unit="bp", baseline="vs prior index close"))
+    return rows
+
+
+def cboe_yields(now, deadline, fetcher):
+    """The four index quotes, after the Treasury feeds and inside the same deadline. One failed index costs its tenor
+    (the source reads Degraded and names it); none at all is Unavailable. A display lane only: `llm_allowed` is false,
+    so the rows never reach the analyst, the validator or continuity."""
+    record = source("cboe-yields", "Cboe Treasury yield indices", "quote", CBOE, now, expected_freshness="LIVE",
+                    provider="Cboe Global Markets", data_delay="delayed index quote")
+    record["llm_allowed"] = False
+    quotes, failed = {}, []
+    for label, symbol in CBOE_YIELDS:
+        try:
+            quotes[symbol] = json.loads(fetcher(cboe_yield_url(symbol), deadline))
+            cboe_yield_rows({symbol: quotes[symbol]}, now)
+        except (SourceError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            quotes.pop(symbol, None)
+            failed.append(f"{label} ({failure(exc)})")
+    retrieved = datetime.now(timezone.utc)
+    record["retrieved_at"] = retrieved.isoformat()
+    rows = cboe_yield_rows(quotes, retrieved)
+    if not rows:
+        record.update(status="UNAVAILABLE", reason="no index quote: " + ", ".join(failed))
+    elif failed:
+        record.update(status="DEGRADED", reason="no index quote for " + ", ".join(failed))
+    return record, rows
 
 
 def treasury_url(year):
@@ -799,6 +859,9 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
         except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:
             record.update(status="UNAVAILABLE", reason=failure(exc))
         raw["sources"].append(record)
+    record, rows = cboe_yields(now, deadline, fetcher)
+    raw["sources"].append(record)
+    raw["observations"].extend(rows)
     for ident, name, url in (
         ("bea", "BEA calendar", "https://www.bea.gov/news/schedule"),
         ("fed-calendar", "Fed calendar", "https://www.federalreserve.gov/newsevents/calendar.htm"),

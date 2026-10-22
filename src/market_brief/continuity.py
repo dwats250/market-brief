@@ -15,7 +15,17 @@ from pathlib import Path
 import exchange_calendars as xcals
 
 from .curve import SPREAD_CHANGE, SPREAD_LEVEL, stale_movement
-from .evidence import ET, PLACEHOLDER, USABLE, digest, evidence_catalog, model_packet, read_json, timestamp
+from .evidence import (
+    ET,
+    PLACEHOLDER,
+    USABLE,
+    digest,
+    equity_print,
+    evidence_catalog,
+    model_packet,
+    read_json,
+    timestamp,
+)
 from .schedule import CHECKPOINT_TITLES, VANCOUVER, next_session_date, next_synthesis
 
 CONTINUITY_SCHEMA = "market-brief.continuity.v1"
@@ -590,7 +600,7 @@ def closing_data(packet):
     daily = next((r for r in packet["derived"] if r["id"] == "SPY-daily" and r["status"] in USABLE), None)
     if daily and daily["observed_at"] == session_date and not packet.get("history_lag"):
         return dict(status="COMPLETED_SESSION", reason="completed-session daily bars admitted")
-    prints = [r for r in packet["observations"] if r.get("frequency") == "intraday" and r["status"] in USABLE
+    prints = [r for r in packet["observations"] if equity_print(r) and r["status"] in USABLE
               and _observation_date(r) == session_date]
     if prints:
         latest = max(r["observed_at"] for r in prints)

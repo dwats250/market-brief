@@ -34,7 +34,7 @@ from .continuity import (
     session_handoff,
     write_bundle,
 )
-from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_json, timestamp
+from .evidence import ROOT, digest, equity_print, finalize_coverage, normalize_packet, read_json, timestamp
 from .metrics import annotate_magnitude, derive
 from .receipts import build_receipt, write_receipt
 from .render import render
@@ -287,7 +287,7 @@ def record_rejection(folder, metadata, exc):
 def missing_prints_reason(packet):
     """Why a refresh has no current print, from the packet: none returned, or how many came back too old and when the
     newest was stamped (2026-10-15 HOURLY_1400: the feed stopped at 12:56 ET, an hour before the run)."""
-    prints = [r for r in packet["observations"] if r.get("frequency") == "intraday"]
+    prints = [r for r in packet["observations"] if equity_print(r)]
     if not prints:
         return ("refresh has no timestamped current prints: the price source returned none; "
                 "the last accepted page stands")

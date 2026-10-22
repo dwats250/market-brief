@@ -361,7 +361,11 @@ def run(args):
     finalize_coverage(packet)
     # Make unavailable, unimplemented categories explicit in every packet/report.
     config = read_json(ROOT / "config/sources.json")
-    packet["coverage"]["limitations"].append("Not automated: " + ", ".join(config["deferred"]))
+    deferred = config["deferred"]
+    if any(s["id"] == "cboe-rates" for s in packet["sources"]):
+        # Stage 1 collects the delayed 5Y/10Y/30Y and 13-week indices; a live 2-year yield is still not collected.
+        deferred = ["intraday 2Y yield" if item == "live yields" else item for item in deferred]
+    packet["coverage"]["limitations"].append("Not automated: " + ", ".join(deferred))
     checkpoint_data = checkpoint_session(target, checkpoint)
     packet["run"].update(collection_started_at=started.isoformat(), actual_started_at=started.isoformat(),
                          collection_completed_at=datetime.now(timezone.utc).isoformat(),

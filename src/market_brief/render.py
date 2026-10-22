@@ -809,6 +809,42 @@ def rates_module(packet, facts, catalog):
                            lead_part=next((p for p in parts if p["maturity"] == "10Y"), parts[0] if parts else None)))
 
 
+INTRADAY_CAPTION = "Cboe yield indices · 15-minute delayed · not the par curve"
+INTRADAY_NOTES = dict(
+    no_2y="No 2Y: Cboe has no 2-year yield index here, and none is derived.",
+    dated="No fresh quote at this update: each level is the latest observation at its own time, and no move from "
+          "the prior close is implied.",
+    record="The official Treasury par curve remains the record; these are delayed index quotes.")
+
+
+def intraday_rates_lane(rows, catalog):
+    """Stage 1's intraday rates lane, apart from the official curve: the 5Y/10Y/30Y Cboe yield indices with their
+    change from Cboe's prior close (only for a fresh quote), the 5s30s spread when two fresh quotes pair, the 13-week
+    bill as a separate short-rate reference, and explicit notes for the missing 2Y and for stale quotes."""
+    if not rows:
+        return None
+    by = {row["id"]: row for row in rows}
+
+    def line(tenor):
+        level, change = by.get(f"cboe-{tenor.lower()}"), by.get(f"cboe-{tenor.lower()}-change")
+        dated = bool(level and level.get("freshness") == "DATED")
+        return dict(maturity=tenor, level=cell(level, absent=NO_PRINT), change=cell(None if dated else change),
+                    clock=(f"latest {observed_label(level['observed_at'])}" if dated
+                           else compact_clock(level["observed_at"])) if level else "",
+                    dated=dated)
+    tenors = [line(tenor) for tenor in ("5Y", "10Y", "30Y")]
+    short = line("13W")
+    spread, spread_change = by.get("cboe-5s30s"), by.get("cboe-5s30s-change")
+    notes = [INTRADAY_NOTES["no_2y"]]
+    if any(item["dated"] for item in (*tenors, short)):
+        notes.append(INTRADAY_NOTES["dated"])
+    notes.append(INTRADAY_NOTES["record"])
+    return dict(caption=INTRADAY_CAPTION, tenors=tenors, short=None if short["level"]["absent"] else short,
+                spread=dict(level=formatted(spread), change=formatted(spread_change) if spread_change else "")
+                if spread else None,
+                notes=notes, proof=[ident for ident in by if ident in catalog])
+
+
 def release_cards(rows, events, sources=()):
     """One card per admitted release, from this run's rows (the observed clock): its official time, family, reference
     month and values, and the IDs of the calendar events it has now happened for, which leave What matters next."""
@@ -986,7 +1022,9 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     equity = [r for r in facts if r["topic"] in history_symbols or r["frequency"] == "intraday"]
     treasuries = [r for r in facts if r["topic"].startswith("US ") and r["metric"] in RATE_METRICS]
     releases = [r for r in facts if r["frequency"] == "release"]
-    other_macro = [r for r in facts if r not in equity and r not in treasuries and r not in releases]
+    intraday_rates = [r for r in facts if r["source_id"] == "cboe-rates"]
+    other_macro = [r for r in facts if r not in equity and r not in treasuries and r not in releases
+                   and r not in intraday_rates]
     # After a close whose daily bar is not yet published, the retained daily return is two
     # sessions old relative to the completed session and must not pose as today.
     daily_today = not packet.get("history_lag")
@@ -1174,7 +1212,11 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     # Market sections this edition could not fill. Cuttingboard is optional context, not market coverage,
     # so its absence is stated in Technical details rather than listed here.
     omitted = []
-    rates_present = bool(yields or module["curve"] or other_macro or narrative["sections"]["macro"] or cards)
+    lane = intraday_rates_lane(intraday_rates, catalog)
+    if lane:
+        lane["proof"] = refs(lane["proof"], catalog)
+    rates_present = bool(yields or module["curve"] or other_macro or intraday_rates or narrative["sections"]["macro"]
+                         or cards)
     if not rates_present:
         # Metals share the section; when they still render, only the rates half is missing.
         omitted.append("Treasury rates" if metal_rows else "Macro & rates")
@@ -1335,7 +1377,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]], releases=cards,
                    yields=yields, yields_asof=module["asof"], curve=module["curve"], facts=other_macro,
                    yields_proof=refs(module["proof_ids"], catalog),
-                   facts_proof=refs([row["id"] for row in other_macro], catalog)),
+                   facts_proof=refs([row["id"] for row in other_macro], catalog), intraday=lane),
         sectors=dict(rows=sector_rows, change_label=sector_change, asof=sector_asof, proof=proof(sector_rows),
                      spread_label="20-session return spread vs SPY, strongest to weakest"),
         cross_asset=dict(rows=metal_rows, change_label=metal_change, asof=metal_asof, proof=proof(metal_rows),
@@ -1442,7 +1484,7 @@ def markdown(view):
     lines.append("")
     mac = view["macro"]
     cross = view["cross_asset"]
-    if mac["paragraphs"] or mac["releases"] or mac["curve"] or mac["facts"] or cross["rows"]:
+    if mac["paragraphs"] or mac["releases"] or mac["curve"] or mac.get("intraday") or mac["facts"] or cross["rows"]:
         lines += ["## Macro & rates", ""]
         for card in mac["releases"]:
             lines += [f"**ECONOMIC RELEASE** · {card['time']} · {esc(card['title'])} · {esc(card['period'])}", ""]
@@ -1478,6 +1520,23 @@ def markdown(view):
                 lines += ["", esc(curve["parts_caveat"])]
             for note in curve["notes"]:
                 lines += ["", esc(note)]
+            lines.append("")
+        if mac.get("intraday"):
+            lane = mac["intraday"]
+            lines += [f"**INTRADAY YIELDS** · {esc(lane['caption'])}", "",
+                      "| Maturity | Yield | vs prior close | Quote |", "|---|---:|---:|---|"]
+            lines += [f"| {row['maturity']} | {row['level']['display']} | {row['change']['display']} | "
+                      f"{esc(row['clock'])} |" for row in lane["tenors"]]
+            lines.append("")
+            if lane["spread"]:
+                lines.append(f"- 5s30s · {lane['spread']['level']}"
+                             + (f" · {lane['spread']['change']} vs prior close" if lane["spread"]["change"] else ""))
+            if lane["short"]:
+                short = lane["short"]
+                lines.append(f"- 13-week bill (short-rate reference) · {short['level']['display']}"
+                             + ("" if short["change"]["absent"] else f" · {short['change']['display']}")
+                             + f" · {esc(short['clock'])}")
+            lines += [line for note in lane["notes"] for line in ("", esc(note))]
             lines.append("")
         for p in mac["paragraphs"]:
             lines += [para(p), ""]

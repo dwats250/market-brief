@@ -1,6 +1,7 @@
 {
   "version": "v1",
   "real_yields": true,
+  "intraday_yields": false,
   "wired": [
     "Treasury daily yield XML",
     "Treasury daily real (TIPS) yield XML",
@@ -9,6 +10,7 @@
     "Federal Reserve press-release RSS",
     "Alpaca historical daily bars (IEX, split-adjusted)",
     "Alpaca IEX current snapshots",
+    "Cboe delayed 13-week, 5-, 10- and 30-year Treasury yield index quotes, only when intraday_yields is true",
     "sourced local input",
     "optional published Cuttingboard contract"
   ],

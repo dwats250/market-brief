@@ -30,6 +30,10 @@ NEAR_CLOSE_GRACE = timedelta(minutes=90)
 # and that month's previous and revised estimates. Only release rows carry these fields.
 RELEASE_FIELDS = ("reference_period", "revised_month", "revised_from", "revised_to")
 REFERENCE_MONTH = re.compile(r"\d{4}-(?:0[1-9]|1[0-2])")
+# A delayed index quote (Cboe, fifteen minutes) is current for this long; older, its level stands as the latest dated
+# observation and nothing measured from it (a change from the prior close, a spread) is admitted.
+DELAYED_FRESH = timedelta(minutes=35)
+DELAYED_MOVES = {"intraday yield change", "intraday spread", "intraday spread change"}
 
 
 def timestamp(value):
@@ -142,6 +146,20 @@ def normalize_observation(raw, now, near_close=None, session_close=None):
                 return reject("STALE", "intraday observation older than twenty minutes")
             row["status"] = "DELAYED" if age > 60 else "AVAILABLE"
             row["freshness"] = "DELAYED" if age > 60 else "LIVE"
+        elif row["frequency"] == "delayed":
+            observed = timestamp(row["observed_at"])
+            if observed > now or observed > retrieved:
+                return reject("INVALID", "future observation")
+            if (observed.astimezone(ET).date() == now.astimezone(ET).date()
+                    and now - observed <= DELAYED_FRESH):
+                row["status"], row["freshness"] = "DELAYED", "DELAYED"
+            elif row["metric"] in DELAYED_MOVES:
+                return reject("STALE", "no fresh delayed quote; no change or spread is implied")
+            elif now - observed > timedelta(days=7):
+                return reject("STALE", "delayed quote older than seven calendar days")
+            else:
+                row["status"], row["freshness"] = "BACKGROUND", "DATED"
+                row["reason"] = "latest delayed quote; no fresh quote at collection"
         elif row["frequency"] == "release":
             # Dated by its official publication time and current only in the session that published it, so no earlier
             # release can ever read as today's.

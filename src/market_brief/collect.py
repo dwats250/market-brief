@@ -25,6 +25,7 @@ from .actuals import (
     read_release,
     release_rows,
 )
+from .curve import SPREAD_UNIT
 from .evidence import ET as EASTERN
 from .evidence import ROOT, read_json, timestamp
 from .schedule import next_session_date
@@ -39,7 +40,12 @@ CB = "https://dwats250.github.io/cuttingboard/contract.json"
 ALPACA_DATA = "https://data.alpaca.markets"
 ALPACA_BARS = f"{ALPACA_DATA}/v2/stocks/bars"
 ALPACA_SNAPSHOTS = f"{ALPACA_DATA}/v2/stocks/snapshots"
-HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA)}
+# Cboe's delayed index quotes (Stage 1 intraday rates): the 13-week, 5-, 10- and 30-year Treasury yield indices, one
+# URL each and nothing else on the host. Collected only when `"intraday_yields": true` in config/sources.json.
+CBOE_QUOTES = "https://cdn.cboe.com/api/global/delayed_quotes/quotes"
+CBOE_YIELD_INDICES = (("13W", "IRX"), ("5Y", "FVX"), ("10Y", "TNX"), ("30Y", "TYX"))
+CBOE_URLS = {f"{CBOE_QUOTES}/_{symbol}.json" for _, symbol in CBOE_YIELD_INDICES}
+HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA, CBOE_QUOTES)}
 ALPACA_UNIVERSE = (
     "SPY", "QQQ", "XLK", "XLF", "XLE", "XLI", "XLY", "XLP", "XLV", "XLU",
     "XLB", "XLRE", "XLC", "GLD", "GDX", "AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG",
@@ -61,6 +67,8 @@ def allowed(url):
     parts = urlsplit(url)
     if parts.scheme != "https" or parts.hostname not in HOSTS:
         return False
+    if parts.hostname == urlsplit(CBOE_QUOTES).hostname:
+        return url in CBOE_URLS
     return (parts.hostname != urlsplit(BLS).hostname or url == BLS or url in RELEASE_PAGES
             or bool(BLS_LIST.fullmatch(url)))
 
@@ -212,6 +220,147 @@ def real_yield_rows(entries, retrieved):
                 baseline=f"daily observation {rows[-2][0]}", frequency="daily", observed_at=day,
                 retrieved_at=retrieved.isoformat(), source_id="treasury-real", status="BACKGROUND",
                 reason=""))
+    return result
+
+
+def intraday_yields_on(path=SOURCES_CONFIG):
+    """Stage 1's switch (`"intraday_yields": true` in config/sources.json). Off unless explicitly true: Cboe's delayed
+    index quotes are collected and published only once their redistribution on this public page is confirmed."""
+    return read_json(path).get("intraday_yields", False) is True
+
+
+# A Cboe quote is fifteen minutes delayed; one more than the page's own twenty-minute print rule old is no longer
+# current. Spreads pair two indices only when their quotes are this close together.
+CBOE_FRESH = timedelta(minutes=35)
+SPREAD_TOLERANCE = timedelta(minutes=5)
+# The index scale is never assumed: a level is read as percent or as percent times ten only when that reading lies
+# within this distance of the same tenor's latest official par yield, and every checkable tenor must agree.
+SCALE_CHECK = 0.75
+SCALES = (1, 10)
+CBOE_BASELINE = ("Cboe {name} Treasury yield index ({symbol}), 15-minute delayed quote; not the official Treasury "
+                 "par curve")
+CBOE_NAMES = {"13W": "13-week", "5Y": "5-year", "10Y": "10-year", "30Y": "30-year"}
+
+
+def cboe_quote(text, symbol):
+    """`(level, prior close, observed at)` from one delayed-quote document. The last trade time is New York time
+    (`discussions` evidence E1 in market-review); a missing or nonfinite field rejects the quote."""
+    payload = json.loads(text, parse_constant=lambda _: None)
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict) or str(data.get("symbol", "")).lstrip("_^") != symbol:
+        raise SourceError(f"{symbol}: unexpected quote document")
+    level, prior = data.get("current_price"), data.get("prev_day_close")
+    if not finite_number(level) or level <= 0:
+        raise SourceError(f"{symbol}: no quote level")
+    if not isinstance(data.get("last_trade_time"), str):
+        raise SourceError(f"{symbol}: no quote time")
+    observed = datetime.fromisoformat(data["last_trade_time"])
+    observed = (observed.replace(tzinfo=EASTERN) if observed.tzinfo is None else observed).astimezone(timezone.utc)
+    return float(level), float(prior) if finite_number(prior) and prior > 0 else None, observed
+
+
+def index_scale(quotes, par):
+    """The one divisor (1 or 10) that puts every checkable index within `SCALE_CHECK` of its par yield."""
+    checks = [(quotes[tenor][0], par[tenor]) for tenor in quotes if par.get(tenor) is not None]
+    if not checks:
+        raise SourceError("no official par yield to check the index scale against")
+    fits = [scale for scale in SCALES if all(abs(level / scale - yield_) <= SCALE_CHECK for level, yield_ in checks)]
+    if len(fits) != 1:
+        raise SourceError("index scale not confirmed against the official par curve")
+    return fits[0]
+
+
+def cboe_yield_rows(quotes, par, now, retrieved):
+    """Rows for the intraday rates lane: each index's level; and, only for a quote fresh at collection (today's
+    session, within `CBOE_FRESH`), its change from Cboe's prior close in whole bp. The 5s30s spread is formed only
+    from two fresh quotes within `SPREAD_TOLERANCE` of each other. There is no 2-year index and none is derived.
+
+    `quotes` maps tenor to `(level, prior close, observed at)`; `par` maps tenor to the latest official par yield
+    (percent) used only to confirm the index scale. Returns `(rows, stale tenors)`."""
+    scale = index_scale(quotes, par)
+    rows, fresh, stale = [], {}, []
+    today = now.astimezone(EASTERN).date()
+    for tenor, symbol in CBOE_YIELD_INDICES:
+        if tenor not in quotes:
+            continue
+        level, prior, observed = quotes[tenor]
+        value = round(level / scale, 3)
+        if not 0 < value < 25:
+            raise SourceError(f"{symbol}: implausible yield after scaling")
+        common = dict(topic=f"US {tenor} intraday", unit="% yield", frequency="delayed",
+                      observed_at=observed.isoformat(), retrieved_at=retrieved.isoformat(), source_id="cboe-rates",
+                      status="DELAYED", reason="",
+                      baseline=CBOE_BASELINE.format(name=CBOE_NAMES[tenor], symbol=symbol))
+        ident = f"cboe-{tenor.lower()}"
+        rows.append(dict(common, id=ident, metric="intraday yield index", value=value))
+        if observed.astimezone(EASTERN).date() == today and timedelta(0) <= now - observed <= CBOE_FRESH:
+            fresh[tenor] = (value, observed)
+            if prior is not None:
+                change = round(round((level - prior) / scale * 100, 6))  # whole bp, without float noise
+                rows.append(dict(common, id=f"{ident}-change", metric="intraday yield change", value=change,
+                                 unit="bp", baseline=f"Cboe {symbol} change from its prior close; 15-minute delayed"))
+                fresh[tenor] = (value, observed, change)
+        else:
+            stale.append(tenor)
+    if "5Y" in fresh and "30Y" in fresh:
+        (short, t_short, *c_short), (long, t_long, *c_long) = fresh["5Y"], fresh["30Y"]
+        if abs(t_long - t_short) <= SPREAD_TOLERANCE:
+            later = max(t_long, t_short).isoformat()
+            common = dict(topic="US 5s30s intraday", frequency="delayed", observed_at=later,
+                          retrieved_at=retrieved.isoformat(), source_id="cboe-rates", status="DELAYED", reason="")
+            rows.append(dict(common, id="cboe-5s30s", metric="intraday spread", value=round((long - short) * 100),
+                             unit=SPREAD_UNIT, baseline=f"Cboe TYX minus FVX, quotes within "
+                             f"{SPREAD_TOLERANCE.seconds // 60} minutes; not the par-curve 5s30s"))
+            if c_short and c_long:
+                rows.append(dict(common, id="cboe-5s30s-change", metric="intraday spread change",
+                                 value=c_long[0] - c_short[0], unit="bp",
+                                 baseline="Cboe TYX change minus FVX change from their prior closes"))
+    return rows, stale
+
+
+def cboe_collection(now, deadline, fetcher, par):
+    """The Cboe rates source record and rows. A quote that fails leaves its tenor out and the source Degraded; a stale
+    quote keeps its level, labeled with its own time, and the source says no change is implied."""
+    record = source("cboe-rates", "Cboe Treasury yield indices · delayed", "quote", CBOE_QUOTES, now,
+                    expected_freshness="DELAYED", provider="Cboe delayed quotes", data_delay="15 minutes")
+    # A page lane only: the analyst is not shown these rows until the owner admits them.
+    record["llm_allowed"] = False
+    quotes, failed = {}, []
+    for tenor, symbol in CBOE_YIELD_INDICES:
+        try:
+            quotes[tenor] = cboe_quote(fetcher(f"{CBOE_QUOTES}/_{symbol}.json", deadline), symbol)
+        except (SourceError, ValueError, TypeError, UnicodeError, OverflowError) as exc:
+            failed.append(f"{tenor} ({failure(exc)})")
+    retrieved = datetime.now(timezone.utc)
+    record["retrieved_at"] = retrieved.isoformat()
+    if not quotes:
+        record.update(status="UNAVAILABLE", reason="no index quote: " + "; ".join(failed))
+        return record, []
+    try:
+        rows, stale = cboe_yield_rows(quotes, par, now, retrieved)
+    except SourceError as exc:
+        record.update(status="UNAVAILABLE", reason=failure(exc))
+        return record, []
+    notes = [*(["no quote for " + ", ".join(failed)] if failed else []),
+             *([f"no fresh quote for {', '.join(stale)}; latest observation shown, no change implied"]
+               if stale else [])]
+    if notes:
+        record.update(status="DEGRADED", reason="; ".join(notes))
+    return record, rows
+
+
+def par_reference(entries):
+    """The latest official par yields, by Cboe tenor, that confirm the index scale (13 weeks against 3 months)."""
+    rows = sorted(dict(entries).items())
+    if not rows:
+        return {}
+    fields = rows[-1][1]
+    result = {}
+    for tenor, field in (("13W", "BC_3MONTH"), ("5Y", "BC_5YEAR"), ("10Y", "BC_10YEAR"), ("30Y", "BC_30YEAR")):
+        try:
+            result[tenor] = float(fields[field]) if fields.get(field) else None
+        except ValueError:
+            result[tenor] = None
     return result
 
 
@@ -762,6 +911,7 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
         jobs.pop()
         raw["sources"].append(source("treasury-real", "US Treasury real yields", "economic_series", TREASURY, now,
                                      "UNAVAILABLE", "switched off in config/sources.json"))
+    par = {}
     for ident, name, kind, url, request_url in jobs:
         record = source(ident, name, kind, url, now)
         fallback = ""
@@ -787,6 +937,7 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
             record["retrieved_at"] = retrieved.isoformat()
             if ident == "treasury":
                 raw["observations"].extend(yield_rows(entries, retrieved))
+                par = par_reference(entries)
             elif ident == "treasury-real":
                 if fallback and not entries:
                     raise SourceError(f"no prior daily real yield observation; {fallback}")
@@ -799,6 +950,11 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
         except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:
             record.update(status="UNAVAILABLE", reason=failure(exc))
         raw["sources"].append(record)
+    if intraday_yields_on():
+        # After the official curve, which confirms the index scale; switched off, nothing is collected or listed.
+        record, rows = cboe_collection(now, deadline, fetcher, par)
+        raw["sources"].append(record)
+        raw["observations"].extend(rows)
     for ident, name, url in (
         ("bea", "BEA calendar", "https://www.bea.gov/news/schedule"),
         ("fed-calendar", "Fed calendar", "https://www.federalreserve.gov/newsevents/calendar.htm"),

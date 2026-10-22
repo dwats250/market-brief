@@ -256,6 +256,20 @@ Known fixture artefact, not a defect: the test harness reuses one narrative at e
 `carried_setup` shows three distinct watch records (Friday close, Tuesday premarket, Tuesday opening) with identical
 wording; production's analyst writes new watches only for questions not already carried.
 
+**Intraday rates lane, Stage 1 (2026-10-22, branch `claude/clever-maxwell-6xjfom`; owner-approved Stage 1 after the
+2026-10-22 review, where a ≈ 19 bp Treasury rally reached no page).** Off by default (`"intraday_yields": false` in
+config/sources.json): switched off, nothing is fetched, listed or rendered, so production pages are unchanged. Switched on,
+`cboe-rates` fetches Cboe's delayed 13-week, 5-, 10- and 30-year Treasury yield index quotes (four allowlisted URLs) after
+the official curve. The index scale (percent or percent × 10) is never assumed: it must put every checkable tenor within
+0.75 pp of the latest official par yield, or the source is Unavailable. A quote is fresh only on today's session and within
+35 minutes (fifteen-minute delay plus the page's twenty-minute rule); only a fresh quote carries a change from Cboe's prior
+close (whole bp), and the 5s30s spread is formed only from two fresh quotes within five minutes. A stale quote keeps its
+level as the latest dated observation and the page says no move is implied. No 2Y is collected or derived; the 13-week bill
+is a separate short-rate reference. The lane renders in Macro & rates under the official curve, which it never alters,
+and the analyst does not see it (`llm_allowed` false) until the owner admits it. Before switching on: confirm Cboe's terms
+permit republishing delayed index values on this public page, and probe the quotes at the PREMARKET minute from the
+runner (this container's proxy refuses cdn.cboe.com, so availability there is unverified).
+
 ## Next
 
 Readability pass: after merge, on the first live page check the before → after lines under each verdict against

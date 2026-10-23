@@ -173,3 +173,46 @@ def test_alpaca_collect_applies_the_exchange_prior_session():
     [row] = result["observations"]
     assert round(row["value"], 4) == round(100 * (758.0 / 762.1 - 1), 4)
     assert "prior close 2026-10-22" in row["reason"]
+
+
+# --- review points (PR #62): session date at the UTC midnight boundary; snapshot bars dated off the history -----
+
+def test_after_hours_trade_past_utc_midnight_keeps_its_eastern_session():
+    """8:30 PM ET on Oct 22 is 00:30 UTC on Oct 23. The trade is still Oct 22's; its prior close is Oct 21's bar,
+    even though the history (filtered by UTC date) already carries Oct 22's completed bar."""
+    now = datetime(2026, 10, 23, 1, 33, tzinfo=UTC)                        # 9:33 PM ET Oct 22, a late manual run
+    assert prior_session_date(now) == "2026-10-21"
+    qqq = history("QQQ", {"2026-10-20": 706.0, "2026-10-21": 713.91, "2026-10-22": 694.5})
+    snapshot = session_snapshot(693.0, "2026-10-23T00:30:00Z", ("2026-10-22", 694.5), ("2026-10-21", 713.91))
+    rows, missing = prints({"QQQ": snapshot}, [qqq], now, prior_session_date(now))
+    assert not missing
+    assert "prior close 2026-10-21" in rows["QQQ"]["reason"]
+    assert round(rows["QQQ"]["value"], 4) == round(100 * (693.0 / 713.91 - 1), 4)
+    # The snapshot-only rule (Glance) reaches the same session: the latest bar before the Eastern trade date.
+    assert _snapshot_prior_close(snapshot, "2026-10-22") == ("2026-10-21", 713.91)
+
+
+def test_snapshot_bar_dated_after_the_prior_session_drops_the_print():
+    """A snapshot bar for a date the exchange calendar has no completed session for: nothing is admitted."""
+    now = datetime(2026, 10, 23, 13, 2, tzinfo=UTC)
+    spy = history("SPY", {"2026-10-21": 770.0, "2026-10-22": 762.1})
+    odd = {"latestTrade": {"t": "2026-10-23T12:55:00Z", "p": 760.0},
+           "dailyBar": bar("2026-10-22", 762.1), "prevDailyBar": bar("2026-10-21", 770.0)}
+    # Pretend the history is a day behind the calendar's prior session while the snapshot is not.
+    behind = history("SPY", {"2026-10-20": 775.0, "2026-10-21": 770.0})
+    rows, missing = prints({"SPY": odd}, [behind], now, "2026-10-21")
+    assert not rows and missing["SPY"].startswith("snapshot bar dated 2026-10-22 after the prior session 2026-10-21")
+    # With the history current, the same snapshot is admitted against the matching bar.
+    rows, missing = prints({"SPY": odd}, [spy], now, "2026-10-22")
+    assert not missing and round(rows["SPY"]["value"], 4) == round(100 * (760.0 / 762.1 - 1), 4)
+
+
+def test_snapshot_bar_older_than_the_prior_session_leaves_the_history_as_authority():
+    """A snapshot still showing only the session before last (the incident's shape with dailyBar missing): the
+    history's bar for the exchange's prior session stands, with its date."""
+    now = datetime(2026, 10, 23, 13, 2, tzinfo=UTC)
+    meta = history("META", {"2026-10-21": 697.54, "2026-10-22": 648.85})
+    lagging = {"latestTrade": {"t": "2026-10-23T12:46:00Z", "p": 641.53}, "prevDailyBar": bar("2026-10-21", 697.54)}
+    rows, missing = prints({"META": lagging}, [meta], now, "2026-10-22")
+    assert not missing and round(rows["META"]["value"], 2) == -1.13
+    assert "prior close 2026-10-22" in rows["META"]["reason"]

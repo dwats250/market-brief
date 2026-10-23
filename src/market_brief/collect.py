@@ -675,13 +675,28 @@ def _alpaca_intraday(payload, histories, now, retrieved_at, source_id, missing=N
         if when > retrieved_at:
             missing[symbol] = "trade stamped after the snapshot response"
             continue
-        trade_date = when.date().isoformat()
+        # The trade belongs to the New York session of its Eastern date: an 8:30 PM ET after-hours trade is stamped
+        # after midnight UTC but is still that session's trade, and its prior close is the session before it.
+        trade_date = when.astimezone(EASTERN).date().isoformat()
         bar_date, bar_close = _snapshot_prior_close(snapshot, trade_date)
         history = by_symbol[symbol]
         if history.get("closes") and history.get("dates"):
-            close_date, close = history["dates"][-1], history["closes"][-1]
-            if prior_session and close_date != prior_session:
-                missing[symbol] = f"daily bars stale: history through {close_date}, prior session {prior_session}"
+            if prior_session:
+                if prior_session not in history["dates"]:
+                    missing[symbol] = (f"daily bars stale: history through {history['dates'][-1]}, "
+                                       f"prior session {prior_session}")
+                    continue
+                close_date = prior_session
+                close = history["closes"][history["dates"].index(prior_session)]
+            else:
+                close_date, close = history["dates"][-1], history["closes"][-1]
+            # The snapshot's own last completed bar is a cross-check, never the authority. Dated the same session,
+            # it must agree (a split-adjusted bar against a raw one does not). Dated later, the snapshot claims a
+            # completed session the exchange calendar does not have, so nothing stands. Dated earlier or undated,
+            # the snapshot is simply behind the history and the history stands.
+            if bar_date and bar_date > close_date:
+                missing[symbol] = (f"snapshot bar dated {bar_date} after the prior session {close_date}; "
+                                   "no prior close admitted")
                 continue
             if bar_date == close_date and abs(bar_close - close) > PRIOR_CLOSE_TOLERANCE * abs(close):
                 missing[symbol] = (f"prior close basis mismatch for {close_date}: snapshot {bar_close} vs "

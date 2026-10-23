@@ -151,6 +151,16 @@ def next_session_date(now):
     return cal.next_session(session).date().isoformat()
 
 
+def prior_session_date(now):
+    """The last completed exchange session before the session `now`'s date belongs to: the only session whose
+    regular close may stand as "prior close" for a print stamped today. On a session day this is the previous
+    session all day long, including after the close (a 4:01 PM near-close print is still measured against
+    yesterday). On a weekend or holiday it is the session before the next one."""
+    cal = xcals.get_calendar("XNYS")
+    day = now.astimezone(ET).date().isoformat()
+    return cal.previous_session(cal.date_to_session(day, direction="next")).date().isoformat()
+
+
 def next_checkpoint(now, current=None, kinds=None):
     """The next scheduled checkpoint after `now`: later today, or the next session's premarket.
 

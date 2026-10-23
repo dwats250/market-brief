@@ -27,7 +27,7 @@ from .actuals import (
 )
 from .evidence import ET as EASTERN
 from .evidence import ROOT, read_json, timestamp
-from .schedule import next_session_date
+from .schedule import next_session_date, prior_session_date
 
 TREASURY = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml"
 BLS = "https://www.bls.gov/schedule/news_release/bls.ics"
@@ -618,21 +618,50 @@ def finite_number(value):
     return isinstance(value, (int, float)) and value == value and value not in (float("inf"), float("-inf"))
 
 
-def _alpaca_intraday(payload, histories, now, retrieved_at, source_id, missing=None):
+PRIOR_CLOSE_TOLERANCE = 0.001  # relative; a split-adjusted bar against a raw one differs by far more
+
+
+def _snapshot_prior_close(snapshot, trade_date):
+    """The snapshot's own last completed daily bar before the trade's date, as `(date, close)`.
+
+    Before the open Alpaca's `prevDailyBar` is two sessions back and `dailyBar` is the last completed session;
+    once the session trades, `dailyBar` is today's bar in progress and `prevDailyBar` is the last completed one.
+    The bar that may stand as prior close is therefore the latest one dated before the trade, never a fixed field.
+    """
+    candidates = []
+    for field in ("dailyBar", "prevDailyBar"):
+        bar = snapshot.get(field) or {}
+        if isinstance(bar.get("t"), str) and finite_number(bar.get("c")):
+            try:
+                day = _bar_date(bar["t"])
+            except ValueError:
+                continue
+            if day < trade_date:
+                candidates.append((day, bar["c"]))
+    return max(candidates) if candidates else (None, None)
+
+
+def _alpaca_intraday(payload, histories, now, retrieved_at, source_id, missing=None, prior_session=None):
     """Current prints from one snapshot response. `missing`, when given, receives {symbol: reason} for every
-    symbol the response reported but this function did not admit, so no drop is silent."""
+    symbol the response reported but this function did not admit, so no drop is silent.
+
+    The prior close is the last completed regular session's daily bar, with an explicit session date. Where the
+    history carries that bar (the main collection), it is the authority: the snapshot's own bar for the same date
+    must agree with it, and the date must be the exchange's prior session (`prior_session`) when one is supplied.
+    Where no history is carried (the Glance proxies), the snapshot's latest bar dated before the trade stands.
+    An unavailable or inconsistent prior close drops the print; an older close is never substituted.
+    """
     observations = []
     missing = {} if missing is None else missing
     by_symbol = {row["symbol"]: row for row in histories}
     for symbol, snapshot in payload.items():
         trade = snapshot.get("latestTrade") or {}
-        close = (snapshot.get("prevDailyBar") or {}).get("c")
         observed_at = trade.get("t")
         price = trade.get("p")
         if symbol not in by_symbol:
             missing[symbol] = "no prior-close history"
             continue
-        if not finite_number(price) or not finite_number(close) or not observed_at:
+        if not finite_number(price) or not observed_at:
             missing[symbol] = "no trade or prior close in the snapshot"
             continue
         when = timestamp(observed_at)
@@ -646,14 +675,47 @@ def _alpaca_intraday(payload, histories, now, retrieved_at, source_id, missing=N
         if when > retrieved_at:
             missing[symbol] = "trade stamped after the snapshot response"
             continue
-        value = 100 * (price / close - 1) if close else None
-        if value is None or not finite_number(value):
+        # The trade belongs to the New York session of its Eastern date: an 8:30 PM ET after-hours trade is stamped
+        # after midnight UTC but is still that session's trade, and its prior close is the session before it.
+        trade_date = when.astimezone(EASTERN).date().isoformat()
+        bar_date, bar_close = _snapshot_prior_close(snapshot, trade_date)
+        history = by_symbol[symbol]
+        if history.get("closes") and history.get("dates"):
+            if prior_session:
+                if prior_session not in history["dates"]:
+                    missing[symbol] = (f"daily bars stale: history through {history['dates'][-1]}, "
+                                       f"prior session {prior_session}")
+                    continue
+                close_date = prior_session
+                close = history["closes"][history["dates"].index(prior_session)]
+            else:
+                close_date, close = history["dates"][-1], history["closes"][-1]
+            # The snapshot's own last completed bar is a cross-check, never the authority. Dated the same session,
+            # it must agree (a split-adjusted bar against a raw one does not). Dated later, the snapshot claims a
+            # completed session the exchange calendar does not have, so nothing stands. Dated earlier or undated,
+            # the snapshot is simply behind the history and the history stands.
+            if bar_date and bar_date > close_date:
+                missing[symbol] = (f"snapshot bar dated {bar_date} after the prior session {close_date}; "
+                                   "no prior close admitted")
+                continue
+            if bar_date == close_date and abs(bar_close - close) > PRIOR_CLOSE_TOLERANCE * abs(close):
+                missing[symbol] = (f"prior close basis mismatch for {close_date}: snapshot {bar_close} vs "
+                                   f"daily bar {close} (adjustment or corporate action)")
+                continue
+        else:
+            close_date, close = bar_date, bar_close
+        if not finite_number(close) or not close or not close_date:
+            missing[symbol] = "no trade or prior close in the snapshot"
+            continue
+        value = 100 * (price / close - 1)
+        if not finite_number(value):
             missing[symbol] = "no trade or prior close in the snapshot"
             continue
         observations.append(dict(id=f"{symbol}-intraday", topic=symbol, metric="premarket return",
             value=value, unit="%", baseline="Alpaca IEX latest trade versus previous regular close",
             frequency="intraday", observed_at=observed_at, retrieved_at=retrieved_at.isoformat(),
-            source_id=source_id, status="AVAILABLE", reason="feed=IEX; latest trade timestamp"))
+            source_id=source_id, status="AVAILABLE",
+            reason=f"feed=IEX; latest trade timestamp; prior close {close_date} regular session"))
     return observations
 
 
@@ -732,7 +794,8 @@ def alpaca_collect(now, symbols=ALPACA_UNIVERSE, key_id=None, secret_key=None):
         snapped = datetime.now(timezone.utc)
         intraday["retrieved_at"] = snapped.isoformat()
         missing = {}
-        observations = _alpaca_intraday(snapshots, histories, now, snapped, "alpaca-iex", missing)
+        observations = _alpaca_intraday(snapshots, histories, now, snapped, "alpaca-iex", missing,
+                                         prior_session=prior_session_date(now))
         missing.update({symbol: "not returned by the snapshot" for symbol in symbols if symbol not in snapshots})
         intraday["coverage_symbols"] = len(observations)
         if not observations:

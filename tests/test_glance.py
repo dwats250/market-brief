@@ -14,7 +14,10 @@ SESSION = dict(open="2026-10-13T13:30:00+00:00", close="2026-10-13T20:00:00+00:0
 
 
 def snap(price, when=NOW - timedelta(seconds=20), prev=100.0):
-    return {"latestTrade": {"t": when.isoformat().replace("+00:00", "Z"), "p": price}, "prevDailyBar": {"c": prev}}
+    # In session, Alpaca's dailyBar is today's bar in progress and prevDailyBar the last completed session's.
+    return {"latestTrade": {"t": when.isoformat().replace("+00:00", "Z"), "p": price},
+            "dailyBar": {"t": f"{when.date().isoformat()}T04:00:00Z", "c": price},
+            "prevDailyBar": {"t": f"{(when - timedelta(days=1)).date().isoformat()}T04:00:00Z", "c": prev}}
 
 
 def payload(**overrides):

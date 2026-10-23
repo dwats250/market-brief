@@ -1,5 +1,8 @@
 # Data sources: bounded acquisition inventory
 
+*This is the pre-implementation research record and keeps its original recommendations (for example Alpaca with
+`feed=sip`; production reads Alpaca IEX). What is actually wired and deferred is listed in `config/sources.json`.*
+
 Research date: 2026-09-07. The links below are provider/agency documentation, not
 proof that this project has working integrations or entitlements. No credentials
 were acquired, no paid service was selected, and no provider market payload is

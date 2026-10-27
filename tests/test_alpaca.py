@@ -13,11 +13,16 @@ def bars(symbol):
 
 
 def snapshots():
+    """In-session shape, as the live snapshot carries it: `dailyBar` is today's bar in progress and `prevDailyBar`
+    the last completed session (Friday 2026-09-04; Labor Day closed Monday), each dated, its close matching the
+    daily-bar history for that session."""
     return {
         "SPY": {"latestTrade": {"t": "2026-09-08T13:34:00Z", "p": 110},
-                "prevDailyBar": {"c": 109}},
+                "dailyBar": {"t": "2026-09-08T04:00:00Z", "c": 110},
+                "prevDailyBar": {"t": "2026-09-04T04:00:00Z", "c": 104}},
         "QQQ": {"latestTrade": {"t": "2026-09-08T13:34:00Z", "p": 220},
-                "prevDailyBar": {"c": 218}},
+                "dailyBar": {"t": "2026-09-08T04:00:00Z", "c": 220},
+                "prevDailyBar": {"t": "2026-09-04T04:00:00Z", "c": 104}},
     }
 
 

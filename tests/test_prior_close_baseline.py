@@ -4,6 +4,11 @@ Incident (2026-10-23): before the open, Alpaca's snapshot `prevDailyBar` is two 
 "vs prior close" print carried the previous session's move inside it (META −8.03% published; about −1.1% against
 Thursday's close). These tests pin the baseline to the history's last completed session, cross-checked against the
 snapshot's own bar for that date and the exchange calendar, and drop a print rather than substitute an older close.
+
+Live-provider limitation (WP1, 2026-10-26): no raw Alpaca snapshot is preserved anywhere (run archives keep evidence
+rows, not payloads), so the dailyBar/prevDailyBar semantics these fixtures encode are an assumption verified only by
+the 2026-10-26 forward check (market-review studies/2026-10-26-prior-close-forward-verification.md). A captured,
+key-free premarket snapshot would turn that assumption into a fixture.
 """
 
 from datetime import datetime, timedelta, timezone

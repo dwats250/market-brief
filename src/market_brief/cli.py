@@ -175,7 +175,8 @@ def record_attempt(root, session_date, checkpoint, run_id, attempt):
 
     Written whatever the synthesis then does and read only by `scheduled()`; never admitted, restored or rendered.
     A crash between this write and the request over-counts, never under-counts. A failed write is a ValueError,
-    so nothing is sent."""
+    so nothing is sent. Rewritten before a grammar-rate-limit retry with both requests: the first's diagnostic and
+    the second's intent."""
     path = attempt_path(root, session_date, checkpoint)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,7 +186,9 @@ def record_attempt(root, session_date, checkpoint, run_id, attempt):
         write_json(temporary, dict(schema_version=ATTEMPT_SCHEMA, session_date=session_date, checkpoint=checkpoint,
                                    run_id=run_id, route=attempt.get("route"),
                                    requested_model=attempt.get("requested_model"),
-                                   requested_at=attempt.get("requested_at")))
+                                   requested_at=attempt.get("requested_at"),
+                                   **({"attempts": attempt.get("attempts"), "grammar_retry": attempt["grammar_retry"]}
+                                      if attempt.get("grammar_retry") else {})))
         temporary.replace(path)
     except OSError:
         raise ValueError("the paid synthesis attempt could not be recorded; no provider request was sent") from None
@@ -448,10 +451,11 @@ def run(args):
                             record = record_attempt(RUN_ROOT, packet["run"]["session"]["date"], checkpoint, folder.name,
                                                     attempt)
                             metadata["attempt_record"] = str(record.relative_to(RUN_ROOT))
-                        metadata["synthesis"]["calls"] = 1
+                        # Two only when the grammar-rate-limit retry is about to be sent.
+                        metadata["synthesis"]["calls"] = attempt.get("attempts", 1)
                         metadata.update(model_route=attempt["route"], model=attempt)
                     narrative, model = synthesize(packet, full=full, context=context, on_request=requesting)
-                    metadata["synthesis"]["calls"] = 1
+                    metadata["synthesis"]["calls"] = max(metadata["synthesis"]["calls"], 1)
                 repairs = model.get("repairs") or []
                 if repairs:
                     # The response as the analyst returned it stays beside the one accepted after the rewrite.

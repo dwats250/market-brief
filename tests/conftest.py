@@ -20,6 +20,12 @@ def no_live_synthesis(monkeypatch):
         raise AssertionError("tests must never open a connection to OpenRouter")
 
     monkeypatch.setattr("market_brief.synthesize.urlopen", forbidden)
+
+    def no_wait(seconds):
+        raise AssertionError("tests must never really wait out a provider rate limit")
+
+    # The grammar-rate-limit retry sleeps a real minute unless a test injects its own sleeper.
+    monkeypatch.setattr("market_brief.synthesize.sleep", no_wait)
     # The analyst CLI may be installed on a developer machine; tests must stub the runner explicitly.
     monkeypatch.setattr(shutil, "which",
                         lambda cmd, *args, **kwargs: None if cmd == "claude" else _real_which(cmd, *args, **kwargs))

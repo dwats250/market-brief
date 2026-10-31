@@ -154,8 +154,10 @@ def test_section_headings_space_and_rules():
     css = style()
     desktop, mobile = css.split("@media(max-width:600px)", 1)
     assert "h2{font:600 28px/1.2 Georgia" in desktop and "h2{font-size:25px}" in mobile
-    assert "section{border-top:2px solid var(--rule-strong);padding-top:26px;margin-top:52px}" in desktop
-    assert "section{margin-top:40px;padding-top:22px}" in mobile
+    assert "section{border-top:1px solid var(--line);padding-top:17px;margin-top:48px}" in desktop
+    assert "section{margin-top:38px;padding-top:17px}" in mobile
+    assert "section h2{display:table" in desktop and "clip-path:polygon(" in desktop
+    assert "--cut-sage:" in desktop and "--cut-ochre:" in desktop and "--cut-rose:" in desktop
     assert "h1{font:500 52px/1.05 Georgia" in desktop and "h1{font-size:38px" in mobile  # h1 stays dominant
     for block in (":root{", 'html[data-theme="dark"]{', "html:not([data-theme]){"):
         assert "--rule-strong:#" in css.split(block, 1)[1].split("}", 1)[0], block

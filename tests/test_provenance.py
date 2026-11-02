@@ -56,6 +56,39 @@ def test_frozen_interpretation_citation_links_to_its_own_provenance_while_live_r
     assert "sample-prices" in frozen_row
     assert "−0.37%" in live_row and "6:14 AM PT" in live_row
     assert "−0.37%" in markdown
+    assert "[evidence](#interpretation-evidence-QQQ-intraday)" in markdown
+    assert '<a id="interpretation-evidence-QQQ-intraday"></a>' in markdown
+    assert '<a id="evidence-QQQ-intraday"></a>' in markdown
+
+
+def test_carried_watch_citation_links_to_its_creation_time_snapshot():
+    original = fixture_packet()
+    original["run"]["target_time"] = "2026-09-08T13:00:00+00:00"
+    created = qqq_print(original, observed_at="2026-09-08T12:58:00+00:00", value=0.87)
+    frozen = interpretation_record(original, narrative())
+    frozen["evidence"]["QQQ-intraday"] = copy.deepcopy(created)
+    frozen["prior_state"] = dict(status="available", reason="", anchors={}, watches=[dict(
+        id="watch-from-premarket", lifecycle="active", evaluability="assessable",
+        hypothesis="QQQ holds {{QQQ-intraday}}.", confirmation="QQQ remains near {{QQQ-intraday}}.",
+        contradiction="QQQ reverses below {{QQQ-intraday}}.",
+        horizon=dict(phrase="Through the close", expires_at="2026-09-08T20:00:00+00:00"),
+        evidence_refs=["QQQ-intraday"], values={"QQQ-intraday": copy.deepcopy(created)})])
+
+    refreshed = copy.deepcopy(original)
+    current = next(row for row in refreshed["observations"] if row["id"] == "QQQ-intraday")
+    current.update(value=-0.37, observed_at="2026-09-08T13:14:00+00:00",
+                   retrieved_at="2026-09-08T13:15:00+00:00")
+    refreshed["run"]["run_id"] = "sample-hourly-refresh"
+    refreshed["run"]["target_time"] = "2026-09-08T13:15:00+00:00"
+    _, page = render(refreshed, interpretation=frozen)
+
+    assert 'href="#interpretation-evidence-QQQ-intraday">QQQ · Premarket vs prior close</a>' in page
+    assert '<b>+0.87%</b><small>5:58 AM PT</small>' in page
+    snapshot = page.split('id="interpretation-evidence-QQQ-intraday"', 1)[1].split("</div>", 1)[0]
+    assert "+0.87%" in snapshot and "5:58 AM PT" in snapshot
+    assert "IEX latest trade versus previous regular close" in snapshot and "sample-prices" in snapshot
+    live = page.split('id="evidence-QQQ-intraday"', 1)[1].split("</div>", 1)[0]
+    assert "−0.37%" in live and "6:14 AM PT" in live
 
 
 def test_unsupported_missing_and_stale_citations_remain_fail_closed():

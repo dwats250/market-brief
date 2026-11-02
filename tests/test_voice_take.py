@@ -385,10 +385,14 @@ def test_the_take_renders_last_in_the_read():
     # Markdown: the take is the paragraph after the read, then one ordinary blank line.
     lines = md.splitlines()
     index = next(i for i, line in enumerate(lines) if line.startswith("**The take:**"))
-    assert lines[index] == ("**The take:** The tension is in the curve and metals, not in growth&#x27;s 20-session "
-                            "lead over SPY, which stands at +1.87 pp. [evidence](#evidence-treasury-2y-change) "
-                            "[evidence](#evidence-treasury-10y-change) [evidence](#evidence-GDX-spread20) "
-                            "[evidence](#evidence-QQQ-spread20)")
+    assert lines[index] == " ".join([
+        "**The take:** The tension is in the curve and metals, not in growth&#x27;s 20-session",
+        "lead over SPY, which stands at +1.87 pp.",
+        "[evidence](#interpretation-evidence-treasury-2y-change)",
+        "[evidence](#interpretation-evidence-treasury-10y-change)",
+        "[evidence](#interpretation-evidence-GDX-spread20)",
+        "[evidence](#interpretation-evidence-QQQ-spread20)",
+    ])
     # The fixture has no current prints, so the coverage note is the next block; nothing interpretive follows.
     assert lines[index - 1] == "" and lines[index + 1] == ""
     assert lines[index + 2] == "Missing: current prints unavailable."

@@ -908,12 +908,12 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
             return formatted(row) if row else NOT_APPLICABLE
         return PLACEHOLDER.sub(value, text)
 
-    def refs(ids, rows=None):
+    def refs(ids, rows=None, snapshot=None):
         """The rows behind one block, formatted for a quiet expandable marker; IDs are unchanged.
 
         Prose cites the frozen rows the analyst saw; table proofs cite this run's rows.
         """
-        snapshot = rows is None
+        snapshot = rows is None if snapshot is None else snapshot
         rows = frozen if rows is None else rows
         result = []
         for ref in ids:
@@ -1056,7 +1056,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
             reason=expand(update["reason"]) if update else "",
             evidence_ids=update["evidence_ids"] if update else watch["evidence_refs"],
             refs=(refs(update["evidence_ids"]) if update
-                  else refs(watch["evidence_refs"], {**frozen, **creation}))))
+                  else refs(watch["evidence_refs"], {**frozen, **creation}, snapshot=True))))
     # The live set is exactly what `continuity.edition_state` carries forward: new watches first, then the
     # carried ones still active and not reversed, at most CARRY_LIMIT. The frozen prior list is already
     # newest-first, so no ranking of our own. A verdict (strengthened, weakened, reversed) is adjudication and
@@ -1263,13 +1263,14 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                             count=f"{len(rows)} observation{'s' if len(rows) != 1 else ''}")
                        for topic, rows in groups.items()]
     interpretation_rows = [dict(
-        r, display=formatted(r) if "value" in r else r.get("title", NOT_APPLICABLE), item="value" not in r,
+        r, id=r.get("id") or ident,
+        display=formatted(r) if "value" in r else r.get("title", NOT_APPLICABLE), item="value" not in r,
         metric_label=(reader_metric_label(r, session) if r.get("metric") else "Published / scheduled item"),
         when=(release_clock(r, session) if r.get("frequency") == "release" else
               compact_clock(r.get("observed_at") or r.get("published_at") or "")),
         source_name=source_names.get(r.get("source_id"), r.get("source_id") or "not retained in snapshot"),
         status_label=SOURCE_STATUS_LABELS.get(r.get("status", ""), (r.get("status") or "").title()))
-        for r in frozen.values()]
+        for ident, r in frozen.items()]
     interpretation_groups_by_topic = {}
     for row in interpretation_rows:
         interpretation_groups_by_topic.setdefault(row.get("topic") or row.get("title") or row["id"], []).append(row)
@@ -1375,8 +1376,10 @@ def markdown(view):
         text = " ".join(str(value).split())
         return re.sub(r"([\\`*_\[\]|])", r"\\\1", html.escape(text))
 
+    frozen_ids = {row["id"] for group in view["interpretation_groups"] for row in group["rows"]}
+
     def refs(ids):
-        return " ".join(f"[evidence](#evidence-{i})" for i in ids)
+        return " ".join(f"[evidence](#{'interpretation-evidence' if i in frozen_ids else 'evidence'}-{i})" for i in ids)
 
     def para(p):
         blocks = [f"{esc(p['text'])} {refs(p['evidence_ids'])}"]
@@ -1568,6 +1571,17 @@ def markdown(view):
         lines += [f"- [{esc(s['name'])}](<{s['url']}>) · {esc(s['kind'])} · {esc(s['status'])} "
                   f"· retrieved {esc(s['retrieved_at'])}"]
     lines += ["", "### Evidence ledger", ""]
+    if view["interpretation_groups"]:
+        lines += [f"**Evidence at analysis · {esc(view['interpretation_clock'])}**", ""]
+        for group in view["interpretation_groups"]:
+            lines += [f"**{esc(group['label'])}**", ""]
+            for row in group["rows"]:
+                when = esc(row.get("observed_at") or row.get("published_at") or "not exposed")
+                source = esc(row.get("source_id") or "not retained in snapshot")
+                lines += [f'<a id="interpretation-evidence-{row["id"]}"></a>',
+                          f"**{esc(row['id'])}** · {esc(row.get('topic', row.get('title', '')))} · "
+                          f"{esc(row['display'])} · {esc(row.get('baseline', 'published / scheduled item'))} "
+                          f"· observed/published {when} · source {source}", ""]
     for group in view["evidence_groups"]:
         lines += [f"**{esc(group['topic'])}**", ""]
         for row in group["rows"]:

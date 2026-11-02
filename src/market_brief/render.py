@@ -913,6 +913,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
 
         Prose cites the frozen rows the analyst saw; table proofs cite this run's rows.
         """
+        snapshot = rows is None
         rows = frozen if rows is None else rows
         result = []
         for ref in ids:
@@ -926,7 +927,10 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
             result.append(dict(id=ref, label=label, display=formatted(row) if "value" in row else "",
                                when=(release_clock(row, session) if row.get("frequency") == "release" else
                                      compact_clock(row.get("observed_at") or row.get("published_at") or "")),
-                               anchor=ref in catalog, topic=row.get("topic") or ""))
+                               anchor=(True if snapshot else ref in catalog),
+                               anchor_id=(f"evidence-{ref}" if not snapshot else
+                                          f"interpretation-evidence-{ref}"),
+                               topic=row.get("topic") or ""))
         return result
 
     def cited_rows(ids, rows=None):
@@ -1258,6 +1262,20 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     evidence_groups = [dict(topic=topic, label=instrument_label(topic), rows=rows,
                             count=f"{len(rows)} observation{'s' if len(rows) != 1 else ''}")
                        for topic, rows in groups.items()]
+    interpretation_rows = [dict(
+        r, display=formatted(r) if "value" in r else r.get("title", NOT_APPLICABLE), item="value" not in r,
+        metric_label=(reader_metric_label(r, session) if r.get("metric") else "Published / scheduled item"),
+        when=(release_clock(r, session) if r.get("frequency") == "release" else
+              compact_clock(r.get("observed_at") or r.get("published_at") or "")),
+        source_name=source_names.get(r.get("source_id"), r.get("source_id") or "not retained in snapshot"),
+        status_label=SOURCE_STATUS_LABELS.get(r.get("status", ""), (r.get("status") or "").title()))
+        for r in frozen.values()]
+    interpretation_groups_by_topic = {}
+    for row in interpretation_rows:
+        interpretation_groups_by_topic.setdefault(row.get("topic") or row.get("title") or row["id"], []).append(row)
+    interpretation_groups = [dict(topic=topic, label=instrument_label(topic), rows=rows,
+                                  count=f"{len(rows)} observation{'s' if len(rows) != 1 else ''}")
+                             for topic, rows in interpretation_groups_by_topic.items()]
     sources = source_rows(packet["sources"])
     technical["sources_retrieved"] = [dict(id=s["id"], status=s.get("status", ""), reason=s.get("reason", ""),
                                            retrieved_at=s.get("retrieved_at", "")) for s in packet["sources"]]
@@ -1347,6 +1365,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         cuttingboard_section=dict(visible=cuttingboard_visible,
                                   paragraphs=[paragraph(p) for p in narrative["sections"]["cuttingboard"]]),
         sources=sources, unavailable_sources=sum(1 for s in sources if s["unavailable"]),
+        interpretation_groups=interpretation_groups,
         cuttingboard=cuttingboard,
         evidence=evidence_rows, evidence_groups=evidence_groups, context_items=packet["context_items"])
 

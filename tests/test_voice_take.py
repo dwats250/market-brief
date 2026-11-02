@@ -380,7 +380,7 @@ def test_the_take_renders_last_in_the_read():
     assert take.startswith(" The tension is in the curve and metals, not in growth&#39;s 20-session lead over SPY, "
                            "which stands at +1.87 pp. <details class=\"cite\">")
     marker = take.split("<details", 1)[1].split("</details>", 1)[0]
-    assert re.findall(r'<span class="ref"><a href="#evidence-([^"]+)"', marker) == TAKE_IDS
+    assert re.findall(r'<span class="ref"><a href="#interpretation-evidence-([^"]+)"', marker) == TAKE_IDS
     assert read.rstrip().endswith("</details></div></div>")  # the take is the last block inside `.read`
     # Markdown: the take is the paragraph after the read, then one ordinary blank line.
     lines = md.splitlines()
@@ -510,7 +510,9 @@ def test_a_carried_take_keeps_the_values_and_clock_its_analyst_saw(monkeypatch, 
         line = take_line(page)
         assert "SPY at −0.53% is a rates story until tech confirms it." in line
         assert "+0.80%" not in line
-        marker = re.search(r'href="#evidence-SPY-intraday">([^<]*)</a><b>([^<]*)</b><small>([^<]*)</small>', line)
+        marker = re.search(
+            r'href="#interpretation-evidence-SPY-intraday">([^<]*)</a><b>([^<]*)</b>'
+            r'<small>([^<]*)</small>', line)
         assert marker.groups() == ("SPY · Intraday vs prior close", "−0.53%", "7:01 AM PT")
     ledger = refresh.split('id="evidence-SPY-intraday"', 1)[1].split("</div>", 1)[0]
     assert '<span class="value">+0.80%</span>' in ledger

@@ -227,7 +227,7 @@ def test_d2_a_frozen_row_keeps_the_phase_it_was_observed_in():
 def markers(html):
     """(label, value, clock) for every proof line in a block of rendered HTML."""
     return re.findall(
-        r'<span class="ref">(?:<a href="#(?:interpretation-)?evidence-[^"]+">|<i>)([^<]*)'
+        r'<span class="ref">(?:<a href="#(?:interpretation-|watch-)?evidence-[^"]+">|<i>)([^<]*)'
         r'(?:</a>|</i>)<b>([^<]*)</b><small>([^<]*)</small>', html)
 
 

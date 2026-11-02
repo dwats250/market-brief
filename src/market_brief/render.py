@@ -1056,7 +1056,18 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
             reason=expand(update["reason"]) if update else "",
             evidence_ids=update["evidence_ids"] if update else watch["evidence_refs"],
             refs=(refs(update["evidence_ids"]) if update
-                  else refs(watch["evidence_refs"], {**frozen, **creation}, snapshot=True))))
+                  else [dict(ref, anchor=ref["id"] in (watch.get("values") or {}),
+                            anchor_id=f"watch-evidence-{watch['id']}-{ref['id']}")
+                        for ref in refs(watch["evidence_refs"], {**frozen, **creation}, snapshot=True)]),
+            creation_evidence=[dict(
+                id=ident, anchor_id=f"watch-evidence-{watch['id']}-{ident}",
+                metric_label=(reader_metric_label(row, session) if row.get("metric") else "Published / scheduled item"),
+                display=formatted(row) if "value" in row else row.get("title", NOT_APPLICABLE),
+                when=compact_clock(row.get("observed_at") or row.get("published_at") or "") or "date not preserved",
+                baseline=row.get("baseline") or "basis not preserved",
+                source_name=row.get("source_id") or "source not preserved",
+                source_id=row.get("source_id") or "source ID not preserved")
+                for ident, row in (watch.get("values") or {}).items() if ident in watch.get("evidence_refs", [])]))
     # The live set is exactly what `continuity.edition_state` carries forward: new watches first, then the
     # carried ones still active and not reversed, at most CARRY_LIMIT. The frozen prior list is already
     # newest-first, so no ranking of our own. A verdict (strengthened, weakened, reversed) is adjudication and
@@ -1449,7 +1460,9 @@ def markdown(view):
             text = f"{text.rstrip()} Confirm: {esc(c['confirmation'])}"
         if c["contradiction"]:
             text = f"{text.rstrip()} Changes it: {esc(c['contradiction'])}"
-        lines.append(f"- **FROM AN EARLIER READ{status} · {esc(c['phrase'])}{passed}{pointer}** — {text}")
+        creation_refs = " ".join(f"[evidence](#{r['anchor_id']})" for r in c["refs"] if r["anchor"])
+        lines.append(f"- **FROM AN EARLIER READ{status} · {esc(c['phrase'])}{passed}{pointer}** — "
+                     f"{text} {creation_refs}")
     if nxt["retired"]:
         count = len(nxt["retired"])
         lines.append(f"- Earlier watches · {count} ended without a verdict: "
@@ -1590,6 +1603,14 @@ def markdown(view):
                       f"{esc(row['display'])} · {esc(row.get('baseline', 'published / scheduled item'))} "
                       f"· observed/published {esc(row.get('observed_at') or row.get('published_at') or 'not exposed')} "
                       f"· source {esc(row['source_id'])}", ""]
+    carried_evidence = [(c, row) for c in view["next"]["carried"] for row in c["creation_evidence"]]
+    if carried_evidence:
+        lines += ["**Carried watch creation evidence**", ""]
+        for watch, row in carried_evidence:
+            lines += [f'<a id="{row["anchor_id"]}"></a>',
+                      f"**{esc(row['id'])}** · {esc(row['metric_label'])} · {esc(row['display'])} · "
+                      f"{esc(row['baseline'])} · observed {esc(row['when'])} · source {esc(row['source_name'])} "
+                      f"({esc(row['source_id'])}) · watch {esc(watch['id'])}", ""]
     technical = view["technical"]
     lines += ["", "### Technical details", "",
               f"Generated UTC: {esc(technical['generated_utc'])}",

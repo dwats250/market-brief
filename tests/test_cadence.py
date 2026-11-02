@@ -493,7 +493,7 @@ def test_a_placeholder_inside_a_watch_survives_synthesis_refreshes_the_close_and
         assert day.metadata(checkpoint)["validation"] == "PASS"
         # The carried watch's marker labels the quoted row like any other row, at the creation-time value.
         carried_block = page.split("holds its +0.06% daily gain", 2)[-1].split("</details>", 1)[0]
-        assert ('<a href="#interpretation-evidence-SPY-daily">SPY · Daily return</a>'
+        assert (f'<a href="#watch-evidence-{carried_id}-SPY-daily">SPY · Daily return</a>'
                 '<b>+0.06%</b>') in carried_block, checkpoint
         assert ">SPY-daily</a>" not in page
     # Wednesday: Tuesday's close moved SPY's daily return well away from the value the watch quoted. The

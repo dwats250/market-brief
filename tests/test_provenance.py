@@ -82,13 +82,72 @@ def test_carried_watch_citation_links_to_its_creation_time_snapshot():
     refreshed["run"]["target_time"] = "2026-09-08T13:15:00+00:00"
     _, page = render(refreshed, interpretation=frozen)
 
-    assert 'href="#interpretation-evidence-QQQ-intraday">QQQ · Premarket vs prior close</a>' in page
+    assert 'href="#watch-evidence-watch-from-premarket-QQQ-intraday">QQQ · Premarket vs prior close</a>' in page
     assert '<b>+0.87%</b><small>5:58 AM PT</small>' in page
-    snapshot = page.split('id="interpretation-evidence-QQQ-intraday"', 1)[1].split("</div>", 1)[0]
+    snapshot = page.split('id="watch-evidence-watch-from-premarket-QQQ-intraday"', 1)[1].split("</div>", 1)[0]
     assert "+0.87%" in snapshot and "5:58 AM PT" in snapshot
     assert "IEX latest trade versus previous regular close" in snapshot and "sample-prices" in snapshot
     live = page.split('id="evidence-QQQ-intraday"', 1)[1].split("</div>", 1)[0]
     assert "−0.37%" in live and "6:14 AM PT" in live
+
+
+def test_multiple_carried_watches_get_distinct_creation_time_evidence_destinations():
+    packet = fixture_packet()
+    now = timestamp(packet["run"]["target_time"])
+    current = normalize_observation(dict(
+        id="SPY-daily", topic="SPY", metric="daily return", value=0.31, unit="%",
+        baseline="IEX latest trade versus previous regular close", frequency="intraday",
+        observed_at="2026-09-08T13:14:00+00:00", retrieved_at=packet["run"]["target_time"],
+        source_id="current-prices", status="AVAILABLE", reason="later interpretation"), now)
+    packet["observations"].append(current)
+    current_narrative = narrative()
+    current_narrative["watches"] = []
+    frozen = interpretation_record(packet, current_narrative)
+    frozen["evidence"]["SPY-daily"] = copy.deepcopy(current)
+
+    def creation(value, observed_at, source_id, baseline):
+        return dict(id="SPY-daily", topic="SPY", metric="daily return", value=value, unit="%",
+                    baseline=baseline, frequency="intraday", observed_at=observed_at,
+                    source_id=source_id)
+
+    older = creation(0.06, "2026-09-08T12:58:00+00:00", "opening-prices",
+                     "IEX print versus previous regular close")
+    later = creation(0.12, "2026-09-08T13:02:00+00:00", "midday-prices",
+                     "IEX print versus previous regular close")
+    frozen["prior_state"] = dict(status="available", reason="", anchors={}, watches=[
+        dict(id="watch-open", lifecycle="active", evaluability="assessable",
+             hypothesis="SPY holds {{SPY-daily}}.", confirmation="SPY remains near {{SPY-daily}}.",
+             contradiction="SPY falls below {{SPY-daily}}.",
+             horizon=dict(phrase="Through the close", expires_at="2026-09-08T20:00:00+00:00"),
+             evidence_refs=["SPY-daily"], values={"SPY-daily": older}),
+        dict(id="watch-midday", lifecycle="active", evaluability="assessable",
+             hypothesis="SPY holds {{SPY-daily}}.", confirmation="SPY remains near {{SPY-daily}}.",
+             contradiction="SPY falls below {{SPY-daily}}.",
+             horizon=dict(phrase="Through the close", expires_at="2026-09-08T20:00:00+00:00"),
+             evidence_refs=["SPY-daily"], values={"SPY-daily": later}),
+        dict(id="watch-legacy", lifecycle="active", evaluability="assessable",
+             hypothesis="Legacy SPY watch.", confirmation="", contradiction="",
+             horizon=dict(phrase="Through the close", expires_at="2026-09-08T20:00:00+00:00"),
+             evidence_refs=["SPY-daily"], values={})])
+    refreshed = copy.deepcopy(packet)
+    refreshed["run"]["run_id"] = "later-session-refresh"
+    refreshed["run"]["target_time"] = "2026-09-08T13:15:00+00:00"
+    markdown, page = render(refreshed, interpretation=frozen)
+
+    for watch_id, value, clock, source in (
+            ("watch-open", "+0.06%", "5:58 AM PT", "opening-prices"),
+            ("watch-midday", "+0.12%", "6:02 AM PT", "midday-prices")):
+        anchor = f"watch-evidence-{watch_id}-SPY-daily"
+        assert f'href="#{anchor}">SPY · Daily return</a><b>{value}</b><small>{clock}</small>' in page
+        assert f'id="{anchor}"' in page
+        row = page.split(f'id="{anchor}"', 1)[1].split("</div>", 1)[0]
+        assert value in row and clock in row and source in row
+        assert f"[evidence](#{anchor})" in markdown
+        assert f'<a id="{anchor}"></a>' in markdown
+    assert "IEX print versus previous regular close" in page
+    assert page.count('id="watch-evidence-') == 2
+    assert 'href="#watch-evidence-watch-legacy-SPY-daily"' not in page
+    assert "[evidence](#watch-evidence-watch-legacy-SPY-daily)" not in markdown
 
 
 def test_unsupported_missing_and_stale_citations_remain_fail_closed():

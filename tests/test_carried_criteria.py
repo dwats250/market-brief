@@ -275,7 +275,9 @@ def test_a_reassessment_reason_stays_apart_from_the_criteria_and_the_drawer_show
             f'<dl class="tests"><dt>Confirm</dt><dd>{confirm}</dd><dt>Changes it</dt><dd>{changes_it}</dd></dl>'
             '<p class="fine">No comparable print yet.</p></div>') in live_watch(page, question)
     assert carried_line(md, question).endswith(
-        f"— {question} No comparable print yet. Confirm: {confirm} Changes it: {changes_it}")
+        f"— {question} No comparable print yet. Confirm: {confirm} Changes it: {changes_it} "
+        "[evidence](#interpretation-evidence-SPY-intraday) "
+        "[evidence](#interpretation-evidence-premarket:SPY-intraday)")
     # The drawer: the expired Friday watch holds the same criteria in the view, and shows none of them.
     view = presentation(packet, value, context)
     assert [c["confirmation"] for c in view["next"]["retired"]] == [confirm]

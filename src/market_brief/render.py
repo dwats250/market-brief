@@ -93,7 +93,8 @@ SOURCE_STATUS_LABELS = {"AVAILABLE": "Available", "UNAVAILABLE": "Unavailable", 
 SIGNED_METRICS = {"daily return", "premarket return", "intraday return", "distance from 50DMA"}
 MINUS = "\u2212"
 RATE_UNITS = {"% yield", "bp", SPREAD_UNIT}
-RELEASE_UNITS = {JOBS, PERCENT, PERCENT_CHANGE}
+CANADIAN_PERSONS = "persons"
+RELEASE_UNITS = {JOBS, PERCENT, PERCENT_CHANGE, CANADIAN_PERSONS}
 # The economic release card (Macro & rates): one line per measure in the release's own order. A change pair reads
 # `+0.1% m/m · +3.0% y/y`; payroll revisions read `Jul +21k → −10k` per month and then `Combined −60k`.
 RELEASE_LINES = (("Payrolls", ("nonfarm payroll change",)), ("Unemployment", ("unemployment rate",)),
@@ -501,6 +502,9 @@ def release_display(value, unit):
         return f"{MINUS if whole < 0 else '+' if whole > 0 else ''}{abs(whole):,}k"
     if unit == PERCENT:
         return f"{value:.1f}%"
+    if unit == CANADIAN_PERSONS:
+        sign = MINUS if value < 0 else "+" if value > 0 else ""
+        return f"{sign}{abs(value):,.0f} persons"
     tenth = round(value, 1)
     return f"{MINUS if tenth < 0 else '+' if tenth > 0 else ''}{abs(tenth):.1f}%"
 
@@ -825,6 +829,10 @@ def release_cards(rows, events, sources=()):
                 lines.append(dict(label=label, values=[" · ".join(
                     f"{formatted(row)} {PAIR_WORDS[row['metric'].rsplit(', ', 1)[1]]}" if len(metrics) > 1
                     else formatted(row) for row in present)]))
+        for label, metric in (("Canadian employment change", "Canadian employment change"),
+                              ("Canadian unemployment", "Canadian unemployment rate")):
+            if metric in by_metric:
+                lines.append(dict(label=label, values=[formatted(by_metric[metric])]))
         revisions = sorted((row for row in members if row["metric"] == REVISION), key=lambda row: row["revised_month"])
         combined = [row for row in members if row["metric"] == COMBINED]
         unread = any(source.get("status") == "DEGRADED" for source in sources
@@ -839,7 +847,9 @@ def release_cards(rows, events, sources=()):
                   f"{formatted(dict(row, value=row['revised_to']))}" for row in revisions),
                 *(f"Combined {formatted(row)}" for row in combined)]))
         happened = [event["id"] for event in events if event.get("scheduled_at") == released
-                    and (EVENT_TITLE.fullmatch(event.get("title") or "") or [None, None])[1] == title]
+                    and ((EVENT_TITLE.fullmatch(event.get("title") or "") or [None, None])[1] == title
+                         or title == "Statistics Canada Labour Force Survey"
+                         and event.get("title", "").startswith(title + " for "))]
         cards.append(dict(time=pacific_time(released), title=title, period=period_name(period), lines=lines,
                           ids=[row["id"] for row in members], events=happened))
     return cards

@@ -1,11 +1,13 @@
 {
   "version": "v1",
   "real_yields": true,
+  "statcan_lfs": false,
   "wired": [
     "Treasury daily yield XML",
     "Treasury daily real (TIPS) yield XML",
     "BLS release-calendar ICS, else the official monthly List View (current and next exchange session)",
     "BLS Employment Situation and CPI values from their current-edition release pages, once the calendar's release time passes",
+    "Statistics Canada Labour Force Survey values from the dated Daily release (disabled until explicitly enabled)",
     "Federal Reserve press-release RSS",
     "Alpaca historical daily bars (IEX, split-adjusted)",
     "Alpaca IEX current snapshots",
@@ -26,5 +28,5 @@
     "automated earnings",
     "general news search"
   ],
-  "policy": "Only normalized records with explicit retention permission persist; only llm_allowed facts enter synthesis. Public government factual extracts are admitted. No account or credential discovery. Continuity carries structured prior state (watches, relationships, snapshots) for at most one exchange session between close and premarket; retention of run archives is thirty days in Actions artifacts."
+  "policy": "Only normalized records with explicit retention permission persist; only llm_allowed facts enter synthesis. Public government factual extracts are admitted with the source acknowledgement required by their terms. No account or credential discovery. Continuity carries structured prior state (watches, relationships, snapshots) for at most one exchange session between close and premarket; retention of run archives is thirty days in Actions artifacts."
 }

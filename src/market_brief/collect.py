@@ -42,7 +42,7 @@ ALPACA_SNAPSHOTS = f"{ALPACA_DATA}/v2/stocks/snapshots"
 HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA)}
 ALPACA_UNIVERSE = (
     "SPY", "QQQ", "XLK", "XLF", "XLE", "XLI", "XLY", "XLP", "XLV", "XLU",
-    "XLB", "XLRE", "XLC", "GLD", "GDX", "AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG",
+    "XLB", "XLRE", "XLC", "GLD", "SLV", "GDX", "AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG",
 )
 USER_AGENT = "MarketBrief/0.1 personal research"
 # BLS blocks robots that carry no way to contact their owner (www.bls.gov/bls/pss.htm), and its firewall also refuses

@@ -68,7 +68,7 @@ SECTOR_LABELS = {
 SECTORS = set(SECTOR_LABELS)
 MEGACAPS = ("AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG")
 METALS = ("GLD", "SLV", "GDX")
-INSTRUMENT_LABELS = {"GLD": "Gold fund", "SLV": "Silver fund", "GDX": "Gold miners"}
+INSTRUMENT_LABELS = {"GLD": "Gold fund", "SLV": "Silver ETF proxy", "GDX": "Gold miners"}
 HORIZON_LABELS = {"daily return": "1d", "twenty-session return": "20s", "fifty-session average": "50d avg",
                   "distance from 50DMA": "vs 50DMA"}
 LEDGER_NOTE = "Exact values and baselines for every cell are in the evidence ledger."

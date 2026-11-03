@@ -9,6 +9,7 @@
     "Federal Reserve press-release RSS",
     "Alpaca historical daily bars (IEX, split-adjusted)",
     "Alpaca IEX current snapshots",
+    "SLV silver ETF proxy via the existing Alpaca batch",
     "sourced local input",
     "optional published Cuttingboard contract"
   ],
@@ -20,7 +21,6 @@
     "USDJPY",
     "crude futures",
     "gold/silver futures",
-    "SLV history",
     "VIX",
     "comprehensive breadth",
     "automated earnings",

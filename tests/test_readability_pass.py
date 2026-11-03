@@ -60,7 +60,7 @@ def test_a_verdict_citing_one_measurement_at_two_clocks_renders_one_before_after
     style = re.search(r"<style>.*?</style>", page, re.S).group(0)
     assert ".moves{display:block;background:var(--surface);" in style
     assert ".moves details.cite[open] .refs{background:none;" in style
-    assert since.count('<details class="cite">') == 1 and 'href="#evidence-SPY-intraday"' in block
+    assert since.count('<details class="cite">') == 1 and 'href="#interpretation-evidence-SPY-intraday"' in block
     assert "- **Weakened** — The benchmark print turned positive. Watch: If growth retains its lead" in md
     assert "  - SPY · −0.53% → +0.21% · turned higher · Premarket 5:41 AM → Intraday 12:06 PM PT · vs prior close" in md
 

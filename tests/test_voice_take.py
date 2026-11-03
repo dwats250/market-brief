@@ -380,15 +380,19 @@ def test_the_take_renders_last_in_the_read():
     assert take.startswith(" The tension is in the curve and metals, not in growth&#39;s 20-session lead over SPY, "
                            "which stands at +1.87 pp. <details class=\"cite\">")
     marker = take.split("<details", 1)[1].split("</details>", 1)[0]
-    assert re.findall(r'<span class="ref"><a href="#evidence-([^"]+)"', marker) == TAKE_IDS
+    assert re.findall(r'<span class="ref"><a href="#interpretation-evidence-([^"]+)"', marker) == TAKE_IDS
     assert read.rstrip().endswith("</details></div></div>")  # the take is the last block inside `.read`
     # Markdown: the take is the paragraph after the read, then one ordinary blank line.
     lines = md.splitlines()
     index = next(i for i, line in enumerate(lines) if line.startswith("**The take:**"))
-    assert lines[index] == ("**The take:** The tension is in the curve and metals, not in growth&#x27;s 20-session "
-                            "lead over SPY, which stands at +1.87 pp. [evidence](#evidence-treasury-2y-change) "
-                            "[evidence](#evidence-treasury-10y-change) [evidence](#evidence-GDX-spread20) "
-                            "[evidence](#evidence-QQQ-spread20)")
+    assert lines[index] == " ".join([
+        "**The take:** The tension is in the curve and metals, not in growth&#x27;s 20-session",
+        "lead over SPY, which stands at +1.87 pp.",
+        "[evidence](#interpretation-evidence-treasury-2y-change)",
+        "[evidence](#interpretation-evidence-treasury-10y-change)",
+        "[evidence](#interpretation-evidence-GDX-spread20)",
+        "[evidence](#interpretation-evidence-QQQ-spread20)",
+    ])
     # The fixture has no current prints, so the coverage note is the next block; nothing interpretive follows.
     assert lines[index - 1] == "" and lines[index + 1] == ""
     assert lines[index + 2] == "Missing: current prints unavailable."
@@ -510,7 +514,9 @@ def test_a_carried_take_keeps_the_values_and_clock_its_analyst_saw(monkeypatch, 
         line = take_line(page)
         assert "SPY at −0.53% is a rates story until tech confirms it." in line
         assert "+0.80%" not in line
-        marker = re.search(r'href="#evidence-SPY-intraday">([^<]*)</a><b>([^<]*)</b><small>([^<]*)</small>', line)
+        marker = re.search(
+            r'href="#interpretation-evidence-SPY-intraday">([^<]*)</a><b>([^<]*)</b>'
+            r'<small>([^<]*)</small>', line)
         assert marker.groups() == ("SPY · Intraday vs prior close", "−0.53%", "7:01 AM PT")
     ledger = refresh.split('id="evidence-SPY-intraday"', 1)[1].split("</div>", 1)[0]
     assert '<span class="value">+0.80%</span>' in ledger

@@ -30,6 +30,7 @@ NEAR_CLOSE_GRACE = timedelta(minutes=90)
 # and that month's previous and revised estimates. Only release rows carry these fields.
 RELEASE_FIELDS = ("reference_period", "revised_month", "revised_from", "revised_to")
 REFERENCE_MONTH = re.compile(r"\d{4}-(?:0[1-9]|1[0-2])")
+SECTOR_ETFS = frozenset({"XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY"})
 
 
 def timestamp(value):
@@ -345,8 +346,9 @@ def finalize_coverage(packet):
              "prior close", "Treasury prior-close/current as available",
              "provisional session-ending prints" if provisional
              else "current prints available" if has_current else "current prints unavailable",
-             "breadth available" if any(r.get("topic") in {"XLI", "XLK", "XLF"} for r in packet["derived"])
-             else "breadth unavailable"]
+             ("sector ETF proxies present; constituent breadth unavailable"
+              if any(r.get("topic") in SECTOR_ETFS for r in packet["derived"])
+              else "no sector ETF proxies; constituent breadth unavailable")]
     if packet["run"]["session"].get("session_gap"):
         basis.append("session gap / holiday")
     packet["coverage"]["basis"] = "Basis: " + " · ".join(basis)

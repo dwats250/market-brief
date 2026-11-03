@@ -7,6 +7,7 @@ from profiles import light_opening, light_profile  # noqa: F401  (fixture)
 from test_history_admission import packet_at
 from test_pipeline import fixture_packet, narrative
 
+from market_brief.evidence import finalize_coverage
 from market_brief.render import change_column, compact_equity_rows, measure_label, presentation, render
 
 # Tuesday 2026-09-08's regular session, as `packet["run"]["session"]` carries it.
@@ -152,8 +153,8 @@ def test_no_figure_strip_and_current_prints_keep_their_label_in_the_tables():
 
 
 # 10. The analyst's coverage caveat is the reader-facing line inside Sources & coverage; the generated
-# Basis line and other plumbing live in Technical details, where "breadth available" (sector rows exist)
-# can no longer sit beside the analyst's "no breadth feed".
+# Basis line and other plumbing live in Technical details, where sector ETF proxies are clearly distinguished from
+# constituent-level market breadth.
 def sources_reading_line(page):
     return page.split("<h2>Sources &amp; coverage</h2>", 1)[1].split("<details", 1)[0]
 
@@ -162,8 +163,7 @@ def test_basis_excludes_technical_plumbing():
     packet = fixture_packet()
     md, page = render(packet, narrative())
     reading = sources_reading_line(page)
-    for plumbing in ("Basis:", "Cuttingboard", "Bootstrap", "calendar", "BASELINE", "breadth available",
-                     "breadth unavailable"):
+    for plumbing in ("Basis:", "Cuttingboard", "Bootstrap", "calendar", "BASELINE", "constituent breadth"):
         assert plumbing not in reading
     assert narrative()["banner"]["limitation"][:40] in reading
     technical = page.split("Technical details", 1)[1]
@@ -171,6 +171,16 @@ def test_basis_excludes_technical_plumbing():
     assert "Basis:" in technical and "prior close" in technical
     header = md.split("## What matters next")[0]
     assert "Bootstrap" not in header and "Basis:" not in header
+
+
+def test_basis_labels_sector_etfs_as_proxies_and_never_claims_comprehensive_breadth():
+    packet = fixture_packet()
+    assert "sector ETF proxies present; constituent breadth unavailable" in packet["coverage"]["basis"]
+    packet["derived"] = [row for row in packet["derived"] if row["topic"] not in {
+        "XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY",
+    }]
+    finalize_coverage(packet)
+    assert "no sector ETF proxies; constituent breadth unavailable" in packet["coverage"]["basis"]
 
 
 def test_basis_describes_current_prints_without_premarket_wording():

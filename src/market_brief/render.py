@@ -21,7 +21,18 @@ from zoneinfo import ZoneInfo
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .actuals import CHANGE as PERCENT_CHANGE
-from .actuals import COMBINED, EVENT_TITLE, JOBS, PERCENT, REVISION, period_name
+from .actuals import (
+    COMBINED,
+    EVENT_TITLE,
+    FAMILIES,
+    JOBS,
+    JOLTS_REVISION,
+    PERCENT,
+    PRODUCTIVITY_REVISION,
+    REVISION,
+    event_family,
+    period_name,
+)
 from .continuity import CARRY_LIMIT, interpretation_record
 from .curve import (
     CHANGE,
@@ -93,7 +104,7 @@ SOURCE_STATUS_LABELS = {"AVAILABLE": "Available", "UNAVAILABLE": "Unavailable", 
 SIGNED_METRICS = {"daily return", "premarket return", "intraday return", "distance from 50DMA"}
 MINUS = "\u2212"
 RATE_UNITS = {"% yield", "bp", SPREAD_UNIT}
-RELEASE_UNITS = {JOBS, PERCENT, PERCENT_CHANGE}
+RELEASE_UNITS = {JOBS, PERCENT, PERCENT_CHANGE, "million openings", "openings"}
 # The economic release card (Macro & rates): one line per measure in the release's own order. A change pair reads
 # `+0.1% m/m · +3.0% y/y`; payroll revisions read `Jul +21k → −10k` per month and then `Combined −60k`.
 RELEASE_LINES = (("Payrolls", ("nonfarm payroll change",)), ("Unemployment", ("unemployment rate",)),
@@ -101,7 +112,10 @@ RELEASE_LINES = (("Payrolls", ("nonfarm payroll change",)), ("Unemployment", ("u
                                           "average hourly earnings, 12-month change")),
                  ("CPI", ("CPI-U all items, monthly change", "CPI-U all items, 12-month change")),
                  ("Core CPI", ("CPI-U all items less food and energy, monthly change",
-                               "CPI-U all items less food and energy, 12-month change")))
+                               "CPI-U all items less food and energy, 12-month change")),
+                 ("Job openings", ("job openings level",)), ("Openings rate", ("job openings rate",)),
+                 ("Labor productivity", ("nonfarm business labor productivity",)),
+                 ("Unit labor costs", ("nonfarm business unit labor costs",)))
 PAIR_WORDS = {"monthly change": "m/m", "12-month change": "y/y"}
 SHORT_MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 RATE_METRICS = {LEVEL, CHANGE, SPREAD_LEVEL, SPREAD_CHANGE, REAL_LEVEL, REAL_CHANGE, IC_LEVEL, IC_CHANGE}
@@ -501,6 +515,11 @@ def release_display(value, unit):
         return f"{MINUS if whole < 0 else '+' if whole > 0 else ''}{abs(whole):,}k"
     if unit == PERCENT:
         return f"{value:.1f}%"
+    if unit == "million openings":
+        return f"{value:.1f}m"
+    if unit == "openings":
+        whole = round(value)
+        return f"{MINUS if whole < 0 else '+' if whole > 0 else ''}{abs(whole):,}"
     tenth = round(value, 1)
     return f"{MINUS if tenth < 0 else '+' if tenth > 0 else ''}{abs(tenth):.1f}%"
 
@@ -825,7 +844,9 @@ def release_cards(rows, events, sources=()):
                 lines.append(dict(label=label, values=[" · ".join(
                     f"{formatted(row)} {PAIR_WORDS[row['metric'].rsplit(', ', 1)[1]]}" if len(metrics) > 1
                     else formatted(row) for row in present)]))
-        revisions = sorted((row for row in members if row["metric"] == REVISION), key=lambda row: row["revised_month"])
+        revisions = sorted((row for row in members if row["metric"] in
+                            (REVISION, JOLTS_REVISION, PRODUCTIVITY_REVISION)),
+                           key=lambda row: row.get("revised_period", row.get("revised_month", "")))
         combined = [row for row in members if row["metric"] == COMBINED]
         unread = any(source.get("status") == "DEGRADED" for source in sources
                      if source["id"] in {row["source_id"] for row in members})
@@ -836,10 +857,19 @@ def release_cards(rows, events, sources=()):
             lines.append(dict(label="Revisions", values=[
                 *(f"{SHORT_MONTH_NAMES[int(row['revised_month'][5:]) - 1]} "
                   f"{formatted(dict(row, value=row['revised_from']))} \u2192 "
-                  f"{formatted(dict(row, value=row['revised_to']))}" for row in revisions),
+                  f"{formatted(dict(row, value=row['revised_to']))}" for row in revisions
+                  if row["metric"] == REVISION),
+                *(f"{SHORT_MONTH_NAMES[int(row['revised_month'][5:]) - 1]} openings "
+                  f"{formatted(row)}" for row in revisions if row["metric"] == JOLTS_REVISION),
+                *(f"{period_name(row['revised_period'])} "
+                  f"{formatted(dict(row, value=row['revised_from']))} \u2192 "
+                  f"{formatted(dict(row, value=row['revised_to']))}" for row in revisions
+                  if row["metric"] == PRODUCTIVITY_REVISION),
                 *(f"Combined {formatted(row)}" for row in combined)]))
+        title_family = next((family for family, spec in FAMILIES.items() if spec["title"] == title), None)
         happened = [event["id"] for event in events if event.get("scheduled_at") == released
-                    and (EVENT_TITLE.fullmatch(event.get("title") or "") or [None, None])[1] == title]
+                    and event_family((EVENT_TITLE.fullmatch(event.get("title") or "") or [None, None])[1])
+                    == title_family]
         cards.append(dict(time=pacific_time(released), title=title, period=period_name(period), lines=lines,
                           ids=[row["id"] for row in members], events=happened))
     return cards

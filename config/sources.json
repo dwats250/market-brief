@@ -6,6 +6,7 @@
     "Treasury daily real (TIPS) yield XML",
     "BLS release-calendar ICS, else the official monthly List View (current and next exchange session)",
     "BLS Employment Situation and CPI values from their current-edition release pages, once the calendar's release time passes",
+    "BLS JOLTS and Productivity and Costs readers (disabled until explicitly enabled in config/economic_actuals.json)",
     "Federal Reserve press-release RSS",
     "Alpaca historical daily bars (IEX, split-adjusted)",
     "Alpaca IEX current snapshots",

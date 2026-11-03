@@ -25,7 +25,8 @@ ANCHORS = ("previous_close", "premarket", "latest")
 # edition states, and the last accepted synthesis frozen for deterministic refreshes to render.
 SLOTS = ("close", "premarket", "latest", "interpretation")
 INTERPRETATION_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at", "frequency",
-                         "status", "magnitude", "title", "published_at", "scheduled_at", "session_relation")
+                         "source_id", "status", "magnitude", "title", "published_at", "scheduled_at",
+                         "session_relation")
 ASSESSMENTS = ("new", "strengthened", "weakened", "reversed", "unresolved")
 CARRIED_ASSESSMENTS = ("strengthened", "weakened", "reversed", "unresolved")
 LIFECYCLES = ("active", "expired", "retired")

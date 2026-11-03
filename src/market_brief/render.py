@@ -21,7 +21,18 @@ from zoneinfo import ZoneInfo
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .actuals import CHANGE as PERCENT_CHANGE
-from .actuals import COMBINED, EVENT_TITLE, JOBS, PERCENT, REVISION, period_name
+from .actuals import (
+    COMBINED,
+    EVENT_TITLE,
+    FAMILIES,
+    JOBS,
+    JOLTS_REVISION,
+    PERCENT,
+    PRODUCTIVITY_REVISION,
+    REVISION,
+    event_family,
+    period_name,
+)
 from .continuity import CARRY_LIMIT, interpretation_record
 from .curve import (
     CHANGE,
@@ -68,7 +79,7 @@ SECTOR_LABELS = {
 SECTORS = set(SECTOR_LABELS)
 MEGACAPS = ("AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG")
 METALS = ("GLD", "SLV", "GDX")
-INSTRUMENT_LABELS = {"GLD": "Gold fund", "SLV": "Silver fund", "GDX": "Gold miners"}
+INSTRUMENT_LABELS = {"GLD": "Gold fund", "SLV": "Silver ETF proxy", "GDX": "Gold miners"}
 HORIZON_LABELS = {"daily return": "1d", "twenty-session return": "20s", "fifty-session average": "50d avg",
                   "distance from 50DMA": "vs 50DMA"}
 LEDGER_NOTE = "Exact values and baselines for every cell are in the evidence ledger."
@@ -93,7 +104,8 @@ SOURCE_STATUS_LABELS = {"AVAILABLE": "Available", "UNAVAILABLE": "Unavailable", 
 SIGNED_METRICS = {"daily return", "premarket return", "intraday return", "distance from 50DMA"}
 MINUS = "\u2212"
 RATE_UNITS = {"% yield", "bp", SPREAD_UNIT}
-RELEASE_UNITS = {JOBS, PERCENT, PERCENT_CHANGE}
+CANADIAN_PERSONS = "persons"
+RELEASE_UNITS = {JOBS, PERCENT, PERCENT_CHANGE, "million openings", "openings", CANADIAN_PERSONS}
 # The economic release card (Macro & rates): one line per measure in the release's own order. A change pair reads
 # `+0.1% m/m · +3.0% y/y`; payroll revisions read `Jul +21k → −10k` per month and then `Combined −60k`.
 RELEASE_LINES = (("Payrolls", ("nonfarm payroll change",)), ("Unemployment", ("unemployment rate",)),
@@ -101,7 +113,10 @@ RELEASE_LINES = (("Payrolls", ("nonfarm payroll change",)), ("Unemployment", ("u
                                           "average hourly earnings, 12-month change")),
                  ("CPI", ("CPI-U all items, monthly change", "CPI-U all items, 12-month change")),
                  ("Core CPI", ("CPI-U all items less food and energy, monthly change",
-                               "CPI-U all items less food and energy, 12-month change")))
+                               "CPI-U all items less food and energy, 12-month change")),
+                 ("Job openings", ("job openings level",)), ("Openings rate", ("job openings rate",)),
+                 ("Labor productivity", ("nonfarm business labor productivity",)),
+                 ("Unit labor costs", ("nonfarm business unit labor costs",)))
 PAIR_WORDS = {"monthly change": "m/m", "12-month change": "y/y"}
 SHORT_MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 RATE_METRICS = {LEVEL, CHANGE, SPREAD_LEVEL, SPREAD_CHANGE, REAL_LEVEL, REAL_CHANGE, IC_LEVEL, IC_CHANGE}
@@ -501,6 +516,14 @@ def release_display(value, unit):
         return f"{MINUS if whole < 0 else '+' if whole > 0 else ''}{abs(whole):,}k"
     if unit == PERCENT:
         return f"{value:.1f}%"
+    if unit == "million openings":
+        return f"{value:.1f}m"
+    if unit == "openings":
+        whole = round(value)
+        return f"{MINUS if whole < 0 else '+' if whole > 0 else ''}{abs(whole):,}"
+    if unit == CANADIAN_PERSONS:
+        sign = MINUS if value < 0 else "+" if value > 0 else ""
+        return f"{sign}{abs(value):,.0f} persons"
     tenth = round(value, 1)
     return f"{MINUS if tenth < 0 else '+' if tenth > 0 else ''}{abs(tenth):.1f}%"
 
@@ -825,7 +848,13 @@ def release_cards(rows, events, sources=()):
                 lines.append(dict(label=label, values=[" · ".join(
                     f"{formatted(row)} {PAIR_WORDS[row['metric'].rsplit(', ', 1)[1]]}" if len(metrics) > 1
                     else formatted(row) for row in present)]))
-        revisions = sorted((row for row in members if row["metric"] == REVISION), key=lambda row: row["revised_month"])
+        for label, metric in (("Canadian employment change", "Canadian employment change"),
+                              ("Canadian unemployment", "Canadian unemployment rate")):
+            if metric in by_metric:
+                lines.append(dict(label=label, values=[formatted(by_metric[metric])]))
+        revisions = sorted((row for row in members if row["metric"] in
+                            (REVISION, JOLTS_REVISION, PRODUCTIVITY_REVISION)),
+                           key=lambda row: row.get("revised_period", row.get("revised_month", "")))
         combined = [row for row in members if row["metric"] == COMBINED]
         unread = any(source.get("status") == "DEGRADED" for source in sources
                      if source["id"] in {row["source_id"] for row in members})
@@ -836,10 +865,21 @@ def release_cards(rows, events, sources=()):
             lines.append(dict(label="Revisions", values=[
                 *(f"{SHORT_MONTH_NAMES[int(row['revised_month'][5:]) - 1]} "
                   f"{formatted(dict(row, value=row['revised_from']))} \u2192 "
-                  f"{formatted(dict(row, value=row['revised_to']))}" for row in revisions),
+                  f"{formatted(dict(row, value=row['revised_to']))}" for row in revisions
+                  if row["metric"] == REVISION),
+                *(f"{SHORT_MONTH_NAMES[int(row['revised_month'][5:]) - 1]} openings "
+                  f"{formatted(row)}" for row in revisions if row["metric"] == JOLTS_REVISION),
+                *(f"{period_name(row['revised_period'])} "
+                  f"{formatted(dict(row, value=row['revised_from']))} \u2192 "
+                  f"{formatted(dict(row, value=row['revised_to']))}" for row in revisions
+                  if row["metric"] == PRODUCTIVITY_REVISION),
                 *(f"Combined {formatted(row)}" for row in combined)]))
+        title_family = next((family for family, spec in FAMILIES.items() if spec["title"] == title), None)
         happened = [event["id"] for event in events if event.get("scheduled_at") == released
-                    and (EVENT_TITLE.fullmatch(event.get("title") or "") or [None, None])[1] == title]
+                    and (title_family is not None and event_family(
+                        (EVENT_TITLE.fullmatch(event.get("title") or "") or [None, None])[1]) == title_family
+                         or title == "Statistics Canada Labour Force Survey"
+                         and event.get("title", "").startswith(title + " for "))]
         cards.append(dict(time=pacific_time(released), title=title, period=period_name(period), lines=lines,
                           ids=[row["id"] for row in members], events=happened))
     return cards
@@ -908,11 +948,12 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
             return formatted(row) if row else NOT_APPLICABLE
         return PLACEHOLDER.sub(value, text)
 
-    def refs(ids, rows=None):
+    def refs(ids, rows=None, snapshot=None):
         """The rows behind one block, formatted for a quiet expandable marker; IDs are unchanged.
 
         Prose cites the frozen rows the analyst saw; table proofs cite this run's rows.
         """
+        snapshot = rows is None if snapshot is None else snapshot
         rows = frozen if rows is None else rows
         result = []
         for ref in ids:
@@ -926,7 +967,10 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
             result.append(dict(id=ref, label=label, display=formatted(row) if "value" in row else "",
                                when=(release_clock(row, session) if row.get("frequency") == "release" else
                                      compact_clock(row.get("observed_at") or row.get("published_at") or "")),
-                               anchor=ref in catalog, topic=row.get("topic") or ""))
+                               anchor=(True if snapshot else ref in catalog),
+                               anchor_id=(f"evidence-{ref}" if not snapshot else
+                                          f"interpretation-evidence-{ref}"),
+                               topic=row.get("topic") or ""))
         return result
 
     def cited_rows(ids, rows=None):
@@ -1052,7 +1096,18 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
             reason=expand(update["reason"]) if update else "",
             evidence_ids=update["evidence_ids"] if update else watch["evidence_refs"],
             refs=(refs(update["evidence_ids"]) if update
-                  else refs(watch["evidence_refs"], {**frozen, **creation}))))
+                  else [dict(ref, anchor=ref["id"] in (watch.get("values") or {}),
+                            anchor_id=f"watch-evidence-{watch['id']}-{ref['id']}")
+                        for ref in refs(watch["evidence_refs"], {**frozen, **creation}, snapshot=True)]),
+            creation_evidence=[dict(
+                id=ident, anchor_id=f"watch-evidence-{watch['id']}-{ident}",
+                metric_label=(reader_metric_label(row, session) if row.get("metric") else "Published / scheduled item"),
+                display=formatted(row) if "value" in row else row.get("title", NOT_APPLICABLE),
+                when=compact_clock(row.get("observed_at") or row.get("published_at") or "") or "date not preserved",
+                baseline=row.get("baseline") or "basis not preserved",
+                source_name=row.get("source_id") or "source not preserved",
+                source_id=row.get("source_id") or "source ID not preserved")
+                for ident, row in (watch.get("values") or {}).items() if ident in watch.get("evidence_refs", [])]))
     # The live set is exactly what `continuity.edition_state` carries forward: new watches first, then the
     # carried ones still active and not reversed, at most CARRY_LIMIT. The frozen prior list is already
     # newest-first, so no ranking of our own. A verdict (strengthened, weakened, reversed) is adjudication and
@@ -1258,6 +1313,21 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     evidence_groups = [dict(topic=topic, label=instrument_label(topic), rows=rows,
                             count=f"{len(rows)} observation{'s' if len(rows) != 1 else ''}")
                        for topic, rows in groups.items()]
+    interpretation_rows = [dict(
+        r, id=r.get("id") or ident,
+        display=formatted(r) if "value" in r else r.get("title", NOT_APPLICABLE), item="value" not in r,
+        metric_label=(reader_metric_label(r, session) if r.get("metric") else "Published / scheduled item"),
+        when=(release_clock(r, session) if r.get("frequency") == "release" else
+              compact_clock(r.get("observed_at") or r.get("published_at") or "")),
+        source_name=source_names.get(r.get("source_id"), r.get("source_id") or "not retained in snapshot"),
+        status_label=SOURCE_STATUS_LABELS.get(r.get("status", ""), (r.get("status") or "").title()))
+        for ident, r in frozen.items()]
+    interpretation_groups_by_topic = {}
+    for row in interpretation_rows:
+        interpretation_groups_by_topic.setdefault(row.get("topic") or row.get("title") or row["id"], []).append(row)
+    interpretation_groups = [dict(topic=topic, label=instrument_label(topic), rows=rows,
+                                  count=f"{len(rows)} observation{'s' if len(rows) != 1 else ''}")
+                             for topic, rows in interpretation_groups_by_topic.items()]
     sources = source_rows(packet["sources"])
     technical["sources_retrieved"] = [dict(id=s["id"], status=s.get("status", ""), reason=s.get("reason", ""),
                                            retrieved_at=s.get("retrieved_at", "")) for s in packet["sources"]]
@@ -1347,6 +1417,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         cuttingboard_section=dict(visible=cuttingboard_visible,
                                   paragraphs=[paragraph(p) for p in narrative["sections"]["cuttingboard"]]),
         sources=sources, unavailable_sources=sum(1 for s in sources if s["unavailable"]),
+        interpretation_groups=interpretation_groups,
         cuttingboard=cuttingboard,
         evidence=evidence_rows, evidence_groups=evidence_groups, context_items=packet["context_items"])
 
@@ -1356,8 +1427,10 @@ def markdown(view):
         text = " ".join(str(value).split())
         return re.sub(r"([\\`*_\[\]|])", r"\\\1", html.escape(text))
 
+    frozen_ids = {row["id"] for group in view["interpretation_groups"] for row in group["rows"]}
+
     def refs(ids):
-        return " ".join(f"[evidence](#evidence-{i})" for i in ids)
+        return " ".join(f"[evidence](#{'interpretation-evidence' if i in frozen_ids else 'evidence'}-{i})" for i in ids)
 
     def para(p):
         blocks = [f"{esc(p['text'])} {refs(p['evidence_ids'])}"]
@@ -1427,7 +1500,9 @@ def markdown(view):
             text = f"{text.rstrip()} Confirm: {esc(c['confirmation'])}"
         if c["contradiction"]:
             text = f"{text.rstrip()} Changes it: {esc(c['contradiction'])}"
-        lines.append(f"- **FROM AN EARLIER READ{status} · {esc(c['phrase'])}{passed}{pointer}** — {text}")
+        creation_refs = " ".join(f"[evidence](#{r['anchor_id']})" for r in c["refs"] if r["anchor"])
+        lines.append(f"- **FROM AN EARLIER READ{status} · {esc(c['phrase'])}{passed}{pointer}** — "
+                     f"{text} {creation_refs}")
     if nxt["retired"]:
         count = len(nxt["retired"])
         lines.append(f"- Earlier watches · {count} ended without a verdict: "
@@ -1549,6 +1624,17 @@ def markdown(view):
         lines += [f"- [{esc(s['name'])}](<{s['url']}>) · {esc(s['kind'])} · {esc(s['status'])} "
                   f"· retrieved {esc(s['retrieved_at'])}"]
     lines += ["", "### Evidence ledger", ""]
+    if view["interpretation_groups"]:
+        lines += [f"**Evidence at analysis · {esc(view['interpretation_clock'])}**", ""]
+        for group in view["interpretation_groups"]:
+            lines += [f"**{esc(group['label'])}**", ""]
+            for row in group["rows"]:
+                when = esc(row.get("observed_at") or row.get("published_at") or "not exposed")
+                source = esc(row.get("source_id") or "not retained in snapshot")
+                lines += [f'<a id="interpretation-evidence-{row["id"]}"></a>',
+                          f"**{esc(row['id'])}** · {esc(row.get('topic', row.get('title', '')))} · "
+                          f"{esc(row['display'])} · {esc(row.get('baseline', 'published / scheduled item'))} "
+                          f"· observed/published {when} · source {source}", ""]
     for group in view["evidence_groups"]:
         lines += [f"**{esc(group['topic'])}**", ""]
         for row in group["rows"]:
@@ -1557,6 +1643,14 @@ def markdown(view):
                       f"{esc(row['display'])} · {esc(row.get('baseline', 'published / scheduled item'))} "
                       f"· observed/published {esc(row.get('observed_at') or row.get('published_at') or 'not exposed')} "
                       f"· source {esc(row['source_id'])}", ""]
+    carried_evidence = [(c, row) for c in view["next"]["carried"] for row in c["creation_evidence"]]
+    if carried_evidence:
+        lines += ["**Carried watch creation evidence**", ""]
+        for watch, row in carried_evidence:
+            lines += [f'<a id="{row["anchor_id"]}"></a>',
+                      f"**{esc(row['id'])}** · {esc(row['metric_label'])} · {esc(row['display'])} · "
+                      f"{esc(row['baseline'])} · observed {esc(row['when'])} · source {esc(row['source_name'])} "
+                      f"({esc(row['source_id'])}) · watch {esc(watch['id'])}", ""]
     technical = view["technical"]
     lines += ["", "### Technical details", "",
               f"Generated UTC: {esc(technical['generated_utc'])}",

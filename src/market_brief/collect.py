@@ -28,6 +28,8 @@ from .actuals import (
 from .evidence import ET as EASTERN
 from .evidence import ROOT, read_json, timestamp
 from .schedule import next_session_date, prior_session_date
+from .stats_can import SCHEDULE as STATCAN_SCHEDULE
+from .stats_can import StatisticsCanadaError, lfs_actual, lfs_schedule
 
 TREASURY = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml"
 BLS = "https://www.bls.gov/schedule/news_release/bls.ics"
@@ -39,7 +41,7 @@ CB = "https://dwats250.github.io/cuttingboard/contract.json"
 ALPACA_DATA = "https://data.alpaca.markets"
 ALPACA_BARS = f"{ALPACA_DATA}/v2/stocks/bars"
 ALPACA_SNAPSHOTS = f"{ALPACA_DATA}/v2/stocks/snapshots"
-HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA)}
+HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA, STATCAN_SCHEDULE)}
 ALPACA_UNIVERSE = (
     "SPY", "QQQ", "XLK", "XLF", "XLE", "XLI", "XLY", "XLP", "XLV", "XLU",
     "XLB", "XLRE", "XLC", "GLD", "SLV", "GDX", "AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG",
@@ -61,8 +63,10 @@ def allowed(url):
     parts = urlsplit(url)
     if parts.scheme != "https" or parts.hostname not in HOSTS:
         return False
-    return (parts.hostname != urlsplit(BLS).hostname or url == BLS or url in RELEASE_PAGES
-            or bool(BLS_LIST.fullmatch(url)))
+    if parts.hostname == urlsplit(BLS).hostname:
+        return url == BLS or url in RELEASE_PAGES or bool(BLS_LIST.fullmatch(url))
+    return (parts.hostname != urlsplit(STATCAN_SCHEDULE).hostname or url == STATCAN_SCHEDULE
+            or bool(re.fullmatch(r"https://www150\.statcan\.gc\.ca/n1/daily-quotidien/\d{6}/dq\d{6}a-eng\.htm", url)))
 
 
 def user_agent(url):
@@ -476,12 +480,12 @@ def bls_calendar(now, deadline, fetcher):
     return events, schedule_url(*months[0]), f"monthly schedule {label}; calendar file: {file_failure}", retrieved
 
 
-def release_actuals(events, now, deadline, fetcher):
+def release_actuals(events, now, deadline, fetcher, enabled=None):
     """The official values of each BLS release on today's admitted calendar whose scheduled time has passed: one read
     of its family's fixed current-edition page, admitted only as that scheduled release. Returns `(rows, records)`,
     one source record per release read (or refused); a page that cannot be admitted leaves the event to stand alone."""
     rows, records = [], []
-    for family, event, period in due_releases(events, now):
+    for family, event, period in due_releases(events, now, enabled):
         spec = FAMILIES[family]
         record = source(spec["source"], spec["name"], "release", spec["url"], now)
         record["coverage_date"] = now.astimezone(EASTERN).date().isoformat()
@@ -504,7 +508,7 @@ def release_actuals(events, now, deadline, fetcher):
     return rows, records
 
 
-def bls_collection(now, deadline, fetcher):
+def bls_collection(now, deadline, fetcher, enabled=None):
     """BLS for one run: the calendar (the file, else its official fallback pages; one source record either way), then
     the official values of today's releases whose time has passed. The admitted calendar is the only trigger for a
     release page: no calendar, no release read. Returns `(sources, events, observations)`."""
@@ -515,8 +519,69 @@ def bls_collection(now, deadline, fetcher):
         record.update(status="UNAVAILABLE", reason=failure(exc))
         return [record], [], []
     record.update(retrieved_at=retrieved.isoformat(), coverage_date=now.astimezone(EASTERN).date().isoformat())
-    rows, records = release_actuals(events, now, deadline, fetcher)
+    if enabled is None:
+        config = read_json(ROOT / "config/economic_actuals.json")
+        enabled = config.get("enabled_families")
+        if (not isinstance(enabled, list) or not enabled or any(family not in FAMILIES for family in enabled)
+                or len(enabled) != len(set(enabled))):
+            raise SourceError("economic actual reader allowlist is malformed")
+    rows, records = release_actuals(events, now, deadline, fetcher, enabled)
     return [record, *records], events, rows
+
+
+def stats_can_collection(now, deadline, fetcher):
+    """Read the dated LFS event and archived Daily headline after explicit source enablement."""
+    try:
+        enabled = read_json(SOURCES_CONFIG).get("statcan_lfs", False)
+    except (OSError, ValueError):
+        return [], [], []
+    if type(enabled) is not bool or not enabled:
+        return [], [], []
+    retrieved = datetime.now(timezone.utc)
+    calendar = source("statcan-calendar", "Statistics Canada release calendar (planning schedule)", "calendar",
+                      STATCAN_SCHEDULE, now)
+    try:
+        text = fetcher(STATCAN_SCHEDULE, deadline)
+        retrieved = datetime.now(timezone.utc)
+        event = lfs_schedule(text, now, retrieved)
+    except (SourceError, StatisticsCanadaError, ValueError, UnicodeError, OverflowError) as exc:
+        calendar.update(status="UNAVAILABLE", reason=failure(exc), retrieved_at=retrieved.isoformat())
+        return [calendar], [], []
+    calendar.update(retrieved_at=retrieved.isoformat(), coverage_date=now.astimezone(EASTERN).date().isoformat())
+    if event is None:
+        return [calendar], [], []
+    period, url = event.pop("period"), event.pop("url")
+    scheduled = datetime.fromisoformat(event["scheduled_at"].replace("Z", "+00:00"))
+    target_dates = {now.astimezone(EASTERN).date().isoformat(), next_session_date(now)}
+    if scheduled.astimezone(EASTERN).date().isoformat() not in target_dates:
+        return [calendar], [], []
+    events = [event]
+    if scheduled > now:
+        return [calendar], events, []
+    actual = source("statcan-lfs", "Statistics Canada Labour Force Survey", "calendar", url, now)
+    try:
+        body = fetcher(url, deadline)
+        actual_retrieved = datetime.now(timezone.utc)
+        release = lfs_actual(body, scheduled, period)
+        month_name = MONTHS[int(period[5:]) - 1]
+        attribution = (f"Adapted from Statistics Canada, Labour Force Survey (The Daily), {month_name} {period[:4]}. "
+                       "This does not constitute an endorsement of this product.")
+        actual.update(name=attribution,
+                      retrieved_at=actual_retrieved.isoformat(), coverage_date=scheduled.date().isoformat())
+        common = dict(topic=release["title"], frequency="release", retrieved_at=actual_retrieved.isoformat(),
+                      observed_at=release["published_at"], source_id="statcan-lfs", status="AVAILABLE", reason="",
+                      reference_period=period)
+        rows = [dict(common, id="statcan-lfs-employment-change", metric="Canadian employment change",
+                     value=release["values"]["employment_change"], unit="persons",
+                     baseline=("Canada, monthly seasonally adjusted employment change from Statistics Canada's LFS; "
+                               "8:30 a.m. Eastern per the official release schedule")),
+                dict(common, id="statcan-lfs-unemployment-rate", metric="Canadian unemployment rate",
+                     value=release["values"]["unemployment_rate"], unit="percent",
+                     baseline="Canada, Labour Force Survey unemployment rate, seasonally adjusted")]
+        return [calendar, actual], events, rows
+    except (SourceError, StatisticsCanadaError, ValueError, UnicodeError, OverflowError) as exc:
+        actual.update(status="UNAVAILABLE", reason=failure(exc))
+        return [calendar, actual], events, []
 
 
 def fed_context(text, now):
@@ -831,6 +896,10 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
         try:
             if ident == "bls":
                 sources, events, rows = bls_collection(now, deadline, fetcher)
+                raw["sources"].extend(sources)
+                raw["events"].extend(events)
+                raw["observations"].extend(rows)
+                sources, events, rows = stats_can_collection(now, deadline, fetcher)
                 raw["sources"].extend(sources)
                 raw["events"].extend(events)
                 raw["observations"].extend(rows)

@@ -28,8 +28,9 @@ NEAR_CLOSE_WINDOW = timedelta(minutes=15)
 NEAR_CLOSE_GRACE = timedelta(minutes=90)
 # An official release value (`actuals.py`) also names the month it measures, and a payroll revision the month it revises
 # and that month's previous and revised estimates. Only release rows carry these fields.
-RELEASE_FIELDS = ("reference_period", "revised_month", "revised_from", "revised_to")
-REFERENCE_MONTH = re.compile(r"\d{4}-(?:0[1-9]|1[0-2])")
+RELEASE_FIELDS = ("reference_period", "revised_month", "revised_period", "revised_from", "revised_to")
+REFERENCE_PERIOD = re.compile(r"\d{4}-(?:(?:0[1-9]|1[0-2])|Q[1-4])")
+SECTOR_ETFS = frozenset({"XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY"})
 
 
 def timestamp(value):
@@ -151,10 +152,14 @@ def normalize_observation(raw, now, near_close=None, session_close=None):
             if observed.astimezone(ET).date() != now.astimezone(ET).date():
                 return reject("STALE", "release published in an earlier session")
             fields = {key: raw[key] for key in RELEASE_FIELDS if raw.get(key) is not None}
-            if not REFERENCE_MONTH.fullmatch(str(fields.get("reference_period", ""))):
+            if not REFERENCE_PERIOD.fullmatch(str(fields.get("reference_period", ""))):
                 return reject("INVALID", "release without a reference month")
             if (not all(finite(fields[key]) for key in ("revised_from", "revised_to") if key in fields)
-                    or not REFERENCE_MONTH.fullmatch(str(fields.get("revised_month", "0000-01")))):
+                    or (fields.get("revised_month") and not re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])",
+                                                                          str(fields["revised_month"])))
+                    or (fields.get("revised_period") and not REFERENCE_PERIOD.fullmatch(
+                        str(fields["revised_period"]))
+                        or (fields.get("revised_month") and fields.get("revised_period")))):
                 return reject("INVALID", "malformed release revision")
             row.update(fields, status="AVAILABLE", freshness="DATED")
         else:
@@ -345,8 +350,9 @@ def finalize_coverage(packet):
              "prior close", "Treasury prior-close/current as available",
              "provisional session-ending prints" if provisional
              else "current prints available" if has_current else "current prints unavailable",
-             "breadth available" if any(r.get("topic") in {"XLI", "XLK", "XLF"} for r in packet["derived"])
-             else "breadth unavailable"]
+             ("sector ETF proxies present; constituent breadth unavailable"
+              if any(r.get("topic") in SECTOR_ETFS for r in packet["derived"])
+              else "no sector ETF proxies; constituent breadth unavailable")]
     if packet["run"]["session"].get("session_gap"):
         basis.append("session gap / holiday")
     packet["coverage"]["basis"] = "Basis: " + " · ".join(basis)

@@ -1,5 +1,5 @@
-"""Official BLS release values: the Employment Situation and the Consumer Price Index, read from BLS's fixed
-current-edition pages once the admitted calendar says the release has happened. Nothing here fetches.
+"""Official BLS release values, read from fixed current-edition pages after the admitted calendar says a release
+has happened. Nothing here fetches.
 
 Two narrow readers, never a general scraper. The CPI's four values come from its Table A. The Employment Situation's
 current-edition page holds only the release text, so its values come from BLS's standard sentences, each pinned by real
@@ -22,6 +22,12 @@ FAMILIES = {
                    name="BLS Employment Situation", heading="THE EMPLOYMENT SITUATION"),
     "cpi": dict(title="Consumer Price Index", url=CONSUMER_PRICE_INDEX, source="bls-cpi",
                 name="BLS Consumer Price Index", heading="CONSUMER PRICE INDEX"),
+    "jolts": dict(title="Job Openings and Labor Turnover", url="https://www.bls.gov/news.release/jolts.nr0.htm",
+                   source="bls-jolts", name="BLS JOLTS", heading="JOB OPENINGS AND LABOR TURNOVER",
+                   page_title="Job Openings and Labor Turnover Summary", enabled=False),
+    "productivity": dict(title="Productivity and Costs", url="https://www.bls.gov/news.release/prod2.nr0.htm",
+                         source="bls-productivity", name="BLS Productivity and Costs",
+                         heading="Productivity and Costs", enabled=False),
 }
 RELEASE_PAGES = tuple(family["url"] for family in FAMILIES.values())
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -29,12 +35,17 @@ MONTHS = ("January", "February", "March", "April", "May", "June", "July", "Augus
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 MONTH = "(" + "|".join(MONTHS) + ")"
 # The calendar names a release by its family alone (the ICS file) or with its reference month (the List View).
-EVENT_TITLE = re.compile(rf"(Employment Situation|Consumer Price Index)(?: for {MONTH} (\d{{4}}))?")
+QUARTERS = ("First", "Second", "Third", "Fourth")
+EVENT_TITLE = re.compile(
+    rf"(Employment Situation|Consumer Price Index|Job Openings and Labor Turnover(?: Survey)?|"
+    rf"Productivity and Costs(?: \([PR]\))?)(?: for (?:(?:{MONTH}) (\d{{4}})|"
+    rf"({'|'.join(QUARTERS)}) Quarter (\d{{4}}))?)?"
+)
 PAGE_TITLE = re.compile(r"(Employment Situation|Consumer Price Index) Summary - (\d{4}) M(0[1-9]|1[0-2]) Results")
 EMBARGO = re.compile(r"Transmission of material in this (?:news )?release is embargoed until (?:USDL-\d{2}-\d{3,5} )?"
                      rf"(\d{{1,2}}):([0-5]\d) (a\.m\.|p\.m\.) \(ET\) ({'|'.join(WEEKDAYS)}), {MONTH} (\d{{1,2}}), "
                      r"(\d{4})")
-RELEASE_NUMBER = re.compile(r"\bUSDL-\d{2}-\d{3,5}\b")
+RELEASE_NUMBER = re.compile(r"\bUSDL-(?!00-0000)\d{2}-\d{3,5}\b")
 
 # The Employment Situation's standard sentences. A direction word outside these lists is not read.
 UP, DOWN = ("increased", "rose", "edged up", "grew"), ("decreased", "declined", "fell", "edged down")
@@ -115,8 +126,21 @@ MEASURES = {
         ("core_yy", "bls-cpi-core-yy", "CPI-U all items less food and energy, 12-month change", CHANGE,
          "U.S. city average, change over the past 12 months, not seasonally adjusted"),
     ),
+    "jolts": (
+        ("openings", "bls-jolts-openings", "job openings level", "million openings",
+         "total nonfarm, level on the last business day, seasonally adjusted"),
+        ("openings_rate", "bls-jolts-openings-rate", "job openings rate", PERCENT,
+         "total nonfarm, share of employment plus job openings, seasonally adjusted"),
+    ),
+    "productivity": (
+        ("productivity", "bls-productivity-labor-productivity", "nonfarm business labor productivity",
+         CHANGE, "quarterly change at seasonally adjusted annualized rate"),
+        ("unit_labor_costs", "bls-productivity-unit-labor-costs", "nonfarm business unit labor costs",
+         CHANGE, "quarterly change at seasonally adjusted annualized rate"),
+    ),
 }
 REVISION, COMBINED = "payroll revision", "combined payroll revision"
+JOLTS_REVISION, PRODUCTIVITY_REVISION = "job openings revision", "productivity revision"
 READER_NAMES = dict(unemployment="unemployment rate", earnings_mm="monthly earnings change",
                     earnings_yy="12-month earnings change", all_items_mm="monthly CPI change",
                     all_items_yy="12-month CPI change", core_mm="monthly core CPI change",
@@ -132,6 +156,9 @@ def plain(text):
 
 
 def period_name(period):
+    if re.fullmatch(r"\d{4}-Q[1-4]", period):
+        year, quarter = period.split("-Q")
+        return f"Q{quarter} {year}"
     year, month = period.split("-")
     return f"{MONTHS[int(month) - 1]} {year}"
 
@@ -408,6 +435,10 @@ def identity(family, text):
 def release_text(family, text):
     """A release read from its text alone: its identity and, for the Employment Situation, its values."""
     text = plain(text)
+    if family == "jolts":
+        return jolts_release(text)
+    if family == "productivity":
+        return productivity_release(text)
     released, period = identity(family, text)
     release = dict(family=family, title=FAMILIES[family]["title"], period=period, released_at=released, values={},
                    revisions=[], combined=None, note="")
@@ -421,6 +452,27 @@ def read_release(family, page):
     release text must name the same month before any value is read."""
     spec = FAMILIES[family]
     parts = page_parts(page)
+    if family == "jolts":
+        title = re.fullmatch(r"Job Openings and Labor Turnover Summary - (\d{4}) M(0[1-9]|1[0-2]) Results",
+                             parts["title"])
+        if (not title or parts["heading"] != spec["page_title"]
+                or parts["text"] is None):
+            raise ReleaseError("not the JOLTS current-edition release page")
+        release = jolts_release(plain(parts["text"]))
+        if release["period"] != f"{title[1]}-{title[2]}":
+            raise ReleaseError("the JOLTS page title and release text name different months")
+        return release
+    if family == "productivity":
+        title = re.fullmatch(
+            rf"({'|'.join(QUARTERS)}) Quarter (\d{{4}}), (Preliminary|Revised)(?: - \d{{4}} Q0[1-4] Results)?",
+            parts["title"], re.I)
+        if not title or parts["heading"] != f"{title[1]} Quarter {title[2]}, {title[3]}":
+            raise ReleaseError("not the Productivity and Costs current-edition release page")
+        release = productivity_release(plain(parts["text"]))
+        if release["period"] != f"{title[2]}-Q{QUARTERS.index(title[1].title()) + 1}":
+            raise ReleaseError("the productivity page title and release text name different quarters")
+        release["edition"] = title[3].lower()
+        return release
     title = PAGE_TITLE.fullmatch(parts["title"])
     if not title or title[1] != spec["title"] or parts["heading"] != f"{spec['title']} Summary":
         raise ReleaseError(f"not the {spec['title']} release page")
@@ -432,10 +484,117 @@ def read_release(family, page):
     return release
 
 
-def due_releases(events, now):
-    """Today's admitted releases of the two families whose scheduled time has passed, as (family, event, the reference
-    month the calendar names or None). A family listed twice today yields (family, None, None): which page is which
-    cannot be told."""
+JOLTS_RELEASE = re.compile(
+    rf"For release (\d{{1,2}}):(\d{{2}}) (a\.m\.|p\.m\.) \(ET\) ({'|'.join(WEEKDAYS)}), "
+    rf"{MONTH} (\d{{1,2}}), (\d{{4}})\s+USDL-\d{{2}}-\d{{3,5}}"
+)
+JOLTS_HEADING = re.compile(
+    rf"JOB OPENINGS AND LABOR TURNOVER\s*[-\u2013\u2014]\s*({ '|'.join(m.upper() for m in MONTHS) }) (\d{{4}})"
+)
+JOLTS_OPENINGS = re.compile(
+    rf"The number and rate of job openings were [^.]*? at (\d+(?:\.\d+)?) million and "
+    rf"(\d+(?:\.\d+)?) percent, respectively, in {MONTH}\."
+)
+JOLTS_OPENING_REVISION = re.compile(
+    rf"The number of job openings for {MONTH} was revised (up|down) by ([\d,]+) to "
+    rf"([\d.]+) million\."
+)
+PRODUCTIVITY_EMBARGO = EMBARGO
+PRODUCTIVITY_HEADING = re.compile(
+    rf"Productivity and Costs\s+({'|'.join(QUARTERS)}) Quarter (\d{{4}}), (Preliminary|Revised)\b", re.I
+)
+PRODUCTIVITY_VALUE = re.compile(
+    rf"Nonfarm business sector labor productivity (increased|decreased|was unchanged) ([\d.]+) percent "
+    rf"in the ({'|'.join(QUARTERS)}) quarter of (\d{{4}})", re.I
+)
+UNIT_COST_VALUE = re.compile(
+    rf"Unit labor costs in the nonfarm business sector (increased|decreased|were unchanged) ([\d.]+) percent "
+    rf"in the ({'|'.join(QUARTERS)}) quarter of (\d{{4}})", re.I
+)
+UNIT_COST_REVISION = re.compile(
+    rf"Unit labor costs in the nonfarm business sector increased ([\d.]+) percent in the "
+    rf"({'|'.join(QUARTERS)}) quarter of (\d{{4}}) rather than increasing ([\d.]+) percent as previously reported",
+    re.I
+)
+
+
+def release_clock(match, name):
+    groups = match.groups() if hasattr(match, "groups") else match
+    hour, minute, meridiem, weekday, month, day, year = groups
+    released = datetime(int(year), MONTHS.index(month) + 1, int(day), int(hour) % 12 + 12 * (meridiem == "p.m."),
+                        int(minute), tzinfo=ET)
+    if WEEKDAYS[released.weekday()] != weekday:
+        raise ReleaseError(f"the {name} release weekday does not match its date")
+    return released
+
+
+def jolts_release(text):
+    release_times = JOLTS_RELEASE.findall(text)
+    headings = JOLTS_HEADING.findall(text)
+    if len(release_times) != 1 or not RELEASE_NUMBER.search(text) or len(headings) != 1:
+        raise ReleaseError("the JOLTS page lacks one verifiable release time and reference month")
+    released = release_clock(release_times[0], "JOLTS")
+    period = f"{headings[0][1]}-{MONTHS.index(headings[0][0].title()) + 1:02d}"
+    statements = JOLTS_OPENINGS.findall(text)
+    if len(statements) != 1 or statements[0][2] != MONTHS[int(period[5:]) - 1]:
+        raise ReleaseError("the JOLTS page lacks one job-openings level and rate for its reference month")
+    values = dict(openings=float(statements[0][0]), openings_rate=float(statements[0][1]))
+    revisions = []
+    for month, direction, amount, revised in JOLTS_OPENING_REVISION.findall(text):
+        revised_month = f"{headings[0][1]}-{MONTHS.index(month.title()) + 1:02d}"
+        if revised_month != shifted(period, -1):
+            raise ReleaseError("the JOLTS revision does not name the previous reference month")
+        change = int(amount.replace(",", "")) * (1 if direction == "up" else -1)
+        if abs(change) > 2_000_000 or float(revised) <= 0:
+            raise ReleaseError("implausible JOLTS job-openings revision")
+        revisions.append(dict(period=revised_month, metric=JOLTS_REVISION, value=change,
+                              revised_to=float(revised), unit="openings",
+                              baseline="BLS revision to the previous month's reported job-openings change"))
+    if len(revisions) > 1:
+        raise ReleaseError("the JOLTS page repeats its job-openings revision")
+    return dict(family="jolts", title=FAMILIES["jolts"]["title"], period=period, released_at=released,
+                values=values, revisions=revisions, combined=None, note="")
+
+
+def productivity_release(text):
+    embargo = PRODUCTIVITY_EMBARGO.findall(text)
+    heading = PRODUCTIVITY_HEADING.findall(text)
+    if len(embargo) != 1 or not RELEASE_NUMBER.search(text) or len(heading) != 1:
+        raise ReleaseError("the productivity page lacks one verifiable embargo time and reference quarter")
+    released = release_clock(embargo[0], "productivity")
+    quarter, year, edition = heading[0]
+    period = f"{year}-Q{QUARTERS.index(quarter.title()) + 1}"
+    productivity = PRODUCTIVITY_VALUE.findall(text)
+    unit_costs = UNIT_COST_VALUE.findall(text)
+    if (len(productivity) != 1 or len(unit_costs) != 1
+            or productivity[0][2].title() != quarter.title() or productivity[0][3] != year
+            or unit_costs[0][2].title() != quarter.title() or unit_costs[0][3] != year):
+        raise ReleaseError("the productivity page lacks matching nonfarm productivity and unit-cost values")
+    def signed_value(match):
+        if match[0] in {"was unchanged", "were unchanged"}:
+            return 0.0
+        return float(match[1]) * (-1 if match[0] == "decreased" else 1)
+    values = dict(productivity=signed_value(productivity[0]), unit_labor_costs=signed_value(unit_costs[0]))
+    revisions = []
+    for current, qtr, revision_year, previous in UNIT_COST_REVISION.findall(text):
+        revised_period = f"{revision_year}-Q{QUARTERS.index(qtr.title()) + 1}"
+        if revised_period != period or float(current) != values["unit_labor_costs"]:
+            raise ReleaseError("the productivity revision conflicts with the reported unit-cost value")
+        revisions.append(dict(period=period, metric=PRODUCTIVITY_REVISION,
+                              value=round(values["unit_labor_costs"] - float(previous), 1),
+                              previous=float(previous), revised=float(current), unit=CHANGE,
+                              baseline="BLS revised quarterly unit labor costs"))
+    if len(revisions) > 1:
+        raise ReleaseError("the productivity page repeats its unit-cost revision")
+    return dict(family="productivity", title=FAMILIES["productivity"]["title"], period=period,
+                released_at=released, edition=edition.lower(), values=values, revisions=revisions,
+                combined=None, note="")
+
+
+def due_releases(events, now, enabled=None):
+    """Today's enabled, admitted BLS releases whose scheduled time has passed. New adapters remain off until enabled
+    explicitly by the collection config. A repeated family entry is ambiguous and therefore refused."""
+    enabled = frozenset(DEFAULT_ENABLED_FAMILIES if enabled is None else enabled)
     today, due = now.astimezone(ET).date(), {}
     for event in events:
         match = EVENT_TITLE.fullmatch(event.get("title") or "")
@@ -444,10 +603,34 @@ def due_releases(events, now):
         when = timestamp(event["scheduled_at"])
         if when.astimezone(ET).date() != today or when > now:
             continue
-        family = next(key for key, spec in FAMILIES.items() if spec["title"] == match[1])
-        period = f"{match[3]}-{MONTHS.index(match[2]) + 1:02d}" if match[2] else None
+        family = event_family(match[1])
+        if family not in enabled:
+            continue
+        if match[2]:
+            period = f"{match[3]}-{MONTHS.index(match[2]) + 1:02d}"
+        elif match[4]:
+            period = f"{match[5]}-Q{QUARTERS.index(match[4]) + 1}"
+        else:
+            period = None
         due.setdefault(family, []).append((event, period))
     return [(family, *found[0]) if len(found) == 1 else (family, None, None) for family, found in due.items()]
+
+
+DEFAULT_ENABLED_FAMILIES = ("empsit", "cpi")
+EVENT_FAMILIES = {
+    "Employment Situation": "empsit",
+    "Consumer Price Index": "cpi",
+    "Job Openings and Labor Turnover": "jolts",
+    "Job Openings and Labor Turnover Survey": "jolts",
+    "Productivity and Costs": "productivity",
+}
+
+
+def event_family(title):
+    if not isinstance(title, str):
+        return None
+    normalized = re.sub(r" \([PR]\)$", "", title)
+    return EVENT_FAMILIES.get(normalized)
 
 
 def long_date(when):
@@ -465,7 +648,13 @@ def check_release(release, event, period):
     if period and release["period"] != period:
         raise ReleaseError(f"the page reports {period_name(release['period'])}, "
                            f"not the scheduled {period_name(period)}")
-    if release["period"] >= f"{release['released_at']:%Y-%m}":
+    if release["period"].endswith(tuple(f"-Q{q}" for q in range(1, 5))):
+        year, quarter = release["period"].split("-Q")
+        last_month = int(quarter) * 3
+        period_end = f"{year}-{last_month:02d}"
+    else:
+        period_end = release["period"]
+    if period_end >= f"{release['released_at']:%Y-%m}":
         raise ReleaseError("the page's reference month does not precede its release")
 
 
@@ -478,10 +667,18 @@ def release_rows(release, retrieved):
     rows = [dict(common, id=ident, metric=metric, value=release["values"][key], unit=unit, baseline=baseline)
             for key, ident, metric, unit, baseline in MEASURES[release["family"]]]
     for revision in release["revisions"]:
-        rows.append(dict(common, id=f"bls-empsit-revision-{revision['month']}", metric=REVISION,
-                         value=revision["change"], unit=JOBS, revised_month=revision["month"],
-                         revised_from=revision["previous"], revised_to=revision["revised"],
-                         baseline="change to the revised month's previously published estimate"))
+        revised_period = revision.get("period") or revision.get("month")
+        fields = ({"revised_period": revised_period} if "-Q" in revised_period else
+                  {"revised_month": revised_period})
+        rows.append(dict(common, id=f"{spec['source']}-revision-{revised_period}",
+                         metric=revision.get("metric", REVISION),
+                         value=revision.get("change", revision.get("value")), unit=revision.get("unit", JOBS),
+                         **fields,
+                         **({"revised_from": revision["previous"], "revised_to": revision["revised"]}
+                            if "previous" in revision else
+                            ({"revised_to": revision["revised_to"]} if "revised_to" in revision else {})),
+                         baseline=revision.get(
+                             "baseline", "change to the revised month's previously published estimate")))
     if release["combined"] is not None:
         rows.append(dict(common, id="bls-empsit-revision-combined", metric=COMBINED, value=release["combined"],
                          unit=JOBS, baseline="the revised months together, change from previously reported"))

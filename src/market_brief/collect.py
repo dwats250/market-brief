@@ -476,12 +476,12 @@ def bls_calendar(now, deadline, fetcher):
     return events, schedule_url(*months[0]), f"monthly schedule {label}; calendar file: {file_failure}", retrieved
 
 
-def release_actuals(events, now, deadline, fetcher):
+def release_actuals(events, now, deadline, fetcher, enabled=None):
     """The official values of each BLS release on today's admitted calendar whose scheduled time has passed: one read
     of its family's fixed current-edition page, admitted only as that scheduled release. Returns `(rows, records)`,
     one source record per release read (or refused); a page that cannot be admitted leaves the event to stand alone."""
     rows, records = [], []
-    for family, event, period in due_releases(events, now):
+    for family, event, period in due_releases(events, now, enabled):
         spec = FAMILIES[family]
         record = source(spec["source"], spec["name"], "release", spec["url"], now)
         record["coverage_date"] = now.astimezone(EASTERN).date().isoformat()
@@ -504,7 +504,7 @@ def release_actuals(events, now, deadline, fetcher):
     return rows, records
 
 
-def bls_collection(now, deadline, fetcher):
+def bls_collection(now, deadline, fetcher, enabled=None):
     """BLS for one run: the calendar (the file, else its official fallback pages; one source record either way), then
     the official values of today's releases whose time has passed. The admitted calendar is the only trigger for a
     release page: no calendar, no release read. Returns `(sources, events, observations)`."""
@@ -515,7 +515,13 @@ def bls_collection(now, deadline, fetcher):
         record.update(status="UNAVAILABLE", reason=failure(exc))
         return [record], [], []
     record.update(retrieved_at=retrieved.isoformat(), coverage_date=now.astimezone(EASTERN).date().isoformat())
-    rows, records = release_actuals(events, now, deadline, fetcher)
+    if enabled is None:
+        config = read_json(ROOT / "config/economic_actuals.json")
+        enabled = config.get("enabled_families")
+        if (not isinstance(enabled, list) or not enabled or any(family not in FAMILIES for family in enabled)
+                or len(enabled) != len(set(enabled))):
+            raise SourceError("economic actual reader allowlist is malformed")
+    rows, records = release_actuals(events, now, deadline, fetcher, enabled)
     return [record, *records], events, rows
 
 

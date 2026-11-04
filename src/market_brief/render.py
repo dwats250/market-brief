@@ -79,7 +79,7 @@ SECTOR_LABELS = {
 SECTORS = set(SECTOR_LABELS)
 MEGACAPS = ("AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG")
 METALS = ("GLD", "SLV", "GDX")
-INSTRUMENT_LABELS = {"GLD": "Gold fund", "SLV": "Silver fund", "GDX": "Gold miners"}
+INSTRUMENT_LABELS = {"GLD": "Gold fund", "SLV": "Silver ETF proxy", "GDX": "Gold miners"}
 HORIZON_LABELS = {"daily return": "1d", "twenty-session return": "20s", "fifty-session average": "50d avg",
                   "distance from 50DMA": "vs 50DMA"}
 LEDGER_NOTE = "Exact values and baselines for every cell are in the evidence ledger."
@@ -104,7 +104,8 @@ SOURCE_STATUS_LABELS = {"AVAILABLE": "Available", "UNAVAILABLE": "Unavailable", 
 SIGNED_METRICS = {"daily return", "premarket return", "intraday return", "distance from 50DMA"}
 MINUS = "\u2212"
 RATE_UNITS = {"% yield", "bp", SPREAD_UNIT}
-RELEASE_UNITS = {JOBS, PERCENT, PERCENT_CHANGE, "million openings", "openings"}
+CANADIAN_PERSONS = "persons"
+RELEASE_UNITS = {JOBS, PERCENT, PERCENT_CHANGE, "million openings", "openings", CANADIAN_PERSONS}
 # The economic release card (Macro & rates): one line per measure in the release's own order. A change pair reads
 # `+0.1% m/m · +3.0% y/y`; payroll revisions read `Jul +21k → −10k` per month and then `Combined −60k`.
 RELEASE_LINES = (("Payrolls", ("nonfarm payroll change",)), ("Unemployment", ("unemployment rate",)),
@@ -520,6 +521,9 @@ def release_display(value, unit):
     if unit == "openings":
         whole = round(value)
         return f"{MINUS if whole < 0 else '+' if whole > 0 else ''}{abs(whole):,}"
+    if unit == CANADIAN_PERSONS:
+        sign = MINUS if value < 0 else "+" if value > 0 else ""
+        return f"{sign}{abs(value):,.0f} persons"
     tenth = round(value, 1)
     return f"{MINUS if tenth < 0 else '+' if tenth > 0 else ''}{abs(tenth):.1f}%"
 
@@ -844,6 +848,10 @@ def release_cards(rows, events, sources=()):
                 lines.append(dict(label=label, values=[" · ".join(
                     f"{formatted(row)} {PAIR_WORDS[row['metric'].rsplit(', ', 1)[1]]}" if len(metrics) > 1
                     else formatted(row) for row in present)]))
+        for label, metric in (("Canadian employment change", "Canadian employment change"),
+                              ("Canadian unemployment", "Canadian unemployment rate")):
+            if metric in by_metric:
+                lines.append(dict(label=label, values=[formatted(by_metric[metric])]))
         revisions = sorted((row for row in members if row["metric"] in
                             (REVISION, JOLTS_REVISION, PRODUCTIVITY_REVISION)),
                            key=lambda row: row.get("revised_period", row.get("revised_month", "")))
@@ -868,8 +876,10 @@ def release_cards(rows, events, sources=()):
                 *(f"Combined {formatted(row)}" for row in combined)]))
         title_family = next((family for family, spec in FAMILIES.items() if spec["title"] == title), None)
         happened = [event["id"] for event in events if event.get("scheduled_at") == released
-                    and event_family((EVENT_TITLE.fullmatch(event.get("title") or "") or [None, None])[1])
-                    == title_family]
+                    and (title_family is not None and event_family(
+                        (EVENT_TITLE.fullmatch(event.get("title") or "") or [None, None])[1]) == title_family
+                         or title == "Statistics Canada Labour Force Survey"
+                         and event.get("title", "").startswith(title + " for "))]
         cards.append(dict(time=pacific_time(released), title=title, period=period_name(period), lines=lines,
                           ids=[row["id"] for row in members], events=happened))
     return cards

@@ -50,6 +50,7 @@ from .schedule import (
 )
 from .synthesize import (
     NARRATIVE_SCHEMA,
+    RETRY_RECORDS,
     NarrativeRejected,
     as_returned,
     construct_prompt,
@@ -175,9 +176,10 @@ def record_attempt(root, session_date, checkpoint, run_id, attempt):
 
     Written whatever the synthesis then does and read only by `scheduled()`; never admitted, restored or rendered.
     A crash between this write and the request over-counts, never under-counts. A failed write is a ValueError,
-    so nothing is sent. Rewritten before a grammar-rate-limit retry with both requests: the first's diagnostic and
-    the second's intent."""
+    so nothing is sent. Rewritten before the one retry (grammar rate limit or Anthropic's exact 503) with both
+    requests: the first's diagnostic and the second's intent."""
     path = attempt_path(root, session_date, checkpoint)
+    retries = {key: attempt[key] for key in RETRY_RECORDS if attempt.get(key)}
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.is_symlink():
@@ -187,8 +189,7 @@ def record_attempt(root, session_date, checkpoint, run_id, attempt):
                                    run_id=run_id, route=attempt.get("route"),
                                    requested_model=attempt.get("requested_model"),
                                    requested_at=attempt.get("requested_at"),
-                                   **({"attempts": attempt.get("attempts"), "grammar_retry": attempt["grammar_retry"]}
-                                      if attempt.get("grammar_retry") else {})))
+                                   **({"attempts": attempt.get("attempts"), **retries} if retries else {})))
         temporary.replace(path)
     except OSError:
         raise ValueError("the paid synthesis attempt could not be recorded; no provider request was sent") from None
@@ -451,7 +452,7 @@ def run(args):
                             record = record_attempt(RUN_ROOT, packet["run"]["session"]["date"], checkpoint, folder.name,
                                                     attempt)
                             metadata["attempt_record"] = str(record.relative_to(RUN_ROOT))
-                        # Two only when the grammar-rate-limit retry is about to be sent.
+                        # Two only when the one retry (grammar rate limit or exact 503) is about to be sent.
                         metadata["synthesis"]["calls"] = attempt.get("attempts", 1)
                         metadata.update(model_route=attempt["route"], model=attempt)
                     narrative, model = synthesize(packet, full=full, context=context, on_request=requesting)

@@ -73,6 +73,15 @@ GRAMMAR_RATE_LIMIT = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12} "
     r"exceeded limit: 50 compilations per minute\. You can try again later\.")
 GRAMMAR_RETRY_DELAY_SECONDS = 60
+# The one 5xx eligible for a single delayed retry: OpenRouter relaying Anthropic's own transient "Service temporarily
+# unavailable" as HTTP 503 (2026-11-04 PREMARKET). Every field is compared whole and exactly, on the body as received
+# (before the diagnostic sanitizer collapses whitespace or drops characters); any other 503 or 5xx, 429 or 408 stays
+# a transient failure with no automatic paid retry.
+ANTHROPIC_UNAVAILABLE_503 = dict(status=503, code=503, message="Provider returned error", provider_name="Anthropic",
+                                 provider_message="Service temporarily unavailable")
+UNAVAILABLE_RETRY_DELAY_SECONDS = 10
+# Where an attempt records its one retry, if it made one; at most one of these per synthesis.
+RETRY_RECORDS = ("grammar_retry", "unavailable_retry")
 
 
 def obj(properties):
@@ -593,6 +602,18 @@ class _GrammarRateLimitError(ValueError):
                          f"diagnostic={canonical({'http_status': status, 'error': error})}")
 
 
+class _AnthropicUnavailableError(_TransientOpenRouterError):
+    """The exact OpenRouter 503 relay of Anthropic's "Service temporarily unavailable" (`ANTHROPIC_UNAVAILABLE_503`).
+    A transient failure like any other — same message, same handling — except as the first request of a hooked
+    synthesis, where it earns one delayed retry of the identical request. Carries the sanitized status and error."""
+
+    def __init__(self, status, error):
+        self.status = status
+        self.error = error
+        super().__init__(f"OpenRouter transient HTTP {status}; "
+                         f"diagnostic={canonical({'http_status': status, 'error': error})}")
+
+
 class _ModelUnavailableError(ValueError):
     """OpenRouter reports the requested model has no eligible endpoint: the explicit "no endpoints
     found" 404 (never a bare or unrelated 404), a routing failure that precedes any billable
@@ -628,8 +649,11 @@ def _openrouter_post(payload, api_key, timeout=180):
     except HTTPError as exc:
         if exc.code in {401, 403}:
             raise ValueError("OpenRouter authentication failed") from None
-        error = _safe_error(exc)  # reads the body once; reused for every diagnostic below
+        received = []
+        error = _safe_error(exc, received=received)  # reads the body once; reused for every diagnostic below
         diagnostic = canonical({"http_status": exc.code, "error": error})
+        if exc.code == ANTHROPIC_UNAVAILABLE_503["status"] and _is_anthropic_unavailable(received):
+            raise _AnthropicUnavailableError(exc.code, error) from None
         if exc.code in TRANSIENT_OPENROUTER_STATUS:
             raise _TransientOpenRouterError(f"OpenRouter transient HTTP {exc.code}; "
                                             f"diagnostic={diagnostic}") from None
@@ -658,21 +682,30 @@ def _provider_message(raw):
     """The provider's own error message inside OpenRouter's `metadata.raw` (for example Anthropic's "The compiled
     grammar is too large…"), bounded and printable. Nothing else from the provider body is kept, and a raw that is
     not the provider's JSON error, or cannot be read at all, yields nothing."""
+    message = _raw_provider_message(raw)
+    return _printable(message, 300) if message is not None else None
+
+
+def _raw_provider_message(raw):
+    """The provider's own error message inside `metadata.raw`, exactly as sent, or None."""
     try:
         raw = json.loads(raw) if isinstance(raw, str) else raw
     except (ValueError, RecursionError):
         return None
     error = raw.get("error") if isinstance(raw, dict) else None
     message = error.get("message") if isinstance(error, dict) else None
-    return _printable(message, 300) if isinstance(message, str) else None
+    return message if isinstance(message, str) else None
 
 
-def _safe_error(exc, limit=20_000):
+def _safe_error(exc, limit=20_000, received=None):
     """Run 34486249474 recorded only `OpenRouter HTTP 400`, and G2.5 (2026-09-25) only "Provider returned error".
     Keep the documented error code, a bounded message, provider labels and the provider's own bounded error
-    message; never the rest of the raw provider body, headers or IDs."""
+    message; never the rest of the raw provider body, headers or IDs. `received`, when given, collects the parsed
+    body for an exact classifier; it is never saved or logged."""
     try:
         body = json.loads(exc.read(limit).decode("utf-8"))
+        if received is not None:
+            received.append(body)
         error = body["error"]
         code, message, metadata = error.get("code"), error.get("message"), error.get("metadata")
     except (AttributeError, OSError, UnicodeError, ValueError, KeyError, TypeError, RecursionError,
@@ -717,6 +750,23 @@ def _is_grammar_rate_limit(error):
             and error.get("message") == "Provider returned error"
             and metadata.get("provider_name") == "Anthropic"
             and isinstance(message, str) and bool(GRAMMAR_RATE_LIMIT.fullmatch(message)))
+
+
+def _is_anthropic_unavailable(received):
+    """The exact OpenRouter 503 relay of Anthropic's "Service temporarily unavailable", read from the body as received
+    (never the sanitized copy, which normalizes whitespace and drops characters): integer code 503, OpenRouter's
+    "Provider returned error", provider Anthropic, and the provider's own message, each equal in full. A missing,
+    unreadable or near-matching field is not this condition."""
+    body = received[0] if len(received) == 1 else None
+    error = body.get("error") if isinstance(body, dict) else None
+    metadata = error.get("metadata") if isinstance(error, dict) else None
+    if not isinstance(metadata, dict):
+        return False
+    expected = ANTHROPIC_UNAVAILABLE_503
+    return (type(error.get("code")) is int and error["code"] == expected["code"]
+            and error.get("message") == expected["message"]
+            and metadata.get("provider_name") == expected["provider_name"]
+            and _raw_provider_message(metadata.get("raw")) == expected["provider_message"])
 
 
 def _safe_usage(response):
@@ -837,10 +887,11 @@ def synthesize_openrouter(packet, api_key=None, requester=_openrouter_post, slee
     """One structured synthesis through OpenRouter.
 
     `on_request(attempt)` runs once, immediately before the first provider request is sent; if it raises, nothing
-    is sent. It runs once more only before the one grammar-rate-limit retry, describing that second request; if it
-    raises then, the retry is not sent. A failure after a request was sent carries `attempt` on the exception: what
-    was requested and, when a response arrived, its usage and cost, so a paid rejection is accounted as truthfully
-    as an acceptance. `sleeper` waits out the grammar rate limit (`time.sleep` unless injected).
+    is sent. It runs once more only before the one retry (the grammar rate limit or Anthropic's exact 503),
+    describing that second request; if it raises then, the retry is not sent. A failure after a request was sent
+    carries `attempt` on the exception: what was requested and, when a response arrived, its usage and cost, so a
+    paid rejection is accounted as truthfully as an acceptance. `sleeper` takes the retry's one wait (`time.sleep`
+    unless injected).
     """
     attempt = {}
     try:
@@ -891,9 +942,10 @@ def _synthesize_openrouter(packet, api_key, requester, sleeper, full, context, o
     # bare or unrelated 404, transient 5xx/429, malformed 400, auth, and our own grounding/continuity
     # rejection downstream all fail closed with no second call —
     # a billable generation is never retried automatically. Model failover is kept semantically separate
-    # from that transient handling and admits at most one narrative. The one other second request is the
-    # grammar-rate-limit retry below: the identical payload, same model, once, after `sleeper` waits out
-    # the stated minute, and only once that request is accounted through `on_request`.
+    # from that transient handling and admits at most one narrative. The only other second request is one
+    # retry of the first, for the exact grammar-rate-limit 400 (after a minute) or Anthropic's exact
+    # "Service temporarily unavailable" 503 (after ten seconds): the identical payload, same model, once, and
+    # only once that request is accounted through `on_request`. Never both: there is no third request.
     attempt.update(route="openrouter", provider="OpenRouter", model=analyst["model"], model_source=analyst["source"],
                    fallback_model=fallback_model, requested_model=analyst["model"], profile=profile["profile"],
                    requested_at=requested_at, attempts=0, input_bytes=len(user.encode()), schema_hash=digest(schema),
@@ -908,6 +960,29 @@ def _synthesize_openrouter(packet, api_key, requester, sleeper, full, context, o
         on_request(dict(attempt, attempts=1))
     primary_failure = None
     requested_model = analyst["model"]
+
+    def retried(key, exc, delay):
+        # The one second request after a recognized first failure: the identical payload and model, recorded under
+        # `key`. It is the last request whatever it returns: no third request, no fallback, no other retry.
+        attempt[key] = dict(first=dict(model=requested_model, status=exc.status, error=exc.error),
+                            delay_seconds=delay, model=requested_model, outcome="pending")
+        # Accounted durably before the wait and the request: if this raises, the retry is never sent.
+        try:
+            on_request(dict(attempt, attempts=2, **{key: dict(attempt[key])}))
+        except ValueError:
+            attempt[key]["outcome"] = "not sent"
+            raise
+        sleeper(delay)
+        try:
+            served = send(requested_model)
+        except ValueError as exc2:
+            attempt[key]["outcome"] = "failed"
+            if isinstance(exc2, _TransientOpenRouterError):
+                raise
+            raise ValueError(str(exc2)) from None  # a rate limit or 404 the second time: no third request
+        attempt[key]["outcome"] = "response"
+        return served
+
     try:
         try:
             response = send(requested_model)
@@ -916,24 +991,13 @@ def _synthesize_openrouter(packet, api_key, requester, sleeper, full, context, o
             # second request could not be recorded first, so it fails closed as any other 400.
             if on_request is None:
                 raise ValueError(str(exc)) from None
-            attempt.update(grammar_retry=dict(first=dict(model=requested_model, status=exc.status, error=exc.error),
-                                              delay_seconds=GRAMMAR_RETRY_DELAY_SECONDS, model=requested_model,
-                                              outcome="pending"))
-            # Accounted durably before the wait and the request: if this raises, the retry is never sent.
-            try:
-                on_request(dict(attempt, attempts=2, grammar_retry=dict(attempt["grammar_retry"])))
-            except ValueError:
-                attempt["grammar_retry"]["outcome"] = "not sent"
+            response = retried("grammar_retry", exc, GRAMMAR_RETRY_DELAY_SECONDS)
+        except _AnthropicUnavailableError as exc:
+            # Anthropic's own transient unavailability, relayed exactly. Without an accounting hook it stays the
+            # transient failure it always was (the outer handler below).
+            if on_request is None:
                 raise
-            sleeper(GRAMMAR_RETRY_DELAY_SECONDS)
-            try:
-                response = send(requested_model)
-            except ValueError as exc2:
-                attempt["grammar_retry"]["outcome"] = "failed"
-                if isinstance(exc2, _TransientOpenRouterError):
-                    raise
-                raise ValueError(str(exc2)) from None  # a second rate limit or 404: no third request, no fallback
-            attempt["grammar_retry"]["outcome"] = "response"
+            response = retried("unavailable_retry", exc, UNAVAILABLE_RETRY_DELAY_SECONDS)
     except _TransientOpenRouterError as exc:
         raise ValueError(f"OpenRouter transport failure; no automatic paid retry; cause={exc}") from None
     except _ModelUnavailableError as exc:
@@ -993,7 +1057,7 @@ def _synthesize_openrouter(packet, api_key, requester, sleeper, full, context, o
                            repairs=repairs,
                            schema_hash=digest(schema),
                            prompt_hash=digest(dict(system=system, user=user)), evidence_hash=digest(packet),
-                           **({"grammar_retry": attempt["grammar_retry"]} if "grammar_retry" in attempt else {}))
+                           **{key: attempt[key] for key in RETRY_RECORDS if key in attempt})
 
 
 def synthesize(packet, runner=subprocess.run, full=False, context=None, on_request=None):

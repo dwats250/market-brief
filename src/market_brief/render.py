@@ -1558,7 +1558,11 @@ def markdown(view):
         if mac["curve"]:
             curve = mac["curve"]
             dated = not mac["yields_asof"]
-            head = "| Maturity | Yield |" + ("" if curve["stale"] else f" {mac['daily_change_label']} |") + (" Date |" if dated else "")
+            head = (
+                "| Maturity | Yield |"
+                + ("" if curve["stale"] else f" {mac['daily_change_label']} |")
+                + (" Date |" if dated else "")
+            )
             lines += [f"**{curve['title'].upper()}** · {esc(curve['caption'])}", ""]
             if mac["yields"]:
                 lines += [head, "|---|---:|" + ("" if curve["stale"] else "---:|") + ("---|" if dated else "")]

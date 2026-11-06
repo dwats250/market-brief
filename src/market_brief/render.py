@@ -352,6 +352,31 @@ def short_date(value):
     return datetime.fromisoformat(value).strftime("%a, %b %-d")
 
 
+def shared_rates_baseline(yields):
+    """Return a display label only when every available table change has one verified shared baseline."""
+    changes = [row for row in yields if not row["change"]["absent"]]
+    if not changes:
+        return "Daily change"
+    dates = []
+    for row in changes:
+        match = re.fullmatch(r"daily observation (\d{4}-\d{2}-\d{2})", row.get("change_baseline") or "")
+        observed_at = row.get("change_observed_at")
+        if not match or not observed_at:
+            return "Daily change"
+        baseline_date = match.group(1)
+        try:
+            baseline = datetime.fromisoformat(baseline_date).date()
+            observed = datetime.fromisoformat(observed_at).date()
+        except ValueError:
+            return "Daily change"
+        if baseline.isoformat() != baseline_date or baseline >= observed:
+            return "Daily change"
+        dates.append(baseline_date)
+    if len(set(dates)) != 1:
+        return "Daily change"
+    return f"Daily change vs {short_date(dates[0])}"
+
+
 def status_for(packet):
     run = packet["run"]
     explicit = run.get("display_status")
@@ -647,6 +672,8 @@ def treasury_rows(facts):
         result.append(dict(maturity=term, level=cell(level, absent=NO_PRINT), change=cell(change if paired else None),
                            change_note="" if paired or not change else
                            f"change dated {short_date(change['observed_at'])} not paired",
+                           change_baseline=change.get("baseline") if paired else None,
+                           change_observed_at=change.get("observed_at") if paired else None,
                            date=short_date(anchor["observed_at"]) if anchor else "",
                            observed_at=anchor["observed_at"] if anchor else None,
                            ids=[r["id"] for r in (level, change if paired else None) if r]))
@@ -792,10 +819,10 @@ def rates_module(packet, facts, catalog):
         if record.get("freshness") == "stale" and record.get("observed_at"):
             # Rows past the admission window arrive without values; the curve is still dated, and says so.
             notes = [OVER_AGE_NOTE, *([record["release_note"]] if record.get("release_note") else [])]
-            return dict(yields=[], asof=None, proof_ids=[], curve=dict(
+            return dict(yields=[], asof=None, daily_change_label="Daily change", proof_ids=[], curve=dict(
                 title=CURVE_TITLE, caption=f"{short_date(record['observed_at'])} · {CURVE_CAPTIONS['stale']}",
                 stale=True, spreads=[], move=None, chart=None, notes=notes))
-        return dict(yields=[], asof=None, curve=None, proof_ids=[])
+        return dict(yields=[], asof=None, daily_change_label="Daily change", curve=None, proof_ids=[])
     tenors = rates(packet)
     spreads = {row["id"]: row for row in facts if row["metric"] in (SPREAD_LEVEL, SPREAD_CHANGE)}
     record = packet.get("curve")
@@ -809,7 +836,9 @@ def rates_module(packet, facts, catalog):
     if stale:
         for row in yields:
             row["change"], row["change_note"] = absent_cell(), ""
+            row["change_baseline"], row["change_observed_at"] = None, None
             row["ids"] = [row["level"]["id"]] if row["level"]["id"] else []
+    daily_change_label = shared_rates_baseline(yields)
     caption = " · ".join(filter(None, (asof, CURVE_CAPTIONS.get(freshness, CURVE_CAPTIONS["current"])
                                        if asof else "official daily observations, dated per row")))
     lines, notes = spread_lines(spreads, tenors, stale)
@@ -825,7 +854,8 @@ def rates_module(packet, facts, catalog):
     proof_ids = [ident for row in yields for ident in row["ids"]] + [ident for line in lines for ident in line["ids"]]
     parts = rate_parts(facts, stale)
     proof_ids += [ident for part in parts for ident in part["ids"]]
-    return dict(yields=yields, asof=asof, proof_ids=[ident for ident in proof_ids if ident in catalog],
+    return dict(yields=yields, asof=asof, daily_change_label=daily_change_label,
+                proof_ids=[ident for ident in proof_ids if ident in catalog],
                 curve=dict(title=CURVE_TITLE, caption=caption, stale=stale, spreads=lines, move=move, chart=chart,
                            notes=notes, parts=parts, parts_caveat=PARTS_CAVEAT if parts else "",
                            # One takeaway on the page: the 10-year's split; the other maturities are in the proof.
@@ -1403,7 +1433,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                       spread_label="20-session return spread vs QQQ",
                       lookback={s: v for s, v in packet.get("lookback", {}).items() if v["r20"] != "available"}),
         macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]], releases=cards,
-                   yields=yields, yields_asof=module["asof"], curve=module["curve"], facts=other_macro,
+                   yields=yields, yields_asof=module["asof"], daily_change_label=module["daily_change_label"],
+                   curve=module["curve"], facts=other_macro,
                    yields_proof=refs(module["proof_ids"], catalog),
                    facts_proof=refs([row["id"] for row in other_macro], catalog)),
         sectors=dict(rows=sector_rows, change_label=sector_change, asof=sector_asof, proof=proof(sector_rows),
@@ -1527,7 +1558,7 @@ def markdown(view):
         if mac["curve"]:
             curve = mac["curve"]
             dated = not mac["yields_asof"]
-            head = "| Maturity | Yield |" + ("" if curve["stale"] else " Daily change |") + (" Date |" if dated else "")
+            head = "| Maturity | Yield |" + ("" if curve["stale"] else f" {mac['daily_change_label']} |") + (" Date |" if dated else "")
             lines += [f"**{curve['title'].upper()}** · {esc(curve['caption'])}", ""]
             if mac["yields"]:
                 lines += [head, "|---|---:|" + ("" if curve["stale"] else "---:|") + ("---|" if dated else "")]

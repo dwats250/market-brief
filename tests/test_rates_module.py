@@ -115,6 +115,31 @@ def test_captions_follow_freshness():
     assert older["caption"] == "Fri, Sep 4 · latest official daily observation"
 
 
+def test_daily_change_header_shows_only_a_verified_shared_baseline():
+    packet = rates_packet()
+    view = presentation(packet, narrative())
+    assert view["macro"]["daily_change_label"] == "Daily change vs Thu, Sep 3"
+    _, page = render(packet, narrative())
+    assert '<th class="number">Daily change vs Thu, Sep 3</th>' in macro_section(page)
+
+    packet = rates_packet()
+    next(row for row in packet["observations"] if row["id"] == "treasury-10y-change")["baseline"] = \
+        "daily observation 2026-09-02"
+    assert presentation(packet, narrative())["macro"]["daily_change_label"] == "Daily change"
+
+    packet = rates_packet()
+    next(row for row in packet["observations"] if row["id"] == "treasury-10y-change")["baseline"] = ""
+    assert presentation(packet, narrative())["macro"]["daily_change_label"] == "Daily change"
+
+
+def test_daily_change_header_uses_remaining_shared_changes_and_never_invents_a_date():
+    partial = rates_packet(levels={"2Y": 4.87, "10Y": 5.18}, changes={"2Y": 2, "10Y": 7})
+    assert presentation(partial, narrative())["macro"]["daily_change_label"] == "Daily change vs Thu, Sep 3"
+
+    no_comparison = rates_packet(changes={})
+    assert presentation(no_comparison, narrative())["macro"]["daily_change_label"] == "Daily change"
+
+
 def test_spread_phrasing_levels_changes_inversion_and_sign_flips():
     def lines(levels, changes):
         view = presentation(rates_packet(levels=levels, changes=changes), narrative())

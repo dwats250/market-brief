@@ -66,7 +66,9 @@ MISMATCH = "take text and evidence must be both present or both empty"
 # drawer (`.refs .evidence`, `.chart-head`, `.evidence-chart`, two legend keys) and the audit section's smaller
 # heading (`section.audit h2`). The paper-cut pass adds textured paper and restrained treatments for the masthead,
 # lead, and section tabs, with a finer rule and no document structure changes.
-STYLE_SHA256 = "375c2c70c70894b1c5296fa4bfb421588a8e7a4714fca97abc1147e3adb8e25d"
+# WP-RATES-02 approves neutral direction arrows, stacked direction labels and stronger bp typography.
+# Keep the whole stylesheet fingerprint so unrelated CSS changes still require explicit review.
+STYLE_SHA256 = "4f133079d31cbf5fdbf07e2c184512150029020df1d186390f67d554f4521181"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):

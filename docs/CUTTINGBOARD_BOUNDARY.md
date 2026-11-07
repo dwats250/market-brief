@@ -1,5 +1,8 @@
 # Cuttingboard boundary and read-only reuse
 
+*Current use (2026-10-19): the collector is opt-in (`--cuttingboard`); scheduled production does not request it, so
+published briefs carry no Cuttingboard context. The boundary below holds whenever it is used.*
+
 ## Absolute separation
 
 Market Brief is an independent repository at

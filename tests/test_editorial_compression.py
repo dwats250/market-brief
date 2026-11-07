@@ -262,11 +262,19 @@ def cell_spill(page, tmp_path, width):
     probe = (f"<style>html,body{{width:{width}px!important;max-width:{width}px!important}}</style><script>"
              "let spill = 0; for (const td of document.querySelectorAll('td.number')) {"
              "  const cell = td.getBoundingClientRect(); if (cell.width === 0) continue;"  # hidden on phones
-             "  const range = document.createRange(); range.selectNodeContents(td);"
-             "  const text = range.getBoundingClientRect();"
-             "  const style = getComputedStyle(td); const inner = cell.right - parseFloat(style.paddingRight);"
-             "  if (text.height > 1.7 * parseFloat(style.fontSize)) spill = 999;"
-             "  spill = Math.max(spill, text.right - inner); }"
+             "  const style = getComputedStyle(td);"
+             "  const right = cell.right - parseFloat(style.paddingRight);"
+             "  const left = cell.left + parseFloat(style.paddingLeft);"
+             # WP-RATES-02 deliberately stacks the numeric value above its direction label.
+             # Measure each visible leaf independently; never exempt its numeric value or arrow.
+             "  const parts = td.querySelector('.rate-change')"
+             "    ? td.querySelectorAll('.rate-arrow, .rate-change b, .rate-change small') : [td];"
+             "  for (const part of parts) {"
+             "    const range = document.createRange(); range.selectNodeContents(part);"
+             "    const text = range.getBoundingClientRect();"
+             "    const font = parseFloat(getComputedStyle(part).fontSize);"
+             "    if (text.height > 1.7 * font) spill = 999;"
+             "    spill = Math.max(spill, text.right - right, left - text.left); } }"
              "document.title = 'SPILL=' + Math.ceil(spill);</script></body>")
     target = tmp_path / "spill.html"
     target.write_text(page.replace("</body>", probe, 1))
@@ -288,3 +296,20 @@ def test_the_phone_layout_keeps_every_number_inside_its_cell(tmp_path, width):
     # The probe itself detects a wrapped number: a value forced onto two lines is reported.
     wrapped = re.sub(r'(<td class="number primary[^>]*>)', r'\1<span style="display:block">+1.00</span>', page, count=1)
     assert cell_spill(wrapped, tmp_path, width) > 0
+
+
+@pytest.mark.parametrize("width", [320, 360, 390, 601, 640, 680, 720, 721, 768, 1280])
+def test_rate_change_parts_never_wrap_or_spill(tmp_path, width):
+    from test_rates_module import rates_packet
+
+    _, page = render(rates_packet(), narrative())
+    assert cell_spill(page, tmp_path, width) <= 0
+    # Prove the multiline exception still detects a wrapped basis-point value.
+    wrapped = re.sub(r'(<span class="rate-change">.*?<b>)([^<]+)(</b>)',
+                     r'\1+2<br>bp\3', page, count=1)
+    assert wrapped != page
+    assert cell_spill(wrapped, tmp_path, width) > 0
+    # A single-line numeric value shifted beyond its cell must also be rejected.
+    spilled = re.sub(r'(<span class="rate-change">.*?)(<b>)([^<]+)(</b>)',
+                     r'\1<b style="position:relative;left:100px">\3\4', page, count=1)
+    assert cell_spill(spilled, tmp_path, width) > 0

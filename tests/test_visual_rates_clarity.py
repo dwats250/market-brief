@@ -1,5 +1,6 @@
-from test_rates_module import macro_section, rates_packet
 from test_pipeline import narrative
+from test_rates_module import macro_section, rates_packet
+
 from market_brief.render import render
 
 

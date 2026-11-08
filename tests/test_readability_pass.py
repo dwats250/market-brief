@@ -50,7 +50,7 @@ def test_a_verdict_citing_one_measurement_at_two_clocks_renders_one_before_after
     assert '<span class="verb"><span class="direction-positive">↑</span> turned higher</span>' in block
     # The window names both clocks and both phases, a premarket print never conflated with an intraday one, and
     # carries the evidence marker, so the provenance opens under the comparison, not over it.
-    assert ('<span class="window">Premarket 5:41 AM → Intraday 12:06 PM PT · vs prior close '
+    assert ('<span class="window">Premarket 5:41 AM → Intraday 12:06 PM Vancouver time · vs prior close '
             '<details class="cite">') in block
     # The observation leads; the question it judged follows as a labelled second line, before the rows.
     assert ('<b>Weakened</b> — The benchmark print turned positive.<span class="judged"><span class="role">Watch'
@@ -62,7 +62,8 @@ def test_a_verdict_citing_one_measurement_at_two_clocks_renders_one_before_after
     assert ".moves details.cite[open] .refs{background:none;" in style
     assert since.count('<details class="cite">') == 1 and 'href="#interpretation-evidence-SPY-intraday"' in block
     assert "- **Weakened** — The benchmark print turned positive. Watch: If growth retains its lead" in md
-    assert "  - SPY · −0.53% → +0.21% · turned higher · Premarket 5:41 AM → Intraday 12:06 PM PT · vs prior close" in md
+    assert ("  - SPY · −0.53% → +0.21% · turned higher · Premarket 5:41 AM → Intraday 12:06 PM Vancouver time · "
+            "vs prior close") in md
 
 
 def test_a_record_citing_each_measurement_once_pairs_nothing():
@@ -103,11 +104,11 @@ def test_pairs_are_earliest_against_latest_and_never_across_instruments_or_units
     moves = movement_rows(rows, SESSION)
     assert [(m["topic"], m["earlier"]["display"], m["later"]["display"]) for m in moves] == [
         ("SPY", "−0.53%", "+0.21%")]
-    assert moves[0]["window"] == "Premarket 5:41 AM → Intraday 12:06 PM PT"
+    assert moves[0]["window"] == "Premarket 5:41 AM → Intraday 12:06 PM Vancouver time"
     # Two prints in one phase name the phase once.
     same_phase = movement_rows([print_row("a", -0.77, "2026-09-08T13:31:00+00:00"),
                                 print_row("b", -0.99, "2026-09-08T14:01:00+00:00")], SESSION)
-    assert same_phase[0]["window"] == "Intraday · 6:31 AM → 7:01 AM PT"
+    assert same_phase[0]["window"] == "Intraday · 6:31 AM → 7:01 AM Vancouver time"
     assert same_phase[0]["verb"] == "extended its loss" and same_phase[0]["direction"] == "negative"
     # A dated measurement seen on two dates pairs by date.
     dated = movement_rows([dict(id="x", topic="GDX", metric="relative to GLD", value=-3.13, unit="pp",
@@ -270,7 +271,7 @@ def test_a_lead_that_cites_the_curve_gets_one_rates_summary_after_the_take():
     packet["curve"] = derive_curve(dict(packet, derived=[]))["curve"]
     _, later = render(packet, value)
     footer = later.split('<div class="rates-lead">', 1)[1].split('<p class="fine">', 1)[1].split("</p>", 1)[0]
-    assert footer == ("Curve predates the 5:30 AM PT Fictional manufacturing survey release. "
+    assert footer == ("Curve predates the 5:30 AM Vancouver time Fictional manufacturing survey release. "
                       '<a href="#treasury-curve">Full curve and chart</a>')
     assert '<div class="caption" id="treasury-curve">U.S. Treasury par curve<span>' in page
     # The sentence is said once, in the module.
@@ -388,9 +389,9 @@ def test_the_no_change_note_reads_plainly():
     # A carried refresh dates the same note to the read that made the comparison.
     record = interpretation_record(packet, value, context, origin=dict(run_id="earlier-run"))
     carried = presentation(packet, interpretation=record)["since"]
-    assert carried["label"] == "vs the previous close · Fri, Sep 4 · through the 5:45 AM PT analysis"
-    assert carried["note"] == ("Nothing comparable had moved by the 5:45 AM PT read: 2 prior-close observations "
-                               "repeated and no new session prints had arrived.")
+    assert carried["label"] == "vs the previous close · Fri, Sep 4 · through the 5:45 AM Vancouver time analysis"
+    assert carried["note"] == ("Nothing comparable had moved by the 5:45 AM Vancouver time read: 2 prior-close "
+                               "observations repeated and no new session prints had arrived.")
 
 
 def test_a_past_event_without_values_says_so():
@@ -400,7 +401,7 @@ def test_a_past_event_without_values_says_so():
     assert "released · values not collected" not in page  # the fixture's event is still ahead of its run
     event["scheduled_at"] = "2026-09-08T12:00:00+00:00"  # before the 12:45 UTC premarket run
     md, page = render(packet, value)
-    line = "Tuesday, Sep 8 · 5:00 AM PT · during session · released · values not collected"
+    line = "Tuesday, Sep 8 · 5:00 AM Vancouver time · during session · released · values not collected"
     assert f"<b>{event['title']}</b>{line}" in page
     assert f"- **Event** — {event['title']} · {line}" in md
 

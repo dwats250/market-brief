@@ -77,10 +77,11 @@ def test_live_header_uses_pacific_time_and_hides_plumbing():
     header = page.split("<h1>", 1)[0]
     # LIVE says nothing; the date is the masthead's; each clock says what it measures, in Pacific time.
     assert '<span>Tuesday, Sep 8</span>' in header and '<div class="status-line">' not in header
-    assert clock_lines(page) == ["Prices · prior close Fri, Sep 4", "Analysis · 5:45 AM PT · opening refresh",
-                                 "Next · 6:00 AM PT · analysis update"]
+    assert clock_lines(page) == ["Prices · prior close Fri, Sep 4",
+                                 "Analysis · 5:45 AM Vancouver time · opening refresh",
+                                 "Next · 6:00 AM Vancouver time · analysis update"]
     visible = re.sub(r"<[^>]+>", "", header)  # the overdue check's absolute-time data attribute aside
-    assert visible.count("PT") == 2
+    assert visible.count("Vancouver time") == 2
     assert "Evidence cutoff" not in visible
     assert "Generated 2026-" not in visible
     assert "+00:00" not in visible
@@ -130,7 +131,7 @@ def test_compact_equity_rows_use_current_observation_and_human_labels():
     row = compact_equity_rows(rows, ["XLE"])[0]
     assert row["label"] == "Energy"
     assert row["today"]["display"] == "+0.55%"
-    assert row["today"]["observed"] == "Tuesday, Sep 8 · 10:30 AM PT"
+    assert row["today"]["observed"] == "Tuesday, Sep 8 · 10:30 AM Vancouver time"
     session = dict(open="2026-09-08T13:30:00+00:00", close="2026-09-08T20:00:00+00:00")
     assert measure_label(rows[0], session) == "XLE · Intraday vs prior close"
 

@@ -535,7 +535,9 @@ def test_cpi_morning_note():
     curve = rates_packet(now, rows, events)["curve"]
     assert [item["id"] for item in curve["releases"]] == ["bls-event-0", "bls-event-1"]
     # Two releases on one clock are named once, on that clock.
-    assert curve["release_note"] == "Curve predates the 5:30 AM PT Consumer Price Index and Real Earnings releases."
+    assert curve["release_note"] == (
+            "Curve predates the 5:30 AM Vancouver time Consumer Price Index and Real Earnings releases."
+    )
 
 
 def test_release_note_names_two_then_counts_the_rest():
@@ -546,17 +548,17 @@ def test_release_note_names_two_then_counts_the_rest():
             ("Business Employment Dynamics", "2026-10-14T14:00:00+00:00"),
             ("County Employment and Wages", "2026-10-14T14:00:00+00:00")))], [])
     assert len(notes["releases"]) == 4
-    assert notes["text"] == ("Curve predates the 5:30 AM PT Consumer Price Index and Real Earnings releases "
-                             "and 2 more.")
+    assert notes["text"] == ("Curve predates the 5:30 AM Vancouver time Consumer Price Index and Real Earnings "
+                             "releases and 2 more.")
     single = release_notes(date(2026, 10, 13), utc("2026-10-14T15:00:00+00:00"),
                            [dict(id="e0", title="Consumer Price Index", scheduled_at="2026-10-14T12:30:00+00:00")], [])
-    assert single["text"] == "Curve predates the 5:30 AM PT Consumer Price Index release."
+    assert single["text"] == "Curve predates the 5:30 AM Vancouver time Consumer Price Index release."
     # Two releases on different clocks keep their own clocks.
     staggered = release_notes(date(2026, 10, 13), utc("2026-10-14T15:00:00+00:00"), [
         dict(id="e0", title="Consumer Price Index", scheduled_at="2026-10-14T12:30:00+00:00"),
         dict(id="e1", title="Business Employment Dynamics", scheduled_at="2026-10-14T14:00:00+00:00")], [])
-    assert staggered["text"] == ("Curve predates the 5:30 AM PT Consumer Price Index release and the 7:00 AM PT "
-                                 "Business Employment Dynamics release.")
+    assert staggered["text"] == ("Curve predates the 5:30 AM Vancouver time Consumer Price Index release and the "
+                                 "7:00 AM Vancouver time Business Employment Dynamics release.")
 
 
 def test_a_release_the_curve_already_reflects_is_not_named():
@@ -586,14 +588,16 @@ def test_fomc_statement_from_the_fed_feed():
     curve = rates_packet(now, rows, context_items=items, checkpoint="HOURLY_1500")["curve"]
     assert [item["id"] for item in curve["releases"]] == ["fed-item-0"]
     assert curve["releases"][0]["kind"] == "fomc"
-    assert curve["release_note"] == "Curve predates the 11:00 AM PT FOMC statement."
+    assert curve["release_note"] == "Curve predates the 11:00 AM Vancouver time FOMC statement."
 
 
 def test_release_note_dates_an_item_from_another_day():
     notes = release_notes(date(2026, 10, 9), utc("2026-10-13T13:00:00+00:00"),
                           [dict(id="e0", title="Monthly Treasury Statement", scheduled_at="2026-10-12T18:00:00+00:00")],
                           [])
-    assert notes["text"] == "Curve predates the Mon, Oct 12 · 11:00 AM PT Monthly Treasury Statement release."
+    assert notes["text"] == (
+            "Curve predates the Mon, Oct 12 · 11:00 AM Vancouver time Monthly Treasury Statement release."
+    )
 
 
 # --- review regressions ------------------------------------------------------------------------------------

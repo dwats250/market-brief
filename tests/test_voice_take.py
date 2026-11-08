@@ -519,7 +519,7 @@ def test_a_carried_take_keeps_the_values_and_clock_its_analyst_saw(monkeypatch, 
         marker = re.search(
             r'href="#interpretation-evidence-SPY-intraday">([^<]*)</a><b>([^<]*)</b>'
             r'<small>([^<]*)</small>', line)
-        assert marker.groups() == ("SPY · Intraday vs prior close", "−0.53%", "7:01 AM PT")
+        assert marker.groups() == ("SPY · Intraday vs prior close", "−0.53%", "7:01 AM Vancouver time")
     ledger = refresh.split('id="evidence-SPY-intraday"', 1)[1].split("</div>", 1)[0]
     assert '<span class="value">+0.80%</span>' in ledger
     assert interpretation_fragments(refresh) == interpretation_fragments(structure)
@@ -541,7 +541,7 @@ def test_a_legacy_v1_interpretation_frozen_before_the_upgrade_still_refreshes(mo
     assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M") == 0
     assert day.calls == ["PREMARKET"]
     page = day.page("OPEN_1M")
-    assert "The take" not in page and "<dt>Analysis</dt><dd>6:00 AM PT · premarket</dd>" in page
+    assert "The take" not in page and "<dt>Analysis</dt><dd>6:00 AM Vancouver time · premarket</dd>" in page
     assert day.metadata("OPEN_1M")["validation"] == "PASS"
     # Continuity is not migrated: the frozen record stays exactly as it was written.
     assert day.bundle()["interpretation"] == bundle["interpretation"]

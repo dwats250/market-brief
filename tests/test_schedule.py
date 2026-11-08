@@ -89,14 +89,16 @@ def test_checkpoints_are_anchored_to_the_exchange_session_in_both_seasons():
               for c in ("PREMARKET", "OPEN_1M", "OPEN_30M")}
     winter = {c: utc(checkpoint_session(utc("2027-01-12T12:00:00+00:00"), c)["scheduled_at"])
               for c in ("PREMARKET", "OPEN_1M", "OPEN_30M")}
-    assert [pacific_time(t.isoformat()) for t in summer.values()] == ["6:00 AM PT", "6:31 AM PT", "7:00 AM PT"]
+    assert [pacific_time(t.isoformat()) for t in summer.values()] == (
+            ["6:00 AM Vancouver time", "6:31 AM Vancouver time", "7:00 AM Vancouver time"]
+    )
     # In winter the exchange time is one UTC hour later; what that reads in Pacific time depends on
     # whether British Columbia still follows New York's fall-back (tzdata 2026b says it does not).
     assert [(w.hour - s.hour, w.minute - s.minute) for w, s in zip(winter.values(), summer.values())] == [(1, 0)] * 3
     displayed = [pacific_time(t.isoformat()) for t in winter.values()]
-    assert displayed == [t.astimezone(VANCOUVER).strftime("%-I:%M %p") + " PT" for t in winter.values()]
+    assert displayed == [t.astimezone(VANCOUVER).strftime("%-I:%M %p") + " Vancouver time" for t in winter.values()]
     if winter["OPEN_30M"].astimezone(VANCOUVER).utcoffset() == timedelta(hours=-7):
-        assert displayed == ["7:00 AM PT", "7:31 AM PT", "8:00 AM PT"]
+        assert displayed == ["7:00 AM Vancouver time", "7:31 AM Vancouver time", "8:00 AM Vancouver time"]
 
 
 def test_every_session_keeps_the_opening_checkpoints_after_the_open_and_refreshes_inside_it():

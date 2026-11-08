@@ -57,7 +57,7 @@ from .curve import (
 )
 from .evidence import ET, PLACEHOLDER, ROOT, USABLE, evidence_catalog, read_json, timestamp
 from .metrics import rank_by_spread
-from .schedule import CHECKPOINT_KINDS, checkpoint_kind, next_checkpoint, session_relation
+from .schedule import CHECKPOINT_KINDS, LOCAL_TIME_LABEL, checkpoint_kind, next_checkpoint, session_relation
 
 PACIFIC = ZoneInfo("America/Vancouver")
 DISPLAY_STATUSES = {"LIVE", "LIVE COMMISSIONING", "LAST GOOD BRIEF", "SAMPLE"}
@@ -266,11 +266,11 @@ def movement_rows(rows, session, anchored=(), stated=""):
             continue
         if family == "print":
             phases = [PHASE_WORDS.get(current_print_label(row, session), "") for row in (earlier, later)]
-            clocks = [pacific_time(row["observed_at"]).removesuffix(" PT") for row in (earlier, later)]
+            clocks = [pacific_time(row["observed_at"]).removesuffix(f" {LOCAL_TIME_LABEL}") for row in (earlier, later)]
             if phases[0] == phases[1]:
-                window = f"{phases[0]} · {clocks[0]} → {clocks[1]} PT".lstrip(" ·")
+                window = f"{phases[0]} · {clocks[0]} → {clocks[1]} {LOCAL_TIME_LABEL}".lstrip(" ·")
             else:
-                window = f"{phases[0]} {clocks[0]} → {phases[1]} {clocks[1]} PT"
+                window = f"{phases[0]} {clocks[0]} → {phases[1]} {clocks[1]} {LOCAL_TIME_LABEL}"
             measure = PRINT_MEASURE
         else:
             window = f"{compact_clock(earlier['observed_at'])} → {compact_clock(later['observed_at'])}"
@@ -326,7 +326,8 @@ def evidence_chart(history, prints=(), average=None, session_date=None, sessions
         share = zone[0] + (zone[1] - zone[0]) * (index + 0.5) / len(dots)
         labelled = len(dots) <= EVIDENCE_DOT_LABELS or index in (0, len(dots) - 1)
         marks.append(dict(x=x(share), y=y(row["value"]), direction=direction(row),
-                          label=pacific_time(row["observed_at"]).removesuffix(" PT") if labelled else ""))
+                          label=(pacific_time(row["observed_at"]).removesuffix(f" {LOCAL_TIME_LABEL}")
+                                 if labelled else "")))
     return dict(height=EVIDENCE_HEIGHT, label_y=EVIDENCE_LABEL_Y, zero_y=y(0),
                 reference_y=y(reference) if reference is not None else None,
                 path=dict(points=points, segments=segments), prior=points[-1],
@@ -340,7 +341,7 @@ def evidence_chart(history, prints=(), average=None, session_date=None, sessions
 def pacific_time(value, include_date=False):
     dt = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(PACIFIC)
     date_part = dt.strftime("%A, %b %-d · ") if include_date else ""
-    return f"{date_part}{dt.strftime('%-I:%M %p')} PT"
+    return f"{date_part}{dt.strftime('%-I:%M %p')} {LOCAL_TIME_LABEL}"
 
 
 def short_date(value):
@@ -1324,7 +1325,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         failed = EDITION_WORDS.get(degraded["checkpoint"], "analysis")
         kept = EDITION_WORDS.get(interpreted.get("checkpoint"), "earlier")
         due = timestamp(degraded["scheduled_at"])
-        clock = (f"{due.astimezone(ET):%-I:%M %p} ET ({due.astimezone(PACIFIC):%-I:%M %p} PT)")
+        clock = (f"{due.astimezone(ET):%-I:%M %p} ET ({due.astimezone(PACIFIC):%-I:%M %p} {LOCAL_TIME_LABEL})")
         truth = (f"The {failed} analysis due {clock} was not accepted, so no new analysis was published; the "
                  f"{kept} analysis stands and the prices are this update's.")
     source_names = {s["id"]: s["name"] for s in packet["sources"]}

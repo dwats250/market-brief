@@ -16,7 +16,7 @@ import re
 from datetime import date, datetime, time, timedelta
 
 from .evidence import ET, ROOT, USABLE, read_json, timestamp
-from .schedule import VANCOUVER
+from .schedule import LOCAL_TIME_LABEL, VANCOUVER
 
 TENORS = ("2Y", "5Y", "10Y", "30Y")
 # (name, short leg, long leg): each spread is the long leg minus the short leg, in basis points.
@@ -203,7 +203,7 @@ def spread_rows(tenors):
 
 def _clock(value, run):
     when = timestamp(value).astimezone(VANCOUVER)
-    clock = when.strftime("%-I:%M %p") + " PT"
+    clock = when.strftime("%-I:%M %p") + f" {LOCAL_TIME_LABEL}"
     return clock if when.date() == run.astimezone(VANCOUVER).date() else when.strftime("%a, %b %-d · ") + clock
 
 

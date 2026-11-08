@@ -16,7 +16,7 @@ import exchange_calendars as xcals
 
 from .curve import SPREAD_CHANGE, SPREAD_LEVEL, stale_movement
 from .evidence import ET, PLACEHOLDER, USABLE, digest, evidence_catalog, model_packet, read_json, timestamp
-from .schedule import CHECKPOINT_TITLES, VANCOUVER, next_session_date, next_synthesis
+from .schedule import CHECKPOINT_TITLES, LOCAL_TIME_LABEL, VANCOUVER, next_session_date, next_synthesis
 
 CONTINUITY_SCHEMA = "market-brief.continuity.v1"
 BUNDLE_SCHEMA = "market-brief.continuity-bundle.v1"
@@ -97,7 +97,7 @@ def resolve_horizon(horizon, now, events=(), current_checkpoint=None):
     if horizon == "NEXT_BRIEF":
         info = next_synthesis(now, current_checkpoint)
         when = timestamp(info["scheduled_at"]).astimezone(VANCOUVER)
-        phrase = (f"By the {when.strftime('%-I:%M %p')} PT update" if info["session_date"] == day
+        phrase = (f"By the {when.strftime('%-I:%M %p')} {LOCAL_TIME_LABEL} update" if info["session_date"] == day
                   else "By the next session's premarket")
         return dict(declared=horizon, expires_at=info["scheduled_at"], expires_session=info["session_date"],
                     phrase=phrase, next_checkpoint=info["checkpoint"],

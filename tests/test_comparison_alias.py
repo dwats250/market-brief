@@ -195,7 +195,7 @@ def test_a_stale_refresh_says_how_many_prints_were_too_old_and_when_the_feed_sto
     rows.append(dict(id="treasury-10y", frequency="daily", status="BACKGROUND", observed_at="2026-10-14"))
     assert missing_prints_reason(dict(observations=rows)) == (
         "refresh has no timestamped current prints: 21 intraday prints (21 stale; the newest stale print was "
-        "stamped 12:56:33 PM ET / 9:56:33 AM PT); the last accepted page stands")
+        "stamped 12:56:33 PM ET / 9:56:33 AM Vancouver time); the last accepted page stands")
     assert "the price source returned none" in missing_prints_reason(dict(observations=rows[-1:]))
     odd = [dict(frequency="intraday", status="UNAVAILABLE", observed_at="2026-10-15T20:00:30Z"),
            dict(frequency="intraday", status="STALE", observed_at=12345),

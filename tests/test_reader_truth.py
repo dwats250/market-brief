@@ -256,10 +256,10 @@ def test_d2_prior_snapshot_refs_are_labeled_by_their_own_clock(day, monkeypatch)
     assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M") == 0    # prints at 6:31 AM PT, inside the session
     assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M", mutate=cite_anchors) == 0
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
-    expected = [(f"SPY · {INTRADAY_LABEL}", "+0.21%", "7:01 AM PT"),
-                (f"SPY · {PREMARKET_LABEL}", "−0.53%", "6:00 AM PT"),
-                (f"SPY · {INTRADAY_LABEL}", "+0.21%", "7:01 AM PT"),
-                (f"SPY · {INTRADAY_LABEL}", "−0.53%", "6:31 AM PT")]
+    expected = [(f"SPY · {INTRADAY_LABEL}", "+0.21%", "7:01 AM Vancouver time"),
+                (f"SPY · {PREMARKET_LABEL}", "−0.53%", "6:00 AM Vancouver time"),
+                (f"SPY · {INTRADAY_LABEL}", "+0.21%", "7:01 AM Vancouver time"),
+                (f"SPY · {INTRADAY_LABEL}", "−0.53%", "6:31 AM Vancouver time")]
     for checkpoint in ("OPEN_30M", "HOURLY_1300"):
         page = day.page(checkpoint)
         since = page.split('<section class="since">', 1)[1].split("</section>", 1)[0]
@@ -323,7 +323,7 @@ def test_d2_carried_watch_values_keep_their_own_phase_through_a_provisional_clos
     for checkpoint in ("HOURLY_1300", "CLOSE_1M"):
         page = day.page(checkpoint)
         watch = page.split("QQQ holds its −0.61% premarket move", 1)[1].split("</details>", 1)[0]
-        assert markers(watch) == [(f"QQQ · {PREMARKET_LABEL}", "−0.61%", "6:00 AM PT")], checkpoint
+        assert markers(watch) == [(f"QQQ · {PREMARKET_LABEL}", "−0.61%", "6:00 AM Vancouver time")], checkpoint
 
 
 def test_d3_a_table_whose_prints_span_phases_reads_latest_trade():
@@ -348,8 +348,8 @@ def test_d3_a_table_whose_prints_span_phases_reads_latest_trade():
     proof = {r["id"]: r["label"] for r in view["sectors"]["proof"]}
     assert proof["XLI-intraday"].endswith(PREMARKET_LABEL) and proof["XLE-intraday"].endswith(INTRADAY_LABEL)
     md, page = render(packet, narrative())
-    assert f"strongest to weakest<span>{LATEST_LABEL} · as of 7:00 AM PT" in page
-    assert f"strongest to weakest · {LATEST_LABEL} · as of 7:00 AM PT" in md
+    assert f"strongest to weakest<span>{LATEST_LABEL} · as of 7:00 AM Vancouver time" in page
+    assert f"strongest to weakest · {LATEST_LABEL} · as of 7:00 AM Vancouver time" in md
 
 
 def test_d4_no_page_or_example_edition_carries_an_official_close_label():
@@ -593,9 +593,10 @@ def test_j_a_each_header_clock_says_what_it_measures(day):
     assert day.run(f"{TUE}T14:01:00+00:00", "OPEN_30M") == 0
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
     structure, refresh = day.page("OPEN_30M"), day.page("HOURLY_1300")
-    both = ["Prices & analysis · 7:01 AM PT · opening structure", "Next · 8:00 AM PT · price refresh"]
-    carried = ["Prices · 10:00 AM PT", "Analysis · 7:01 AM PT · opening structure",
-               "Next · 11:00 AM PT · price refresh"]
+    both = ["Prices & analysis · 7:01 AM Vancouver time · opening structure",
+            "Next · 8:00 AM Vancouver time · price refresh"]
+    carried = ["Prices · 10:00 AM Vancouver time", "Analysis · 7:01 AM Vancouver time · opening structure",
+               "Next · 11:00 AM Vancouver time · price refresh"]
     assert clock_lines(structure) == both and clock_lines(refresh) == carried
     assert structure.count('<dl class="clocks">') == refresh.count('<dl class="clocks">') == 1
     # The Markdown rendition carries the same clock lines under the date.
@@ -610,7 +611,7 @@ def test_j_a_each_header_clock_says_what_it_measures(day):
     assert f'data-session-date="{TUE}" data-checkpoint="HOURLY_1300"' in refresh
     assert f'data-session-date="{TUE}" data-checkpoint="OPEN_30M"' in structure
     # Each row still carries its own observation clock underneath the page-level clock.
-    assert "as of 10:00 AM PT" in refresh and "Fri, Sep 4" in refresh
+    assert "as of 10:00 AM Vancouver time" in refresh and "Fri, Sep 4" in refresh
 
 
 def test_carried_watches_read_from_an_earlier_read():

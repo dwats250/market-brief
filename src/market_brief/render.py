@@ -1172,8 +1172,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
              for card in release_cards(releases, packet["events"], packet["sources"], unpublished)]
     happened = {ident for card in cards for ident in card["events"]}
     # An event whose scheduled time has passed without admitted values (Real Earnings; a release the collector
-    # does not read) is no longer ahead: the line says it was released and that its values are not collected,
-    # instead of reading like something still to come.
+    # does not read) is no longer ahead: report only that the scheduled time passed and values were not collected.
     events = [{**event, "scheduled_label": pacific_time(event["scheduled_at"], True),
                "relation_label": event.get("session_relation", "").lower(), "refs": refs([event["id"]], catalog),
                # A time that has passed proves nothing about publication: only an admitted page (a card above) says

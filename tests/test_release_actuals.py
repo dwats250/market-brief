@@ -975,6 +975,13 @@ def test_the_october_cpi_makes_coverage_partial_and_a_complete_cpi_does_not():
     assert not {"bls-cpi-all-items-yy", "bls-cpi-core-yy"} & set(evidence_catalog(packet))
 
 
+def test_an_unavailable_cpi_source_also_prevents_false_ready_coverage():
+    _, record, _ = tuesday_release("cpi", CPI_PAGE)
+    record.update(status="UNAVAILABLE", reason="malformed UnicodeDecodeError")
+    packet = run_packet(PREMARKET_TUE, "sample-premarket-tue", sources=[record])
+    assert packet["coverage"]["status"] == "PARTIAL"
+
+
 def test_the_october_card_shows_only_the_monthly_values_and_says_the_twelve_month_changes_are_unavailable():
     packet, _, _, (markdown, page) = october_page()
     assert "<b>Consumer Price Index</b> · <span>October 2026</span>" in macro(page)

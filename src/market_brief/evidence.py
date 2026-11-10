@@ -343,11 +343,13 @@ def finalize_coverage(packet):
                        f"{NEAR_CLOSE_WINDOW.seconds // 60} minutes before the close, not official closing bars")
     calendar_complete = {s["id"] for s in calendars if s["status"] == "AVAILABLE"
                          and s["coverage_date"] == packet["run"]["session"]["date"]}
-    # An official release that states a measure is unpublished (the CPI's 12-month change when its base month was never
-    # collected) leaves the picture partial, though everything else it printed stands.
-    unpublished = any(r["frequency"] == "release" and r["status"] not in USABLE for r in packet["observations"])
+    # CPI coverage is partial when the CPI source failed or any of its measures is unavailable. Keep this scoped to the
+    # contract being repaired; it does not change readiness semantics for the other release families.
+    incomplete_cpi = (any(s["id"] == "bls-cpi" and s["status"] not in USABLE for s in packet["sources"])
+                      or any(r["source_id"] == "bls-cpi" and r["frequency"] == "release"
+                             and r["status"] not in USABLE for r in packet["observations"]))
     ready = ({"SPY", "QQQ"} <= anchors and {"bls", "bea", "fed-calendar"} <= calendar_complete
-             and not unpublished)
+             and not incomplete_cpi)
     usable = bool(packet["derived"] or packet["events"] or packet["context_items"]
                   or any(r["status"] in USABLE for r in packet["observations"]))
     status = "READY" if ready else "PARTIAL" if usable else "INSUFFICIENT"

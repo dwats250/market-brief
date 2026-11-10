@@ -106,6 +106,10 @@ SHORT_MONTHS = (r"Jan\.", r"Feb\.", r"Mar\.", r"Apr\.", "May", r"Jun\.", r"Jul\.
 TABLE_VALUE = re.compile(r"-?\d{1,2}\.\d")
 DASH = re.compile(r"-")  # the exact marker Table A uses for a value BLS did not publish
 FOOTNOTE = re.compile(r"\s*\(\d+\)$")
+CPI_OCTOBER_2026_UNAVAILABLE = (
+    "BLS did not collect survey data for October 2025 because of a lapse in appropriations. For most CPI series, "
+    "BLS could not publish October 2025 indexes. As a result, BLS cannot publish 12-month percent changes for "
+    "October 2026 for indexes where October 2025 data are unavailable.")
 
 # The evidence rows each release yields: (value key, evidence ID, metric, unit, baseline).
 JOBS, PERCENT, CHANGE = "thousand jobs", "percent", "percent change"
@@ -375,15 +379,6 @@ def table_label(period):
     return f"{SHORT_MONTHS[int(period[5:]) - 1]} {period[:4]}"
 
 
-def yoy_unavailable_reason(period):
-    """BLS's own explanation, in its words, for a 12-month change it cannot publish because the base month was never
-    collected (the 2025 lapse in appropriations skipped October 2025, so October 2026 has no base)."""
-    year, month = int(period[:4]), MONTHS[int(period[5:]) - 1]
-    return (f"BLS did not collect survey data for {month} {year - 1} because of a lapse in appropriations. For most "
-            f"CPI series, BLS could not publish {month} {year - 1} indexes. As a result, BLS cannot publish 12-month "
-            f"percent changes for {month} {year} for indexes where {month} {year - 1} data are unavailable.")
-
-
 def cpi_values(tables, period, text=""):
     """Headline and core CPI-U, monthly (seasonally adjusted) and 12-month, from Table A's reference-month columns.
     Returns `(values, unavailable)`. A 12-month cell that is a dash is a genuinely unpublished value only when the page
@@ -416,7 +411,7 @@ def cpi_values(tables, period, text=""):
             if name in rows:
                 raise ReleaseError(f"Table A repeats its {name} row")
             rows[name] = [plain("".join(cell["text"])) for cell in row[1:]]
-    explanation = yoy_unavailable_reason(period)
+    explanation = CPI_OCTOBER_2026_UNAVAILABLE if period == "2026-10" else None
     notes = plain(text) + " " + plain(" ".join("".join(cell["text"]) for row in table["rows"]
                                                 if row["section"] == "tfoot" for cell in row["cells"]))
     values, unavailable = {}, {}
@@ -426,7 +421,7 @@ def cpi_values(tables, period, text=""):
         cells = rows.get(name)
         if cells is None or len(cells) != len(months) + 1:
             raise ReleaseError(f"Table A has no complete {name} row")
-        if column == yearly and DASH.fullmatch(cells[column]) and explanation in notes:
+        if column == yearly and explanation and DASH.fullmatch(cells[column]) and explanation in notes:
             values[key], unavailable[key] = None, explanation
             continue
         if not TABLE_VALUE.fullmatch(cells[column]):

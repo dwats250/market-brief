@@ -501,6 +501,10 @@ def release_actuals(events, now, deadline, fetcher, enabled=None):
             record.update(status="UNAVAILABLE", reason=failure(exc))
         else:
             rows += release_rows(release, retrieved)
+            # Only the page admitted as this scheduled release (its time, date and month all checked) moves the event
+            # off SCHEDULED; a time that has merely passed never does.
+            event["status"] = "RELEASED"
+            event["published_at"] = release["released_at"].astimezone(timezone.utc).isoformat()
             # Revisions the release states but that did not read cleanly are left out; the record says so.
             record.update(retrieved_at=retrieved.isoformat(), **(dict(status="DEGRADED", reason=release["note"])
                                                                    if release["note"] else {}))

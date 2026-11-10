@@ -30,6 +30,9 @@ NEAR_CLOSE_GRACE = timedelta(minutes=90)
 # and that month's previous and revised estimates. Only release rows carry these fields.
 RELEASE_FIELDS = ("reference_period", "revised_month", "revised_period", "revised_from", "revised_to")
 REFERENCE_PERIOD = re.compile(r"\d{4}-(?:(?:0[1-9]|1[0-2])|Q[1-4])")
+# A calendar event is SCHEDULED until its official page is admitted as that release (`collect.release_actuals`); its
+# time passing alone never changes it. Both states are citable evidence.
+EVENT_STATES = USABLE | {"SCHEDULED", "RELEASED"}
 SECTOR_ETFS = frozenset({"XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY"})
 
 
@@ -88,6 +91,16 @@ def session_info(now, checkpoint="PREMARKET"):
                 scheduled_checkpoint_at=checkpoint_data["scheduled_at"])
 
 
+def dated_release(raw, now):
+    """A release row published in this session, no later than now, that names its reference month."""
+    try:
+        observed = timestamp(raw["observed_at"])
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+    return (observed <= now and observed.astimezone(ET).date() == now.astimezone(ET).date()
+            and bool(REFERENCE_PERIOD.fullmatch(str(raw.get("reference_period", "")))))
+
+
 def normalize_observation(raw, now, near_close=None, session_close=None):
     """`near_close` is the exchange close for a post-close checkpoint; otherwise None. `session_close` is this
     run's regular-session close: an intraday trade stamped after it is after-hours, not session evidence."""
@@ -106,7 +119,11 @@ def normalize_observation(raw, now, near_close=None, session_close=None):
                ("id", "topic", "metric", "unit", "baseline", "source_id")):
         return reject("INVALID", "missing identity, unit, or baseline")
     if row["value"] is None:
-        return reject("UNAVAILABLE", row["reason"] or "no observation supplied")
+        reject("UNAVAILABLE", row["reason"] or "no observation supplied")
+        if row["frequency"] == "release" and dated_release(raw, now):
+            # A measure the official release itself leaves unpublished keeps the month it was due for.
+            row["reference_period"] = raw["reference_period"]
+        return row
     if not finite(row["value"]):
         return reject("INVALID", "nonfinite or nonnumeric value")
     if not row["observed_at"]:
@@ -326,7 +343,11 @@ def finalize_coverage(packet):
                        f"{NEAR_CLOSE_WINDOW.seconds // 60} minutes before the close, not official closing bars")
     calendar_complete = {s["id"] for s in calendars if s["status"] == "AVAILABLE"
                          and s["coverage_date"] == packet["run"]["session"]["date"]}
-    ready = {"SPY", "QQQ"} <= anchors and {"bls", "bea", "fed-calendar"} <= calendar_complete
+    # An official release that states a measure is unpublished (the CPI's 12-month change when its base month was never
+    # collected) leaves the picture partial, though everything else it printed stands.
+    unpublished = any(r["frequency"] == "release" and r["status"] not in USABLE for r in packet["observations"])
+    ready = ({"SPY", "QQQ"} <= anchors and {"bls", "bea", "fed-calendar"} <= calendar_complete
+             and not unpublished)
     usable = bool(packet["derived"] or packet["events"] or packet["context_items"]
                   or any(r["status"] in USABLE for r in packet["observations"]))
     status = "READY" if ready else "PARTIAL" if usable else "INSUFFICIENT"
@@ -364,7 +385,7 @@ def finalize_coverage(packet):
 
 def evidence_catalog(packet):
     return {r["id"]: r for key in ("observations", "derived", "events", "context_items")
-            for r in packet[key] if r.get("status", "AVAILABLE") in USABLE | {"SCHEDULED"}}
+            for r in packet[key] if r.get("status", "AVAILABLE") in EVENT_STATES}
 
 
 MODEL_RECORD_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at",
@@ -394,13 +415,13 @@ def model_packet(packet):
     for field in ("observations", "derived", "events", "context_items"):
         compact = compact_model_event if field == "events" else compact_model_record
         result[field] = [compact(r) for r in result[field]
-                         if r.get("source_id") in allowed and r.get("status") in USABLE | {"SCHEDULED"}
+                         if r.get("source_id") in allowed and r.get("status") in EVENT_STATES
                          and not stale_movement(packet, r)]
     result["sector_leadership"] = dict(
         top=[compact_model_record(r) for r in result.get("sector_leadership", {}).get("top", [])
-             if r.get("source_id") in allowed and r.get("status") in USABLE | {"SCHEDULED"}],
+             if r.get("source_id") in allowed and r.get("status") in EVENT_STATES],
         bottom=[compact_model_record(r) for r in result.get("sector_leadership", {}).get("bottom", [])
-                if r.get("source_id") in allowed and r.get("status") in USABLE | {"SCHEDULED"}])
+                if r.get("source_id") in allowed and r.get("status") in EVENT_STATES])
     permitted_ids = set(evidence_catalog(result))
     result["attention"] = [{key: a[key] for key in
                              ("id", "symbol", "reason", "evidence_ids", "horizon", "date")

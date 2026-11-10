@@ -1,8 +1,11 @@
 """Official BLS release values, read from fixed current-edition pages after the admitted calendar says a release
 has happened. Nothing here fetches.
 
-Two narrow readers, never a general scraper. The CPI's four values come from its Table A. The Employment Situation's
-current-edition page holds only the release text, so its values come from BLS's standard sentences, each pinned by real
+Two narrow readers, never a general scraper. The CPI's four values come from its Table A. A 12-month cell that BLS
+prints as a dash is an explicit unavailable value only when the page carries BLS's own explanation for that reference
+month (the October 2026 release, whose base month was never collected); every other unreadable cell fails closed. The
+Employment Situation's current-edition page holds only the release text, so its values come from BLS's standard
+sentences, each pinned by real
 releases and checked against the others: every statement of a value must agree, the monthly earnings change must agree
 with its cents and dollar level, each revision with its previous and revised estimates, and the combined revision with
 their sum. A page is admitted only as the scheduled release: its official release time is the calendar event's and its
@@ -101,6 +104,7 @@ TABLE_A_GROUP = "Seasonally adjusted changes from preceding month"
 SHORT_MONTHS = (r"Jan\.", r"Feb\.", r"Mar\.", r"Apr\.", "May", r"Jun\.", r"Jul\.", r"Aug\.", r"Sept?\.", r"Oct\.",
                 r"Nov\.", r"Dec\.")
 TABLE_VALUE = re.compile(r"-?\d{1,2}\.\d")
+DASH = re.compile(r"-")  # the exact marker Table A uses for a value BLS did not publish
 FOOTNOTE = re.compile(r"\s*\(\d+\)$")
 
 # The evidence rows each release yields: (value key, evidence ID, metric, unit, baseline).
@@ -371,8 +375,20 @@ def table_label(period):
     return f"{SHORT_MONTHS[int(period[5:]) - 1]} {period[:4]}"
 
 
-def cpi_values(tables, period):
-    """Headline and core CPI-U, monthly (seasonally adjusted) and 12-month, from Table A's reference-month columns."""
+def yoy_unavailable_reason(period):
+    """BLS's own explanation, in its words, for a 12-month change it cannot publish because the base month was never
+    collected (the 2025 lapse in appropriations skipped October 2025, so October 2026 has no base)."""
+    year, month = int(period[:4]), MONTHS[int(period[5:]) - 1]
+    return (f"BLS did not collect survey data for {month} {year - 1} because of a lapse in appropriations. For most "
+            f"CPI series, BLS could not publish {month} {year - 1} indexes. As a result, BLS cannot publish 12-month "
+            f"percent changes for {month} {year} for indexes where {month} {year - 1} data are unavailable.")
+
+
+def cpi_values(tables, period, text=""):
+    """Headline and core CPI-U, monthly (seasonally adjusted) and 12-month, from Table A's reference-month columns.
+    Returns `(values, unavailable)`. A 12-month cell that is a dash is a genuinely unpublished value only when the page
+    carries BLS's explanation for the reference month (in its release text or Table A's notes): its value is None and
+    `unavailable` holds the explanation. Any other cell that is not a number, and any monthly cell, fails closed."""
     found = [table for table in tables if table["id"] == TABLE_A]
     if len(found) != 1:
         raise ReleaseError("the page has no single Table A")
@@ -390,6 +406,7 @@ def cpi_values(tables, period):
     months = [plain("".join(cell["text"])) for cell in head[1]]
     if len(months) != 7 or not re.fullmatch(label, months[-1]):
         raise ReleaseError("Table A's latest month is not the reference month")
+    monthly, yearly = 6, 7
     rows = {}
     for row in (row["cells"] for row in table["rows"] if row["section"] == "tbody"):
         if not row or row[0]["tag"] != "th":
@@ -399,17 +416,23 @@ def cpi_values(tables, period):
             if name in rows:
                 raise ReleaseError(f"Table A repeats its {name} row")
             rows[name] = [plain("".join(cell["text"])) for cell in row[1:]]
-    values = {}
-    for key, name, column in (("all_items_mm", "All items", 6), ("all_items_yy", "All items", 7),
-                              ("core_mm", "All items less food and energy", 6),
-                              ("core_yy", "All items less food and energy", 7)):
+    explanation = yoy_unavailable_reason(period)
+    notes = plain(text) + " " + plain(" ".join("".join(cell["text"]) for row in table["rows"]
+                                                if row["section"] == "tfoot" for cell in row["cells"]))
+    values, unavailable = {}, {}
+    for key, name, column in (("all_items_mm", "All items", monthly), ("all_items_yy", "All items", yearly),
+                              ("core_mm", "All items less food and energy", monthly),
+                              ("core_yy", "All items less food and energy", yearly)):
         cells = rows.get(name)
-        if cells is None or len(cells) != 8:
+        if cells is None or len(cells) != len(months) + 1:
             raise ReleaseError(f"Table A has no complete {name} row")
+        if column == yearly and DASH.fullmatch(cells[column]) and explanation in notes:
+            values[key], unavailable[key] = None, explanation
+            continue
         if not TABLE_VALUE.fullmatch(cells[column]):
             raise ReleaseError(f"Table A's {name} value is not a number")
         values[key] = bounded(float(cells[column]), key)
-    return values
+    return values, unavailable
 
 
 def identity(family, text):
@@ -480,7 +503,7 @@ def read_release(family, page):
         raise ReleaseError("the page's title and its release text name different months")
     release = release_text(family, parts["text"])
     if family == "cpi":
-        release["values"] = cpi_values(parts["tables"], release["period"])
+        release["values"], release["unavailable"] = cpi_values(parts["tables"], release["period"], parts["text"])
     return release
 
 
@@ -664,7 +687,11 @@ def release_rows(release, retrieved):
     common = dict(topic=release["title"], frequency="release", retrieved_at=retrieved.isoformat(),
                   observed_at=release["released_at"].astimezone(timezone.utc).isoformat(), source_id=spec["source"],
                   status="AVAILABLE", reason="", reference_period=release["period"])
-    rows = [dict(common, id=ident, metric=metric, value=release["values"][key], unit=unit, baseline=baseline)
+    # A measure the release itself states is unpublished is an explicit unavailable row carrying BLS's explanation, with
+    # the same identity, baseline and reference month it would have had; it never carries a number.
+    unavailable = release.get("unavailable", {})
+    rows = [dict(common, id=ident, metric=metric, value=release["values"][key], unit=unit, baseline=baseline,
+                 **(dict(status="UNAVAILABLE", reason=unavailable[key]) if key in unavailable else {}))
             for key, ident, metric, unit, baseline in MEASURES[release["family"]]]
     for revision in release["revisions"]:
         revised_period = revision.get("period") or revision.get("month")

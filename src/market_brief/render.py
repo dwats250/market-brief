@@ -862,22 +862,30 @@ def rates_module(packet, facts, catalog):
                            lead_part=next((p for p in parts if p["maturity"] == "10Y"), parts[0] if parts else None)))
 
 
-def release_cards(rows, events, sources=()):
+def release_cards(rows, events, sources=(), unpublished=()):
     """One card per admitted release, from this run's rows (the observed clock): its official time, family, reference
-    month and values, and the IDs of the calendar events it has now happened for, which leave What matters next."""
+    month and values, and the IDs of the calendar events it has now happened for, which leave What matters next.
+    `unpublished` holds the rows of measures the release itself states are unavailable; each is named on the card of its
+    own release as `unavailable` (never a number), and none starts a card of its own."""
     groups = {}
     for row in rows:
         groups.setdefault((row["observed_at"], row["topic"], row["reference_period"]), []).append(row)
     cards = []
     for (released, title, period), members in sorted(groups.items()):
         by_metric = {row["metric"]: row for row in members}
+        absent = {row["metric"] for row in unpublished
+                  if (row["observed_at"], row["topic"], row.get("reference_period")) == (released, title, period)}
         lines = []
         for label, metrics in RELEASE_LINES:
-            present = [by_metric[metric] for metric in metrics if metric in by_metric]
-            if present:
-                lines.append(dict(label=label, values=[" · ".join(
-                    f"{formatted(row)} {PAIR_WORDS[row['metric'].rsplit(', ', 1)[1]]}" if len(metrics) > 1
-                    else formatted(row) for row in present)]))
+            parts = []
+            for metric in metrics:
+                word = PAIR_WORDS[metric.rsplit(", ", 1)[1]] if len(metrics) > 1 else ""
+                if metric in by_metric:
+                    parts.append(f"{formatted(by_metric[metric])} {word}" if word else formatted(by_metric[metric]))
+                elif metric in absent:
+                    parts.append(f"{word} unavailable" if word else "unavailable")
+            if parts:
+                lines.append(dict(label=label, values=[" · ".join(parts)]))
         for label, metric in (("Canadian employment change", "Canadian employment change"),
                               ("Canadian unemployment", "Canadian unemployment rate")):
             if metric in by_metric:
@@ -1060,6 +1068,10 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     equity = [r for r in facts if r["topic"] in history_symbols or r["frequency"] == "intraday"]
     treasuries = [r for r in facts if r["topic"].startswith("US ") and r["metric"] in RATE_METRICS]
     releases = [r for r in facts if r["frequency"] == "release"]
+    # Release measures the official page states are unavailable: named on their release's card, never a number. Their
+    # reason (BLS's own words) is in Coverage limitations.
+    unpublished = [r for r in packet["observations"]
+                   if r["frequency"] == "release" and r["status"] == "UNAVAILABLE" and r.get("reference_period")]
     other_macro = [r for r in facts if r not in equity and r not in treasuries and r not in releases]
     # After a close whose daily bar is not yet published, the retained daily return is two
     # sessions old relative to the completed session and must not pose as today.
@@ -1157,14 +1169,16 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     # A release whose official values are admitted has happened: its card in Macro & rates is its one home, so it is no
     # longer listed among the events that matter next.
     cards = [dict(card, proof=refs(card["ids"], catalog))
-             for card in release_cards(releases, packet["events"], packet["sources"])]
+             for card in release_cards(releases, packet["events"], packet["sources"], unpublished)]
     happened = {ident for card in cards for ident in card["events"]}
     # An event whose scheduled time has passed without admitted values (Real Earnings; a release the collector
     # does not read) is no longer ahead: the line says it was released and that its values are not collected,
     # instead of reading like something still to come.
     events = [{**event, "scheduled_label": pacific_time(event["scheduled_at"], True),
                "relation_label": event.get("session_relation", "").lower(), "refs": refs([event["id"]], catalog),
-               "passed": (f"released · values {NOT_COLLECTED}"
+               # A time that has passed proves nothing about publication: only an admitted page (a card above) says
+               # a release happened, so this says what is known.
+               "passed": (f"scheduled time passed · values {NOT_COLLECTED}"
                           if event.get("scheduled_at") and timestamp(event["scheduled_at"]) <= target else "")}
               for event in packet["events"] if event["id"] not in happened][:4]
 

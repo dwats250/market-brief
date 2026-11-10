@@ -397,10 +397,11 @@ def test_a_past_event_without_values_says_so():
     packet, value = fixture_packet(), narrative()
     event = next(e for e in packet["events"] if e.get("scheduled_at"))
     md, page = render(packet, value)
-    assert "released · values not collected" not in page  # the fixture's event is still ahead of its run
+    assert "scheduled time passed · values not collected" not in page  # the fixture's event is still ahead of its run
     event["scheduled_at"] = "2026-09-08T12:00:00+00:00"  # before the 12:45 UTC premarket run
     md, page = render(packet, value)
-    line = "Tuesday, Sep 8 · 5:00 AM PT · during session · released · values not collected"
+    # A time that has passed is not a publication: the line never says "released" without an admitted page.
+    line = "Tuesday, Sep 8 · 5:00 AM PT · during session · scheduled time passed · values not collected"
     assert f"<b>{event['title']}</b>{line}" in page
     assert f"- **Event** — {event['title']} · {line}" in md
 

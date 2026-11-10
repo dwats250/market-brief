@@ -17,7 +17,7 @@ from urllib.request import build_opener as real_build_opener
 
 import pytest
 from profiles import light_opening, light_profile  # noqa: F401  (fixture)
-from test_bls_calendar import FORBIDDEN, ICS, LIST, PAGES, Scripted, collected, network, releases, utc
+from test_bls_calendar import FORBIDDEN, ICS, LIST, PAGES, Response, Scripted, collected, network, releases, utc
 from test_cadence import Day, interpretation_fragments
 from test_continuity import PREMARKET_TUE, run_packet
 from test_contract import edition_response
@@ -44,6 +44,7 @@ from market_brief.evidence import (
     evidence_catalog,
     finalize_coverage,
     metric_identity,
+    model_packet,
     normalize_observation,
     normalize_packet,
     read_json,
@@ -761,6 +762,261 @@ def test_a_page_missed_at_the_open_is_added_by_a_later_refresh(monkeypatch, tmp_
     assert day.release_run("2026-10-02T15:00:00+00:00", "HOURLY_1100", EMPSIT_PAGE) == 0
     assert card_lines(macro(day.page("HOURLY_1100", FRIDAY))) == SEPTEMBER_CARD
     assert day.calls == ["PREMARKET"] and day.published == ["PREMARKET", "OPEN_1M", "HOURLY_1100"]
+
+
+# --- The October 2026 CPI: the 12-month changes BLS did not publish (WP-CPI-01) -------------------------------------
+#
+# BLS did not collect October 2025 survey data (the lapse in appropriations), so the October 2026 release prints a dash
+# for both 12-month changes and says why. The fixture is a bounded excerpt of that release (USDL-26-1685, 8:30 AM ET
+# Tuesday, November 10, 2026): its identity, BLS's explanation, Table A's headline and core rows and its table note.
+
+CPI_OCTOBER = (FIXTURES / "bls-cpi.2026-11-10.htm").read_text()
+BLS_EXPLANATION = ("BLS did not collect survey data for October 2025 because of a lapse in appropriations. "
+                   "For most CPI series, BLS could not publish October 2025 indexes. As a result, BLS cannot publish "
+                   "12-month percent changes for October 2026 for indexes where October 2025 data are unavailable.")
+CPI_NOVEMBER_RELEASE = "2026-11-10T13:30:00+00:00"  # 8:30 AM ET
+CPI_NOVEMBER_MORNING = "2026-11-10T13:31:00+00:00"
+CPI_ID = {"all_items_mm": "bls-cpi-all-items-mm", "all_items_yy": "bls-cpi-all-items-yy",
+          "core_mm": "bls-cpi-core-mm", "core_yy": "bls-cpi-core-yy"}
+
+
+def cpi_event(title="Consumer Price Index for October 2026", at=CPI_NOVEMBER_RELEASE):
+    return dict(id="bls-event-0", title=title, source_id="bls", published_at=None, checked_at=at, scheduled_at=at,
+                status="SCHEDULED")
+
+
+def read_cpi(page, event, now=CPI_NOVEMBER_MORNING):
+    return release_actuals([event], utc(now), time.monotonic() + 60, lambda url, deadline: page, enabled=["cpi"])
+
+
+def test_the_october_cpi_keeps_its_two_monthly_values_and_names_the_two_unpublished_changes():
+    release = read_release("cpi", CPI_OCTOBER)
+    assert release["title"] == "Consumer Price Index" and release["period"] == "2026-10"
+    assert release["released_at"] == datetime(2026, 11, 10, 8, 30, tzinfo=ET)
+    assert release["values"] == dict(all_items_mm=0.4, all_items_yy=None, core_mm=0.3, core_yy=None)
+    assert release["unavailable"] == dict(all_items_yy=BLS_EXPLANATION, core_yy=BLS_EXPLANATION)
+    assert release["revisions"] == [] and release["combined"] is None and release["note"] == ""
+
+
+def test_a_complete_cpi_release_has_nothing_unavailable():
+    assert read_release("cpi", CPI_PAGE)["unavailable"] == {}
+
+
+def test_each_october_cpi_row_keeps_its_identity_baseline_source_reference_month_and_clock():
+    retrieved = utc(CPI_NOVEMBER_MORNING)
+    rows = release_rows(read_release("cpi", CPI_OCTOBER), retrieved)
+    assert [row["id"] for row in rows] == list(CPI_ID.values())
+    assert {(row["source_id"], row["topic"], row["frequency"], row["reference_period"], row["observed_at"],
+             row["retrieved_at"]) for row in rows} == {
+        ("bls-cpi", "Consumer Price Index", "release", "2026-10", CPI_NOVEMBER_RELEASE, retrieved.isoformat())}
+    by_id = {row["id"]: row for row in rows}
+    for ident, value in (("bls-cpi-all-items-mm", 0.4), ("bls-cpi-core-mm", 0.3)):
+        assert (by_id[ident]["value"], by_id[ident]["status"], by_id[ident]["reason"]) == (value, "AVAILABLE", "")
+    for ident in ("bls-cpi-all-items-yy", "bls-cpi-core-yy"):
+        assert (by_id[ident]["value"], by_id[ident]["status"], by_id[ident]["reason"]) == (
+            None, "UNAVAILABLE", BLS_EXPLANATION)
+    # The same measures, units and baselines as a release that did publish them.
+    complete = release_rows(read_release("cpi", CPI_PAGE), retrieved)
+    assert [{key: row[key] for key in ("id", "metric", "unit", "baseline")} for row in rows] == [
+        {key: row[key] for key in ("id", "metric", "unit", "baseline")} for row in complete]
+    assert by_id["bls-cpi-all-items-yy"]["baseline"] == (
+        "U.S. city average, change over the past 12 months, not seasonally adjusted")
+
+
+# Each damage: the reason the page must be refused for, and the edits that make it so. A dash is the one cell BLS may
+# leave unpublished, and only the 12-month one and only with its own explanation for this reference month.
+CPI_OCTOBER_MONTHLY = 'cpi_pressa.r.1 cpi_pressa.h.1.2 cpi_pressa.h.2.8"><span class="datavalue">0.4</span>'
+CPI_OCTOBER_YEARLY = 'cpi_pressa.h.1.9"><span class="datavalue">-</span>'
+CPI_OCTOBER_DAMAGE = {
+    "a dash without BLS's explanation": ("is not a number", [
+        ("BLS cannot publish 12-month percent changes", "BLS may publish 12-month percent changes", 1)]),
+    "an explanation for another reference month": ("is not a number", [
+        ("percent changes for October 2026 for indexes", "percent changes for September 2026 for indexes", 1)]),
+    "an explanation for another base month": ("is not a number", [
+        ("where October 2025 data are unavailable", "where September 2025 data are unavailable", 1)]),
+    "a dash in a monthly column": ("Table A's All items value is not a number", [
+        (CPI_OCTOBER_MONTHLY, CPI_OCTOBER_MONTHLY.replace(">0.4<", ">-<"), 1)]),
+    "a 12-month value that is neither a number nor a dash": ("is not a number", [
+        (CPI_OCTOBER_YEARLY, CPI_OCTOBER_YEARLY.replace(">-<", ">n/a<"), 2)]),
+    "an impossible 12-month value": ("implausible 12-month CPI change", [
+        (CPI_OCTOBER_YEARLY, CPI_OCTOBER_YEARLY.replace(">-<", ">45.0<"), 2)]),
+    "a monthly group that spans other columns": ("columns are not the expected ones", [
+        ('colspan="7" id="cpi_pressa.h.1.2"', 'colspan="6" id="cpi_pressa.h.1.2"', 1)]),
+    "a latest column for another month": ("latest month is not the reference month", [
+        ('h.2.8">Oct.<br />2026', 'h.2.8">Sep.<br />2026', 1)]),
+}
+
+
+@pytest.mark.parametrize("damage", CPI_OCTOBER_DAMAGE)
+def test_invalid_october_cpi_data_still_fails_closed(damage):
+    reason, edits = CPI_OCTOBER_DAMAGE[damage]
+    page = CPI_OCTOBER
+    for old, new, count in edits:
+        page = damaged(page, old, new, count)
+    with pytest.raises(ReleaseError, match=re.escape(reason)):
+        read_release("cpi", page)
+
+
+def test_a_published_twelve_month_value_stays_a_value_beside_an_unpublished_one():
+    # Valid observations are kept individually: a number in one 12-month cell is read as a number.
+    page = damaged(CPI_OCTOBER, 'cpi_pressa.r.1 cpi_pressa.h.1.9"><span class="datavalue">-</span>',
+                   'cpi_pressa.r.1 cpi_pressa.h.1.9"><span class="datavalue">3.1</span>')
+    release = read_release("cpi", page)
+    assert release["values"] == dict(all_items_mm=0.4, all_items_yy=3.1, core_mm=0.3, core_yy=None)
+    assert release["unavailable"] == dict(core_yy=BLS_EXPLANATION)
+
+
+def test_the_october_release_is_admitted_as_the_scheduled_release_and_only_then_leaves_scheduled(monkeypatch):
+    frozen(monkeypatch, CPI_NOVEMBER_MORNING)
+    event = cpi_event()
+    rows, records = read_cpi(CPI_OCTOBER, event)
+    assert (event["status"], event["published_at"]) == ("RELEASED", CPI_NOVEMBER_RELEASE)
+    assert [(row["id"], row["value"], row["status"]) for row in rows] == [
+        ("bls-cpi-all-items-mm", 0.4, "AVAILABLE"), ("bls-cpi-all-items-yy", None, "UNAVAILABLE"),
+        ("bls-cpi-core-mm", 0.3, "AVAILABLE"), ("bls-cpi-core-yy", None, "UNAVAILABLE")]
+    # The source itself was read and admitted: its record is AVAILABLE and names the page it read.
+    assert [(r["id"], r["status"], r["reason"], r["url"]) for r in records] == [
+        ("bls-cpi", "AVAILABLE", "", CONSUMER_PRICE_INDEX)]
+
+
+@pytest.mark.parametrize("name,page,event,now,reason", [
+    ("before its scheduled time", CPI_OCTOBER, cpi_event(), "2026-11-10T13:29:00+00:00", None),
+    ("the previous edition after its time", CPI_PAGE, cpi_event(), CPI_NOVEMBER_MORNING,
+     "the page still shows the September 11, 2026 release"),
+    ("a page published at another time", CPI_OCTOBER, cpi_event(at="2026-11-10T13:15:00+00:00"),
+     CPI_NOVEMBER_MORNING, "the page shows a release of November 10, 2026, not the scheduled one"),
+    ("a calendar month the page does not report", CPI_OCTOBER, cpi_event("Consumer Price Index for September 2026"),
+     CPI_NOVEMBER_MORNING, "the page reports October 2026, not the scheduled September 2026"),
+])
+def test_time_alone_never_moves_the_event_off_scheduled(monkeypatch, name, page, event, now, reason):
+    frozen(monkeypatch, now)
+    requests = []
+    rows, records = release_actuals([event], utc(now), time.monotonic() + 60,
+                                    lambda url, deadline: requests.append(url) or page, enabled=["cpi"])
+    assert event["status"] == "SCHEDULED" and rows == []
+    if reason is None:
+        assert requests == [] and records == []  # not due: the page is not even requested
+    else:
+        assert [(r["status"], r["reason"]) for r in records] == [("UNAVAILABLE", reason)]
+
+
+def test_an_invalid_october_page_leaves_the_event_scheduled_and_says_why(monkeypatch):
+    frozen(monkeypatch, CPI_NOVEMBER_MORNING)
+    event = cpi_event()
+    page = damaged(CPI_OCTOBER, "BLS cannot publish", "BLS may publish")
+    rows, records = read_cpi(page, event)
+    assert event["status"] == "SCHEDULED" and rows == []
+    assert [(r["status"], r["reason"]) for r in records] == [
+        ("UNAVAILABLE", "Table A's All items value is not a number")]
+
+
+def test_malformed_utf8_stays_explicitly_unavailable_and_the_decoder_is_unchanged(monkeypatch):
+    body = CPI_OCTOBER.encode()
+    broken = body[:200] + b"\xff\xfe" + body[200:]
+    with pytest.raises(UnicodeDecodeError):
+        broken.decode("utf-8-sig")
+
+    def answering(payload):
+        class Opener:
+            def open(self, request, timeout):
+                return Response(payload)
+        monkeypatch.setattr(collect, "build_opener", lambda *handlers: Opener())
+
+    answering(broken)
+    with pytest.raises(UnicodeDecodeError):
+        fetch(CONSUMER_PRICE_INDEX, time.monotonic() + 30)
+    frozen(monkeypatch, CPI_NOVEMBER_MORNING)
+    event = cpi_event()
+    rows, records = release_actuals([event], utc(CPI_NOVEMBER_MORNING), time.monotonic() + 60, fetch, enabled=["cpi"])
+    assert rows == [] and event["status"] == "SCHEDULED"
+    assert [(r["id"], r["status"], r["reason"]) for r in records] == [
+        ("bls-cpi", "UNAVAILABLE", "malformed UnicodeDecodeError")]
+    # Well-formed UTF-8, with or without a byte-order mark, still reads.
+    for good in (body, b"\xef\xbb\xbf" + body):
+        answering(good)
+        assert fetch(CONSUMER_PRICE_INDEX, time.monotonic() + 30) == CPI_OCTOBER
+
+
+def test_an_unpublished_release_row_keeps_its_month_only_when_it_is_dated_in_this_session():
+    row = dict(id="bls-cpi-all-items-yy", topic="Consumer Price Index", metric="CPI-U all items, 12-month change",
+               value=None, unit="percent change", baseline="U.S. city average, change over the past 12 months",
+               frequency="release", observed_at=CPI_NOVEMBER_RELEASE, retrieved_at=CPI_NOVEMBER_MORNING,
+               source_id="bls-cpi", status="UNAVAILABLE", reason=BLS_EXPLANATION, reference_period="2026-10")
+    now = utc(CPI_NOVEMBER_MORNING)
+    kept = normalize_observation(row, now)
+    assert (kept["value"], kept["status"], kept["freshness"], kept["reason"], kept["reference_period"]) == (
+        None, "UNAVAILABLE", "UNAVAILABLE", BLS_EXPLANATION, "2026-10")
+    for change in (dict(observed_at="2026-11-09T13:30:00+00:00"), dict(observed_at="2026-11-10T14:00:00+00:00"),
+                   dict(observed_at=None), dict(reference_period=None), dict(reference_period="October")):
+        loose = normalize_observation({**row, **change}, now)
+        assert loose["value"] is None and loose["status"] == "UNAVAILABLE" and "reference_period" not in loose
+
+
+def october_page():
+    """The sample fixture's Tuesday premarket with the real October release (its values, month and IDs) joined to it."""
+    return tuesday_page("cpi", CPI_OCTOBER)
+
+
+def test_the_october_cpi_makes_coverage_partial_and_a_complete_cpi_does_not():
+    complete_rows, complete_record, complete_event = tuesday_release("cpi", CPI_PAGE)
+    complete = run_packet(PREMARKET_TUE, "sample-premarket-tue", sources=[complete_record],
+                          observations=complete_rows, events=[complete_event])
+    assert complete["coverage"]["status"] == "READY"
+    rows, record, event = tuesday_release("cpi", CPI_OCTOBER)
+    packet = run_packet(PREMARKET_TUE, "sample-premarket-tue", sources=[record], observations=rows, events=[event])
+    assert packet["coverage"]["status"] == "PARTIAL"
+    assert f"Consumer Price Index: {BLS_EXPLANATION}" in packet["coverage"]["limitations"]
+    by_id = {row["id"]: row for row in packet["observations"] if row["frequency"] == "release"}
+    assert {ident: (row["value"], row["status"], row["reference_period"]) for ident, row in by_id.items()} == {
+        "bls-cpi-all-items-mm": (0.4, "AVAILABLE", "2026-10"), "bls-cpi-all-items-yy": (None, "UNAVAILABLE", "2026-10"),
+        "bls-cpi-core-mm": (0.3, "AVAILABLE", "2026-10"), "bls-cpi-core-yy": (None, "UNAVAILABLE", "2026-10")}
+    # Only the two valid values are evidence the analyst can cite; the unpublished ones never are.
+    assert {"bls-cpi-all-items-mm", "bls-cpi-core-mm"} <= set(evidence_catalog(packet))
+    assert not {"bls-cpi-all-items-yy", "bls-cpi-core-yy"} & set(evidence_catalog(packet))
+
+
+def test_an_unavailable_cpi_source_also_prevents_false_ready_coverage():
+    _, record, _ = tuesday_release("cpi", CPI_PAGE)
+    record.update(status="UNAVAILABLE", reason="malformed UnicodeDecodeError")
+    packet = run_packet(PREMARKET_TUE, "sample-premarket-tue", sources=[record])
+    assert packet["coverage"]["status"] == "PARTIAL"
+
+
+def test_the_october_card_shows_only_the_monthly_values_and_says_the_twelve_month_changes_are_unavailable():
+    packet, _, _, (markdown, page) = october_page()
+    assert "<b>Consumer Price Index</b> · <span>October 2026</span>" in macro(page)
+    assert card_lines(macro(page)) == [("CPI", ["+0.4% m/m · y/y unavailable"]),
+                                       ("Core CPI", ["+0.3% m/m · y/y unavailable"])]
+    assert "- CPI · +0.4% m/m · y/y unavailable\n- Core CPI · +0.3% m/m · y/y unavailable" in markdown
+    # No 12-month number is invented anywhere on the card or in the evidence behind it.
+    section = markdown.split("## Macro & rates", 1)[1].split("\n## ", 1)[0]
+    assert not re.search(r"\d\.\d%\s*y/y", macro(page)) and not re.search(r"\d\.\d%\s*y/y", section)
+    assert BLS_EXPLANATION in drawer(page, "Coverage limitations")
+    ledger = drawer(page, "Evidence ledger")
+    assert 'id="evidence-bls-cpi-all-items-mm"' in ledger and 'id="evidence-bls-cpi-all-items-yy"' not in ledger
+    assert "BLS Consumer Price Index" in ledger
+
+
+def test_the_released_cpi_event_leaves_what_matters_next_but_one_without_a_page_says_only_what_is_known():
+    _, _, _, (markdown, page) = october_page()
+    assert "<b>Consumer Price Index</b>" not in upcoming(page)
+    assert "**Event** — Consumer Price Index" not in markdown
+    # Without an admitted page, a passed time stays an upcoming-list line that never says "released".
+    packet = run_packet(PREMARKET_TUE, "sample-premarket-tue", events=[tuesday_release("cpi", CPI_OCTOBER)[2]])
+    profile = edition_profile("PREMARKET")
+    context = analyst_context(packet, profile)
+    markdown, page = render(packet, edition_response(profile, context), context)
+    assert "<b>Consumer Price Index</b>" in upcoming(page)
+    assert "scheduled time passed · values not collected" in upcoming(page) and "released ·" not in upcoming(page)
+
+
+def test_a_released_event_is_still_evidence_the_analyst_reads():
+    rows, record, event = tuesday_release("cpi", CPI_OCTOBER)
+    packet = run_packet(PREMARKET_TUE, "sample-premarket-tue", sources=[record], observations=rows,
+                        events=[dict(event, status="RELEASED")])
+    assert event["id"] in evidence_catalog(packet)
+    assert [(e["id"], e["status"]) for e in model_packet(packet)["events"] if e["id"] == event["id"]] == [
+        (event["id"], "RELEASED")]
 
 
 def test_the_owner_contact_identifies_the_requests_and_appears_in_nothing_the_runs_keep(monkeypatch, tmp_path, capsys):

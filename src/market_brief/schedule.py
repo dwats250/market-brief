@@ -17,6 +17,9 @@ from zoneinfo import ZoneInfo
 import exchange_calendars as xcals
 
 VANCOUVER = ZoneInfo("America/Vancouver")
+# Reader-facing name for VANCOUVER clocks. Not "PT": Vancouver stays at UTC-7 all year, and "PT" reads as UTC-8
+# in winter. Display wording only; schedules and stored timestamps stay UTC.
+LOCAL_TIME_LABEL = "Vancouver time"
 ET = ZoneInfo("America/New_York")
 CHECKPOINTS = ("PREMARKET", "OPEN_1M", "OPEN_30M", "HOURLY_1100", "HOURLY_1200", "HOURLY_1300",
                "HOURLY_1400", "HOURLY_1500", "CLOSE_1M")

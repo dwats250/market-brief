@@ -171,14 +171,14 @@ def test_only_the_two_synthesis_checkpoints_carry_an_edition_profile():
 def test_next_update_label_follows_the_scheduler():
     def label(now, current):
         return next_update_label(next_checkpoint(utc(now), current), TUE)
-    assert label(f"{TUE}T13:00:00+00:00", "PREMARKET") == "6:31 AM PT · price refresh"
-    assert label(f"{TUE}T13:31:00+00:00", "OPEN_1M") == "7:00 AM PT · analysis update"
-    assert label(f"{TUE}T14:01:00+00:00", "OPEN_30M") == "8:00 AM PT · price refresh"
-    assert label(f"{TUE}T19:00:00+00:00", "HOURLY_1500") == "1:01 PM PT · close snapshot"
-    assert label(f"{TUE}T20:03:00+00:00", "CLOSE_1M") == "Wed, Sep 9 · 6:00 AM PT · premarket analysis"
+    assert label(f"{TUE}T13:00:00+00:00", "PREMARKET") == "6:31 AM Vancouver time · price refresh"
+    assert label(f"{TUE}T13:31:00+00:00", "OPEN_1M") == "7:00 AM Vancouver time · analysis update"
+    assert label(f"{TUE}T14:01:00+00:00", "OPEN_30M") == "8:00 AM Vancouver time · price refresh"
+    assert label(f"{TUE}T19:00:00+00:00", "HOURLY_1500") == "1:01 PM Vancouver time · close snapshot"
+    assert label(f"{TUE}T20:03:00+00:00", "CLOSE_1M") == "Wed, Sep 9 · 6:00 AM Vancouver time · premarket analysis"
     # Friday's close points at Tuesday: Labor Day is skipped.
     assert next_update_label(next_checkpoint(utc("2026-09-04T20:03:00+00:00"), "CLOSE_1M"), "2026-09-04") \
-        == "Tue, Sep 8 · 6:00 AM PT · premarket analysis"
+        == "Tue, Sep 8 · 6:00 AM Vancouver time · premarket analysis"
 
 
 # --- one production day ----------------------------------------------------------------------------
@@ -191,8 +191,9 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     # LIVE says nothing; the masthead carries the date; no current prints yet, so prices are the prior close.
     assert '<div class="status-line">' not in premarket and "Premarket edition" not in premarket
     assert '<span>Tuesday, Sep 8</span></div>' in premarket
-    assert clock_lines(premarket) == ["Prices · prior close Fri, Sep 4", "Analysis · 6:00 AM PT · premarket",
-                                      "Next · 6:31 AM PT · price refresh"]
+    assert clock_lines(premarket) == ["Prices · prior close Fri, Sep 4",
+                                      "Analysis · 6:00 AM Vancouver time · premarket",
+                                      "Next · 6:31 AM Vancouver time · price refresh"]
     bundle = day.bundle()
     assert bundle["interpretation"]["origin"]["checkpoint"] == "PREMARKET"
     premarket_interpretation = bundle["interpretation"]["content_hash"]
@@ -203,8 +204,8 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.calls == ["PREMARKET"]
     opening = day.page("OPEN_1M")
     assert '<div class="status-line">' not in opening and "Opening refresh" not in opening
-    assert clock_lines(opening) == ["Prices · 6:31 AM PT", "Analysis · 6:00 AM PT · premarket",
-                                    "Next · 7:00 AM PT · analysis update"]
+    assert clock_lines(opening) == ["Prices · 6:31 AM Vancouver time", "Analysis · 6:00 AM Vancouver time · premarket",
+                                    "Next · 7:00 AM Vancouver time · analysis update"]
     assert interpretation_fragments(opening)[0] == interpretation_fragments(premarket)[0]
     bundle = day.bundle()
     assert bundle["interpretation"]["content_hash"] == premarket_interpretation  # never rewritten by a refresh
@@ -221,15 +222,15 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     structure = day.page("OPEN_30M")
     assert '<div class="status-line">' not in structure
     # A synthesis whose prices and analysis share one clock names it once.
-    assert clock_lines(structure) == ["Prices & analysis · 7:01 AM PT · opening structure",
-                                      "Next · 8:00 AM PT · price refresh"]
+    assert clock_lines(structure) == ["Prices & analysis · 7:01 AM Vancouver time · opening structure",
+                                      "Next · 8:00 AM Vancouver time · price refresh"]
     # The fixture narrative interprets no change, so the block stays out rather than showing an empty heading;
     # the anchors it would have named are still recorded.
     assert "<h2>What changed</h2>" not in structure
     view = presentation(json.loads((day.folder("OPEN_30M") / "evidence.json").read_text()),
                         day.narratives["OPEN_30M"],
                         json.loads((day.folder("OPEN_30M") / "analyst_context.json").read_text()))
-    assert view["since"]["label"] == "vs premarket and the 6:31 AM PT refresh"
+    assert view["since"]["label"] == "vs premarket and the 6:31 AM Vancouver time refresh"
     context = json.loads((day.folder("OPEN_30M") / "analyst_context.json").read_text())
     assert set(context["prior_state"]["anchors"]) == {"premarket", "latest"}
     bundle = day.bundle()
@@ -242,17 +243,20 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     assert day.run(f"{TUE}T18:00:00+00:00", "HOURLY_1400") == 0
     assert day.calls == ["PREMARKET", "OPEN_30M"]
     ten, eleven = day.page("HOURLY_1300"), day.page("HOURLY_1400")
-    assert clock_lines(ten) == ["Prices · 10:00 AM PT", "Analysis · 7:01 AM PT · opening structure",
-                                "Next · 11:00 AM PT · price refresh"]
-    assert clock_lines(eleven) == ["Prices · 11:00 AM PT", "Analysis · 7:01 AM PT · opening structure",
-                                   "Next · 12:00 PM PT · price refresh"]
+    assert clock_lines(ten) == ["Prices · 10:00 AM Vancouver time",
+                                "Analysis · 7:01 AM Vancouver time · opening structure",
+                                "Next · 11:00 AM Vancouver time · price refresh"]
+    assert clock_lines(eleven) == ["Prices · 11:00 AM Vancouver time",
+                                   "Analysis · 7:01 AM Vancouver time · opening structure",
+                                   "Next · 12:00 PM Vancouver time · price refresh"]
     assert interpretation_fragments(ten) == interpretation_fragments(structure)
     assert interpretation_fragments(eleven) == interpretation_fragments(ten)
     assert ten != eleven  # the observed record moved: clocks, tables, ledger
     # Deterministic state a refresh may add: the 7:00 opening-hour watch has run out by 10:00.
     assert PASSED not in structure and f"Through the opening hour{PASSED}" in ten
     assert 'data-checkpoint="HOURLY_1300"' in ten and 'data-checkpoint="HOURLY_1400"' in eleven
-    assert "as of 10:00 AM PT" in ten and "as of 11:00 AM PT" in eleven  # table captions carry the data clock
+    # table captions carry the data clock
+    assert "as of 10:00 AM Vancouver time" in ten and "as of 11:00 AM Vancouver time" in eleven
     for checkpoint in ("HOURLY_1300", "HOURLY_1400"):
         assert day.metadata(checkpoint)["synthesis"] == dict(kind="refresh", calls=0)
         assert not (day.folder(checkpoint) / "analyst_context.json").exists()
@@ -268,8 +272,9 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
     close = day.page("CLOSE_1M")
     assert '<div class="status-line">' not in close and "Close snapshot" not in close.split("<h1>", 1)[0]
     # The close's prices are its session-ending prints at their own clock, not the run's 1:03 PM PT.
-    assert clock_lines(close) == ["Prices · 12:59 PM PT", "Analysis · 7:01 AM PT · opening structure",
-                                  "Next · Wed, Sep 9 · 6:00 AM PT · premarket analysis"]
+    assert clock_lines(close) == ["Prices · 12:59 PM Vancouver time",
+                                  "Analysis · 7:01 AM Vancouver time · opening structure",
+                                  "Next · Wed, Sep 9 · 6:00 AM Vancouver time · premarket analysis"]
     assert interpretation_fragments(close)[:2] == interpretation_fragments(structure)[:2]
     assert "horizon passed" in close  # the 7:00 watches ran into the close, which has now happened
     assert (day.folder("CLOSE_1M") / "session_handoff.json").exists()
@@ -295,8 +300,9 @@ def test_one_production_day_synthesizes_twice_and_refreshes_deterministically(da
                    scale_last_close={"SPY": 1.004}) == 0
     assert day.calls == ["PREMARKET", "OPEN_30M", "PREMARKET"]
     wednesday = day.page("PREMARKET", "2026-09-09")
-    assert clock_lines(wednesday) == ["Prices · prior close Tue, Sep 8", "Analysis · 6:00 AM PT · premarket",
-                                      "Next · 6:31 AM PT · price refresh"]
+    assert clock_lines(wednesday) == ["Prices · prior close Tue, Sep 8",
+                                      "Analysis · 6:00 AM Vancouver time · premarket",
+                                      "Next · 6:31 AM Vancouver time · price refresh"]
     context = json.loads((day.folder("PREMARKET", "2026-09-09") / "analyst_context.json").read_text())
     view = presentation(json.loads((day.folder("PREMARKET", "2026-09-09") / "evidence.json").read_text()),
                         narrative(), context)
@@ -374,7 +380,7 @@ def test_a_replayed_refresh_never_reaches_the_analyst_and_dates_its_sample_inter
     assert "SAMPLE · Hourly refresh" in page and "FICTIONAL SAMPLE" in page
     # The fixture is targeted before its premarket slot, so the sample interpretation keeps the data's clock. Its one
     # print is SPY's, which no table carries, so the tables' prices are the prior close.
-    assert clock_lines(page)[:2] == ["Prices · prior close Fri, Sep 4", "Analysis · 5:45 AM PT · premarket"]
+    assert clock_lines(page)[:2] == ["Prices · prior close Fri, Sep 4", "Analysis · 5:45 AM Vancouver time · premarket"]
     metadata = json.loads((folder / "metadata.json").read_text())
     assert metadata["synthesis"] == dict(kind="refresh", calls=0)
     assert metadata["interpretation"]["run_id"] == "sample-premarket-fixture"
@@ -446,15 +452,20 @@ def test_a_failed_opening_structure_synthesis_leaves_refreshes_on_the_premarket_
     assert metadata["degraded_from"]["checkpoint"] == "OPEN_30M"
     assert metadata["interpretation"]["checkpoint"] == "PREMARKET"
     opening = day.page("OPEN_30M")
-    assert ('<div class="notice">The opening structure analysis due 10:00 AM ET (7:00 AM PT) was not accepted, so no '
-            'new analysis was published; the premarket analysis stands and the prices are this update&#39;s.</div>'
+    assert ('<div class="notice">The opening structure analysis due 10:00 AM ET (7:00 AM Vancouver time) was not '
+            'accepted, so no new analysis was published; the premarket analysis stands and the prices are this '
+            'update&#39;s.</div>'
             ) in opening
-    assert clock_lines(opening)[:2] == ["Prices · 7:01 AM PT", "Analysis · 6:00 AM PT · premarket"]
+    assert clock_lines(opening)[:2] == (
+            ["Prices · 7:01 AM Vancouver time", "Analysis · 6:00 AM Vancouver time · premarket"]
+    )
     assert "analyst call not accepted; deterministic refresh under interpretation run" in opening
     assert 'data-checkpoint="OPEN_30M"' in opening
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
     page = day.page("HOURLY_1300")
-    assert clock_lines(page)[:2] == ["Prices · 10:00 AM PT", "Analysis · 6:00 AM PT · premarket"]
+    assert clock_lines(page)[:2] == (
+            ["Prices · 10:00 AM Vancouver time", "Analysis · 6:00 AM Vancouver time · premarket"]
+    )
     assert "Interpretation: PREMARKET" in page.split("Technical details", 1)[1]
     assert day.metadata("HOURLY_1300")["interpretation"]["checkpoint"] == "PREMARKET"
     assert day.calls == ["PREMARKET", "OPEN_30M"]  # the refresh did not retry the analyst
@@ -554,7 +565,7 @@ def test_refresh_page_keeps_every_anchor_and_cites_frozen_values_with_their_cloc
     assert page.count("<script>") == 1 and "Content-Security-Policy" in page
     # The interpretation's markers show the rows the analyst saw, stamped with the interpretation's clock.
     marker = re.search(r'<details class="cite">(.*?)</details>', page, re.S).group(1)
-    assert "7:01 AM PT" in marker or "Fri, Sep 4" in marker
+    assert "7:01 AM Vancouver time" in marker or "Fri, Sep 4" in marker
     technical = page.split("Technical details", 1)[1]
     assert "none; deterministic refresh under interpretation run live-open_30m-" in technical
     assert "Interpretation: OPEN_30M" in technical

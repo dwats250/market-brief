@@ -96,7 +96,7 @@ def test_shared_observation_times_collapse_to_one_as_of():
                                 intraday("XLE", 1.09, "2026-09-08T20:02:00+00:00")], ["XLI", "XLE"])
     # XLE's 1:02 PM PT print is after the 1:00 PM PT close, so the two prints span phases: the caption names
     # the latest trade, never "Intraday" for an after-hours print. The shared clock still collapses.
-    assert change_column(rows, session=SESSION) == ("Latest trade vs prior close", "as of 1:02 PM PT")
+    assert change_column(rows, session=SESSION) == ("Latest trade vs prior close", "as of 1:02 PM Vancouver time")
     assert all(row["today"]["observed"] == "" for row in rows)
     assert change_column([]) == ("Change", None)
 
@@ -106,11 +106,11 @@ def test_sector_table_moves_shared_timestamp_to_heading():
     packet["observations"] += [intraday("XLI", -0.47, "2026-09-08T19:59:53+00:00"),
                                intraday("XLE", 1.09, "2026-09-08T19:59:59+00:00")]
     view = presentation(packet, narrative())
-    assert view["sectors"]["asof"] == "as of 12:59 PM PT"
+    assert view["sectors"]["asof"] == "as of 12:59 PM Vancouver time"
     assert all(row["today"]["observed"] == "" for row in view["sectors"]["rows"])
     _, page = render(packet, narrative())
-    assert page.count("Tuesday, Sep 8 · 12:59 PM PT") <= 3  # not repeated per sector row
-    assert "strongest to weakest<span>Intraday vs prior close · as of 12:59 PM PT" in page
+    assert page.count("Tuesday, Sep 8 · 12:59 PM Vancouver time") <= 3  # not repeated per sector row
+    assert "strongest to weakest<span>Intraday vs prior close · as of 12:59 PM Vancouver time" in page
 
 
 def test_divergent_observation_times_stay_on_exception_rows_only():
@@ -120,12 +120,12 @@ def test_divergent_observation_times_stay_on_exception_rows_only():
     packet["observations"] += [intraday("XLI", -0.47, "2026-09-08T19:20:00+00:00"),
                                intraday("XLE", 1.09, "2026-09-08T19:59:59+00:00")]
     view = presentation(packet, narrative())
-    assert view["sectors"]["asof"] == "as of 12:59 PM PT"
+    assert view["sectors"]["asof"] == "as of 12:59 PM Vancouver time"
     observed = {row["symbol"]: row["today"]["observed"] for row in view["sectors"]["rows"]}
-    assert observed["XLI"] == "12:20 PM PT"
+    assert observed["XLI"] == "12:20 PM Vancouver time"
     assert observed["XLE"] == ""
     _, page = render(packet, narrative())
-    assert "Tuesday, Sep 8 · 12:20 PM PT" not in page.split("<h2>Sources", 1)[0]
+    assert "Tuesday, Sep 8 · 12:20 PM Vancouver time" not in page.split("<h2>Sources", 1)[0]
     assert "2026-09-04" not in page.split("<h2>Sources", 1)[0]  # no raw ISO dates on the reading surface
     # An instrument without a print says so and keeps its history columns; the table stays in intraday mode.
     history = [row for row in packet["derived"] if row["topic"] == "XLI"]
@@ -133,7 +133,7 @@ def test_divergent_observation_times_stay_on_exception_rows_only():
     rows = compact_equity_rows([*packet["observations"], *history, *quiet_history], ["XLI", "XLE", "XLK"])
     label, asof = change_column(rows, session=packet["run"]["session"])
     quiet = next(row for row in rows if row["symbol"] == "XLK")
-    assert label == "Intraday vs prior close" and asof == "as of 12:59 PM PT"
+    assert label == "Intraday vs prior close" and asof == "as of 12:59 PM Vancouver time"
     assert quiet["today"]["display"] == "no print" and quiet["today"]["absent"]
     assert quiet["r20"]["display"].endswith("%") and quiet["dma"]["display"].endswith("%")
 
@@ -240,7 +240,7 @@ def test_watch_horizons_render_as_natural_phrases_from_the_calendar():
     assert phrases["OPENING_HOUR"] == "Through the next opening hour"
     value = narrative()
     value["watches"][0]["horizon"] = "NEXT_BRIEF"
-    assert presentation(packet, value)["next"]["watches"][0]["phrase"] == "By the 7:00 AM PT update"
+    assert presentation(packet, value)["next"]["watches"][0]["phrase"] == "By the 7:00 AM Vancouver time update"
     value["watches"][0]["horizon"] = "EVENT(sample-event)"
     assert presentation(packet, value)["next"]["watches"][0]["phrase"] == "Around Fictional manufacturing survey"
 
@@ -330,7 +330,8 @@ def test_markdown_tables_keep_shared_clocks_out_of_header_rows():
     for line in md.splitlines():
         if line.startswith("|"):
             assert line.rstrip().endswith("|"), line
-    assert ("\n**METALS** · 20-session return spread, GDX vs GLD · Intraday vs prior close · as of 12:59 PM PT\n") in md
+    assert ("\n**METALS** · 20-session return spread, GDX vs GLD · Intraday vs prior close · "
+            "as of 12:59 PM Vancouver time\n") in md
     assert "Cross-asset" not in md and "METALS STRUCTURE" not in md and "\n## Metals\n" not in md
     assert md.index("## Macro & rates") < md.index("**METALS** · ") < md.index("## Sector view")
 

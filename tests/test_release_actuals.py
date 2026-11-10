@@ -558,7 +558,7 @@ def test_the_employment_situation_card_leads_macro_and_rates():
     section = macro(page)
     card = section.split('<div class="release">', 1)[1].split("</dl>", 1)[0] + "</dl>"
     assert section.index('<div class="release">') < section.index("U.S. Treasury par curve")
-    assert re.search(r'<div class="caption">Economic release<span>5:30 AM PT</span></div>', card)
+    assert re.search(r'<div class="caption">Economic release<span>5:30 AM Vancouver time</span></div>', card)
     assert "<b>Employment Situation</b> · <span>September 2026</span>" in card
     assert card_lines(card) == [
         ("Payrolls", ["+29k"]), ("Unemployment", ["4.2%"]), ("Avg hourly earnings", ["+0.1% m/m · +3.0% y/y"]),
@@ -570,7 +570,7 @@ def test_the_employment_situation_card_leads_macro_and_rates():
 def test_the_card_reads_the_same_in_markdown():
     _, _, _, (markdown, _) = tuesday_page()
     section = markdown.split("## Macro & rates", 1)[1].split("\n## ", 1)[0]
-    assert ("**ECONOMIC RELEASE** · 5:30 AM PT · Employment Situation · September 2026\n\n"
+    assert ("**ECONOMIC RELEASE** · 5:30 AM Vancouver time · Employment Situation · September 2026\n\n"
             "- Payrolls · +29k\n- Unemployment · 4.2%\n- Avg hourly earnings · +0.1% m/m · +3.0% y/y\n"
             "- Revisions · Jul +21k → −10k; Aug +162k → +133k; Combined −60k\n") in section
     assert section.index("ECONOMIC RELEASE") < section.index("U.S. TREASURY PAR CURVE")
@@ -888,8 +888,8 @@ def test_revision_evidence_names_its_month_and_estimates():
 def test_a_release_from_another_session_shows_its_date():
     rows, _, _ = tuesday_release()
     session = dict(date="2026-09-09", open="2026-09-09T13:30:00+00:00", close="2026-09-09T20:00:00+00:00")
-    assert release_clock(rows[0], session) == "Tuesday, Sep 8 · 5:30 AM PT"
-    assert release_clock(rows[0], dict(session, date="2026-09-08")) == "5:30 AM PT"
+    assert release_clock(rows[0], session) == "Tuesday, Sep 8 · 5:30 AM Vancouver time"
+    assert release_clock(rows[0], dict(session, date="2026-09-08")) == "5:30 AM Vancouver time"
 
 
 def test_large_payroll_values_keep_their_thousands_separator():

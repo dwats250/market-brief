@@ -80,7 +80,8 @@ def test_prices_is_the_latest_table_print_not_the_collection_clock():
                                print_row("GLD", f"{TUE}T16:40:00+00:00"),
                                print_row("SPY", f"{TUE}T17:01:20+00:00")]  # SPY is in no table
     _, page = render(packet, value)
-    assert clock_lines(page)[0] == "Prices · 10:00 AM PT"  # NVDA's 17:00:55 print, the latest across the tables
+    # NVDA's 17:00:55 print, the latest across the tables
+    assert clock_lines(page)[0] == "Prices · 10:00 AM Vancouver time"
 
 
 def test_prices_without_current_prints_is_the_prior_close():
@@ -95,10 +96,12 @@ def test_a_synthesis_combines_prices_and_analysis_only_when_they_share_a_clock()
     packet["observations"].append(print_row("XLI", f"{TUE}T14:01:05+00:00"))
     view = presentation(packet, value)
     assert [c["label"] for c in view["clocks"]] == ["Prices & analysis", "Next"]
-    assert view["clocks"][0]["text"] == "7:01 AM PT · opening structure"
+    assert view["clocks"][0]["text"] == "7:01 AM Vancouver time · opening structure"
     packet["observations"][-1] = print_row("XLI", f"{TUE}T13:59:50+00:00")  # the latest print is a minute behind
     view = presentation(packet, value)
-    assert [c["text"] for c in view["clocks"][:2]] == ["6:59 AM PT", "7:01 AM PT · opening structure"]
+    assert [c["text"] for c in view["clocks"][:2]] == (
+            ["6:59 AM Vancouver time", "7:01 AM Vancouver time · opening structure"]
+    )
 
 
 def test_what_changed_on_a_carried_page_ends_at_its_analysis(day):
@@ -108,10 +111,13 @@ def test_what_changed_on_a_carried_page_ends_at_its_analysis(day):
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
     evidence = json.loads((day.folder("HOURLY_1300") / "evidence.json").read_text())
     view = presentation(evidence, interpretation=day.bundle()["interpretation"])
-    assert view["since"]["label"] == "vs premarket and the 6:31 AM PT refresh · through the 7:01 AM PT analysis"
+    assert view["since"]["label"] == (
+            "vs premarket and the 6:31 AM Vancouver time refresh · through the 7:01 AM Vancouver time analysis"
+    )
     structure = json.loads((day.folder("OPEN_30M") / "evidence.json").read_text())
     own = presentation(structure, interpretation=day.bundle()["interpretation"])
-    assert own["since"]["label"] == "vs premarket and the 6:31 AM PT refresh"  # a synthesis page is its own end
+    # a synthesis page is its own end
+    assert own["since"]["label"] == "vs premarket and the 6:31 AM Vancouver time refresh"
 
 
 # --- R2 the overdue page ---------------------------------------------------------------------------------------
@@ -140,8 +146,8 @@ def test_the_next_session_premarket_carries_its_date_in_the_overdue_words():
     packet, value = live(fixture_packet(), "CLOSE_1M")
     packet["run"]["target_time"] = f"{TUE}T20:03:00+00:00"
     _, page = render(packet, value)
-    assert 'data-next-when="Wed, Sep 9 · 6:00 AM PT"' in page
-    assert "<dt>Next</dt><dd>Wed, Sep 9 · 6:00 AM PT · premarket analysis</dd>" in page
+    assert 'data-next-when="Wed, Sep 9 · 6:00 AM Vancouver time"' in page
+    assert "<dt>Next</dt><dd>Wed, Sep 9 · 6:00 AM Vancouver time · premarket analysis</dd>" in page
 
 
 # --- R3 hierarchy and typography ------------------------------------------------------------------------------
@@ -276,9 +282,10 @@ def test_the_guide_skips_a_move_it_cannot_name():
 
 def test_a_commissioning_page_names_the_pending_scheduled_checkpoint_next():
     packet, value = live(fixture_packet(), "PREMARKET")  # 5:45 AM PT, before the 6:00 AM PT premarket synthesis
-    assert presentation(packet, value)["clocks"][-1]["text"] == "6:31 AM PT · price refresh"  # its own slot is done
+    # its own slot is done
+    assert presentation(packet, value)["clocks"][-1]["text"] == "6:31 AM Vancouver time · price refresh"
     packet["run"]["commissioning"] = True
-    assert presentation(packet, value)["clocks"][-1]["text"] == "6:00 AM PT · analysis update"
+    assert presentation(packet, value)["clocks"][-1]["text"] == "6:00 AM Vancouver time · analysis update"
 
 
 def browser_next_line(page, tmp_path, now, fragment=""):
@@ -304,8 +311,10 @@ def test_the_overdue_script_in_a_browser(tmp_path):
     packet, value = live(fixture_packet(), "HOURLY_1300")
     packet["run"]["target_time"] = f"{TUE}T17:01:00+00:00"  # the 10:01 AM PT refresh; next is 11:00 AM PT (18:00Z)
     _, page = render(packet, value)
-    assert browser_next_line(page, tmp_path, f"{TUE}T18:14:59+00:00") == (False, "11:00 AM PT · price refresh")
-    overdue = (True, "Update due 11:00 AM PT has not published")
+    assert browser_next_line(page, tmp_path, f"{TUE}T18:14:59+00:00") == (
+            (False, "11:00 AM Vancouver time · price refresh")
+    )
+    overdue = (True, "Update due 11:00 AM Vancouver time has not published")
     assert browser_next_line(page, tmp_path, f"{TUE}T18:15:01+00:00") == overdue
     # A malformed fragment in the URL cannot stop the check.
     assert browser_next_line(page, tmp_path, f"{TUE}T18:30:00+00:00", "#%E0%A4%A")[0] is True

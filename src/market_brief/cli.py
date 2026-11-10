@@ -41,6 +41,7 @@ from .render import render
 from .schedule import (
     CHECKPOINTS,
     ET,
+    LOCAL_TIME_LABEL,
     VANCOUVER,
     checkpoint_kind,
     checkpoint_session,
@@ -309,7 +310,7 @@ def missing_prints_reason(packet):
     if stamped:
         newest = max(stamped)
         detail += (f"; the newest stale print was stamped {newest.astimezone(ET):%-I:%M:%S %p} ET / "
-                   f"{newest.astimezone(VANCOUVER):%-I:%M:%S %p} PT")
+                   f"{newest.astimezone(VANCOUVER):%-I:%M:%S %p} {LOCAL_TIME_LABEL}")
     return (f"refresh has no timestamped current prints: {len(prints)} intraday prints ({detail}); "
             "the last accepted page stands")
 

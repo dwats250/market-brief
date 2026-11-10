@@ -39,14 +39,14 @@ def test_an_unpublished_refresh_is_still_the_anchor_and_reads_unpublished_all_da
     assert "unpublished" not in json.dumps(context)  # the paid analyst's context is untouched
     bundle = day.bundle()
     view = presentation(structure, interpretation=bundle["interpretation"])
-    assert view["since"]["label"] == "vs premarket and the unpublished 6:31 AM PT refresh"
+    assert view["since"]["label"] == "vs premarket and the unpublished 6:31 AM Vancouver time refresh"
     publish(day, "OPEN_30M")
     # Frozen with the interpretation, so a later refresh under it says the same.
     assert day.run(f"{TUE}T17:00:00+00:00", "HOURLY_1300") == 0
     later = json.loads((day.folder("HOURLY_1300") / "evidence.json").read_text())
     view = presentation(later, interpretation=day.bundle()["interpretation"])
-    assert view["since"]["label"] == ("vs premarket and the unpublished 6:31 AM PT refresh"
-                                      " · through the 7:01 AM PT analysis")
+    assert view["since"]["label"] == ("vs premarket and the unpublished 6:31 AM Vancouver time refresh"
+                                      " · through the 7:01 AM Vancouver time analysis")
 
 
 def test_a_published_refresh_keeps_the_plain_wording(day):
@@ -58,7 +58,7 @@ def test_a_published_refresh_keeps_the_plain_wording(day):
     structure = json.loads((day.folder("OPEN_30M") / "evidence.json").read_text())
     assert structure["continuity"]["unpublished"] == []
     view = presentation(structure, interpretation=day.bundle()["interpretation"])
-    assert view["since"]["label"] == "vs premarket and the 6:31 AM PT refresh"
+    assert view["since"]["label"] == "vs premarket and the 6:31 AM Vancouver time refresh"
 
 
 @pytest.mark.parametrize("page,expected", [
@@ -79,5 +79,7 @@ def test_only_a_page_older_than_the_anchor_marks_it_unpublished(page, expected):
 def test_the_caption_names_an_unpublished_premarket_too():
     anchors = dict(premarket=dict(evidence_cutoff="2026-09-08T13:00:05+00:00", checkpoint="PREMARKET"),
                    latest=dict(evidence_cutoff="2026-09-08T13:31:00+00:00", checkpoint="OPEN_1M"))
-    assert since_caption(anchors, ["premarket"]) == "vs the unpublished premarket and the 6:31 AM PT refresh"
-    assert since_caption(anchors) == "vs premarket and the 6:31 AM PT refresh"
+    assert since_caption(anchors, ["premarket"]) == (
+            "vs the unpublished premarket and the 6:31 AM Vancouver time refresh"
+    )
+    assert since_caption(anchors) == "vs premarket and the 6:31 AM Vancouver time refresh"

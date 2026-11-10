@@ -826,7 +826,7 @@ def test_each_october_cpi_row_keeps_its_identity_baseline_source_reference_month
 # Each damage: the reason the page must be refused for, and the edits that make it so. A dash is the one cell BLS may
 # leave unpublished, and only the 12-month one and only with its own explanation for this reference month.
 CPI_OCTOBER_MONTHLY = 'cpi_pressa.r.1 cpi_pressa.h.1.2 cpi_pressa.h.2.8"><span class="datavalue">0.4</span>'
-CPI_OCTOBER_YEARLY = 'cpi_pressa.h.1.5"><span class="datavalue">-</span>'
+CPI_OCTOBER_YEARLY = 'cpi_pressa.h.1.9"><span class="datavalue">-</span>'
 CPI_OCTOBER_DAMAGE = {
     "a dash without BLS's explanation": ("is not a number", [
         ("BLS cannot publish 12-month percent changes", "BLS may publish 12-month percent changes", 1)]),
@@ -859,8 +859,8 @@ def test_invalid_october_cpi_data_still_fails_closed(damage):
 
 def test_a_published_twelve_month_value_stays_a_value_beside_an_unpublished_one():
     # Valid observations are kept individually: a number in one 12-month cell is read as a number.
-    page = damaged(CPI_OCTOBER, 'cpi_pressa.r.1 cpi_pressa.h.1.5"><span class="datavalue">-</span>',
-                   'cpi_pressa.r.1 cpi_pressa.h.1.5"><span class="datavalue">3.1</span>')
+    page = damaged(CPI_OCTOBER, 'cpi_pressa.r.1 cpi_pressa.h.1.9"><span class="datavalue">-</span>',
+                   'cpi_pressa.r.1 cpi_pressa.h.1.9"><span class="datavalue">3.1</span>')
     release = read_release("cpi", page)
     assert release["values"] == dict(all_items_mm=0.4, all_items_yy=3.1, core_mm=0.3, core_yy=None)
     assert release["unavailable"] == dict(core_yy=BLS_EXPLANATION)

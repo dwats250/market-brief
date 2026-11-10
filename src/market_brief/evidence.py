@@ -120,7 +120,7 @@ def normalize_observation(raw, now, near_close=None, session_close=None):
         return reject("INVALID", "missing identity, unit, or baseline")
     if row["value"] is None:
         reject("UNAVAILABLE", row["reason"] or "no observation supplied")
-        if row["frequency"] == "release" and dated_release(raw, now):
+        if row["frequency"] == "release" and row["source_id"] == "bls-cpi" and dated_release(raw, now):
             # A measure the official release itself leaves unpublished keeps the month it was due for.
             row["reference_period"] = raw["reference_period"]
         return row

@@ -1,5 +1,9 @@
 # Product: a briefing worth reading
 
+*Written on 7 September 2026, before the first build. The human problem and the product promise still hold. The
+cadence and the v0 scope below were the starting plan; today's cadence is in the [README](../README.md) and
+[ARCHITECTURE.md](ARCHITECTURE.md).*
+
 ## The human problem
 
 Dustin enjoys assembling the day's market puzzle: indices, sectors, important

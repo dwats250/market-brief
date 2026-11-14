@@ -15,8 +15,8 @@
 - [x] Run full pytest and Ruff; review the exact diff, commit and open a PR. Keep production main unchanged and stop for owner authorization before any paid recovery.
 
 Verification commands (from this worktree):
-`/home/dustin/Projects/market-brief-agent/.venv/bin/python -m pytest -q`
-`/home/dustin/Projects/market-brief-agent/.venv/bin/ruff check src tests`
+`python -m pytest -q`
+`ruff check src tests`
 
 Source: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
 Anthropic's documented minimum direct reasoning allocation is 1024; exclusion hides reasoning without removing billing. Total generation includes reasoning and final output. Existing fixture size checks are approximate bytes/token sanity checks, not a live tokenizer or provider guarantee. Retain the prior final-response capacity rather than sizing the cap solely from prose words, since JSON keys, references, and continuity assessments also consume output.

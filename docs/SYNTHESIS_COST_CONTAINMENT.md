@@ -10,7 +10,7 @@ with JSON body `[]`. A subsequent GET returned `{"schedules": []}` at
 The deployment list before/after was identical. The active deployment remains
 `e98e28f2-8b7a-4068-8668-261e8a9df710`, with Worker version
 `3d2cd283-4941-439a-ad7c-d2b94520454f` at 100%.
-Evidence is saved at `/tmp/market-brief-cron-pause-2026-09-10.json`.
+The pause evidence was saved locally as `market-brief-cron-pause-2026-09-10.json`.
 
 Because Cloudflare documents up to 15 minutes for trigger removals to propagate,
 the GitHub executor was also temporarily disabled: workflow ID `352850846`,
@@ -398,7 +398,8 @@ import json
 from pathlib import Path
 from market_brief.synthesize import construct_prompt
 
-root = Path('/tmp/market-brief-34480006410')
+# Extract the downloaded artifact to this directory under the current working directory.
+root = Path('market-brief-34480006410')
 evidence_path = next(root.rglob('evidence.json'))
 packet = json.loads(evidence_path.read_text())
 context = json.loads(evidence_path.with_name('analyst_context.json').read_text())

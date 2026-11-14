@@ -1,6 +1,6 @@
 # Production synthesis cost containment — 2026-09-10
 
-## Operational pause — remains in force
+## Operational pause — state observed 2026-09-10
 
 Before investigating the urgent addendum, the four live Cron Triggers on
 `market-brief-scheduler` were removed using Cloudflare's trigger-only
@@ -9,8 +9,10 @@ with JSON body `[]`. A subsequent GET returned `{"schedules": []}` at
 **2026-09-10 14:23:42 UTC** (07:23:42 America/Vancouver).
 The deployment list before/after was identical. The active deployment remains
 `e98e28f2-8b7a-4068-8668-261e8a9df710`, with Worker version
-`3d2cd283-4941-439a-ad7c-d2b94520454f` at 100%.
-Evidence is saved at `/tmp/market-brief-cron-pause-2026-09-10.json`.
+`3d2cd283-4941-439a-ad7c-d2b94520454f` at 100%. These are the checks recorded at
+2026-09-10 14:23:42 UTC; they do not establish when the hold was later lifted or
+the current trigger list.
+The pause evidence was saved locally as `market-brief-cron-pause-2026-09-10.json`.
 
 Because Cloudflare documents up to 15 minutes for trigger removals to propagate,
 the GitHub executor was also temporarily disabled: workflow ID `352850846`,
@@ -20,11 +22,16 @@ Neither operation changes repository source, Worker code or secret bindings.
 Existing Wrangler login was refreshed normally; credentials were not rotated.
 No Cuttingboard repository or Worker was modified.
 
-Both operational safeguards remain paused. Green static tests and a completed
-patch do NOT authorize resumption. Source still contains the original crons;
-do not redeploy the scheduler or enable the executor while the hold is active.
-One paid verification requires explicit owner authorization and does not imply
-permission to restore recurring cron triggers.
+At that time both operational safeguards were paused. The recorded decision
+required explicit owner authorization for one paid verification; that authorization
+would not by itself authorize restoring recurring triggers.
+
+## Subsequent production evidence — 2026-11-13
+
+The [21:01 UTC Cloudflare wake-up run](https://github.com/dwats250/market-brief/actions/runs/43506875097)
+completed collection, publication, and Pages deployment. This verifies that the
+production wake-up path operated on Nov 13. The available run does not establish
+the exact date the Sep 10 hold was lifted or the current Cloudflare trigger list.
 
 Sources: [Cloudflare schedule update API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/schedules/methods/update/),
 [Cron propagation behavior](https://developers.cloudflare.com/workers/configuration/cron-triggers/).
@@ -398,7 +405,8 @@ import json
 from pathlib import Path
 from market_brief.synthesize import construct_prompt
 
-root = Path('/tmp/market-brief-34480006410')
+# Extract the downloaded artifact to this directory under the current working directory.
+root = Path('market-brief-34480006410')
 evidence_path = next(root.rglob('evidence.json'))
 packet = json.loads(evidence_path.read_text())
 context = json.loads(evidence_path.with_name('analyst_context.json').read_text())

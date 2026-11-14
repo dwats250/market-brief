@@ -106,6 +106,7 @@ MINUS = "\u2212"
 RATE_UNITS = {"% yield", "bp", SPREAD_UNIT}
 CANADIAN_PERSONS = "persons"
 RELEASE_UNITS = {JOBS, PERCENT, PERCENT_CHANGE, "million openings", "openings", CANADIAN_PERSONS}
+ISSUER_UNITS = {"USD millions", "USD per share"}
 # The economic release card (Macro & rates): one line per measure in the release's own order. A change pair reads
 # `+0.1% m/m · +3.0% y/y`; payroll revisions read `Jul +21k → −10k` per month and then `Combined −60k`.
 RELEASE_LINES = (("Payrolls", ("nonfarm payroll change",)), ("Unemployment", ("unemployment rate",)),
@@ -496,6 +497,15 @@ def observed_label(value):
     return short_date(value) if isinstance(value, str) and value else value
 
 
+def item_detail(row):
+    """A dated context item's ledger line: its bounded summary in the baseline's place, attributed when the record
+    names whose statement it is (`NVIDIA statement: …`)."""
+    if "value" in row or not row.get("summary"):
+        return {}
+    attribution = row.get("attribution")
+    return dict(baseline=f"{attribution}: {row['summary']}" if attribution else row["summary"])
+
+
 def release_clock(row, session):
     """A release value's official time: `5:30 AM PT` in the session that published it, dated in any other (a carried
     Friday print on Monday's page never reads as this morning's)."""
@@ -564,6 +574,10 @@ def formatted(row):
         return rate_display(value, unit)
     if unit in RELEASE_UNITS:
         return release_display(value, unit)
+    if unit in ISSUER_UNITS:
+        # An issuer's figure as its release states it: `$96,221M` revenue, `$2.46` diluted EPS.
+        sign = MINUS if value < 0 else ""
+        return f"{sign}${abs(value):,.0f}M" if unit == "USD millions" else f"{sign}${abs(value):.2f}"
     signed = unit in {"pp", "%"}
     # A value that rounds to zero is shown as zero: no sign, no colour.
     if signed and round(value, 2) == 0:
@@ -1004,7 +1018,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                 label = row.get("title") or row.get("topic") or ref
             result.append(dict(id=ref, label=label, display=formatted(row) if "value" in row else "",
                                when=(release_clock(row, session) if row.get("frequency") == "release" else
-                                     compact_clock(row.get("observed_at") or row.get("published_at") or "")),
+                                     compact_clock(row.get("observed_at") or row.get("published_at")
+                                                   or row.get("published_on") or "")),
                                anchor=(True if snapshot else ref in catalog),
                                anchor_id=(f"evidence-{ref}" if not snapshot else
                                           f"interpretation-evidence-{ref}"),
@@ -1067,12 +1082,16 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     history_symbols = {h["symbol"] for h in packet["history"]}
     equity = [r for r in facts if r["topic"] in history_symbols or r["frequency"] == "intraday"]
     treasuries = [r for r in facts if r["topic"].startswith("US ") and r["metric"] in RATE_METRICS]
-    releases = [r for r in facts if r["frequency"] == "release"]
+    # An issuer's reported figures (fiscal quarter, accounting basis) are not an economic release card or a macro
+    # fact: they stand in the evidence ledger and under any § that cites them.
+    issuer = [r for r in facts if r.get("fiscal_period")]
+    releases = [r for r in facts if r["frequency"] == "release" and r not in issuer]
     # Release measures the official page states are unavailable: named on their release's card, never a number. Their
     # reason (BLS's own words) is in Coverage limitations.
     unpublished = [r for r in packet["observations"]
                    if r["frequency"] == "release" and r["status"] == "UNAVAILABLE" and r.get("reference_period")]
-    other_macro = [r for r in facts if r not in equity and r not in treasuries and r not in releases]
+    other_macro = [r for r in facts if r not in equity and r not in treasuries and r not in releases
+                   and r not in issuer]
     # After a close whose daily bar is not yet published, the retained daily return is two
     # sessions old relative to the completed session and must not pose as today.
     daily_today = not packet.get("history_lag")
@@ -1346,7 +1365,9 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                           metric_label=(reader_metric_label(r, session) if r.get("metric")
                                         else "Published / scheduled item"),
                           when=(release_clock(r, session) if r.get("frequency") == "release" else
-                                compact_clock(r.get("observed_at") or r.get("published_at") or "")),
+                                compact_clock(r.get("observed_at") or r.get("published_at")
+                                              or r.get("published_on") or "")),
+                          **item_detail(r),
                           source_name=source_names.get(r.get("source_id"), r.get("source_id", "")),
                           status_label=SOURCE_STATUS_LABELS.get(r.get("status", ""), (r.get("status") or "").title()))
                      for r in catalog.values()]
@@ -1361,7 +1382,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         display=formatted(r) if "value" in r else r.get("title", NOT_APPLICABLE), item="value" not in r,
         metric_label=(reader_metric_label(r, session) if r.get("metric") else "Published / scheduled item"),
         when=(release_clock(r, session) if r.get("frequency") == "release" else
-              compact_clock(r.get("observed_at") or r.get("published_at") or "")),
+              compact_clock(r.get("observed_at") or r.get("published_at") or r.get("published_on") or "")),
+        **item_detail(r),
         source_name=source_names.get(r.get("source_id"), r.get("source_id") or "not retained in snapshot"),
         status_label=SOURCE_STATUS_LABELS.get(r.get("status", ""), (r.get("status") or "").title()))
         for ident, r in frozen.items()]
@@ -1677,20 +1699,24 @@ def markdown(view):
         for group in view["interpretation_groups"]:
             lines += [f"**{esc(group['label'])}**", ""]
             for row in group["rows"]:
-                when = esc(row.get("observed_at") or row.get("published_at") or "not exposed")
+                when = esc(row.get("observed_at") or row.get("published_at") or row.get("published_on")
+                           or "not exposed")
                 source = esc(row.get("source_id") or "not retained in snapshot")
                 lines += [f'<a id="interpretation-evidence-{row["id"]}"></a>',
                           f"**{esc(row['id'])}** · {esc(row.get('topic', row.get('title', '')))} · "
                           f"{esc(row['display'])} · {esc(row.get('baseline', 'published / scheduled item'))} "
-                          f"· observed/published {when} · source {source}", ""]
+                          f"· observed/published {when} · source {source}"
+                          + (f" · [release](<{row['url']}>)" if row.get("url") else ""), ""]
     for group in view["evidence_groups"]:
         lines += [f"**{esc(group['topic'])}**", ""]
         for row in group["rows"]:
+            when = row.get("observed_at") or row.get("published_at") or row.get("published_on") or "not exposed"
             lines += [f'<a id="evidence-{row["id"]}"></a>',
                       f"**{esc(row['id'])}** · {esc(row.get('topic', row.get('title', '')))} · "
                       f"{esc(row['display'])} · {esc(row.get('baseline', 'published / scheduled item'))} "
-                      f"· observed/published {esc(row.get('observed_at') or row.get('published_at') or 'not exposed')} "
-                      f"· source {esc(row['source_id'])}", ""]
+                      f"· observed/published {esc(when)} "
+                      f"· source {esc(row['source_id'])}"
+                      + (f" · [release](<{row['url']}>)" if row.get("url") else ""), ""]
     carried_evidence = [(c, row) for c in view["next"]["carried"] for row in c["creation_evidence"]]
     if carried_evidence:
         lines += ["**Carried watch creation evidence**", ""]

@@ -30,6 +30,19 @@ NEAR_CLOSE_GRACE = timedelta(minutes=90)
 # and that month's previous and revised estimates. Only release rows carry these fields.
 RELEASE_FIELDS = ("reference_period", "revised_month", "revised_period", "revised_from", "revised_to")
 REFERENCE_PERIOD = re.compile(r"\d{4}-(?:(?:0[1-9]|1[0-2])|Q[1-4])")
+# An issuer's reported result (`issuer.py`) names its fiscal quarter and accounting basis instead of a reference month,
+# and the context item (the official release) it was read from. Only issuer result rows carry these fields.
+ISSUER_FIELDS = ("fiscal_period", "basis", "release_id")
+FISCAL_PERIOD = re.compile(r"FY\d{4}-Q[1-4]")
+BASES = ("GAAP", "non-GAAP")
+# Dated context (Fed releases, issuer releases) and an issuer's reported results stay current for two days.
+CONTEXT_WINDOW = timedelta(days=2)
+# A context item is a short dated record, never an article: bounded fields and a bounded count per run.
+CONTEXT_TITLE_LIMIT = 400
+CONTEXT_SUMMARY_LIMIT = 400
+CONTEXT_URL_LIMIT = 300
+CONTEXT_ATTRIBUTION_LIMIT = 80
+CONTEXT_ITEM_LIMIT = 12
 # A calendar event is SCHEDULED until its official page is admitted as that release (`collect.release_actuals`); its
 # time passing alone never changes it. Both states are citable evidence.
 EVENT_STATES = USABLE | {"SCHEDULED", "RELEASED"}
@@ -160,6 +173,29 @@ def normalize_observation(raw, now, near_close=None, session_close=None):
                 return reject("STALE", "intraday observation older than twenty minutes")
             row["status"] = "DELAYED" if age > 60 else "AVAILABLE"
             row["freshness"] = "DELAYED" if age > 60 else "LIVE"
+        elif row["frequency"] == "release" and raw.get("fiscal_period") is not None:
+            # An issuer's reported result, as its official release states it: dated by the release's publication time
+            # (or its date alone, when the source gives no clock; never midnight) and current for the two-day context
+            # window, so a result published after one close reaches the next morning's editions. Never a consensus
+            # comparison or a derived return.
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(row["observed_at"])):
+                day = date.fromisoformat(row["observed_at"])
+                if day > min(now.astimezone(ET).date(), retrieved.astimezone(ET).date()):
+                    return reject("INVALID", "release published after collection")
+                if day < (now - CONTEXT_WINDOW).astimezone(ET).date():
+                    return reject("STALE", "issuer release older than the two-day context window")
+            else:
+                observed = timestamp(row["observed_at"])
+                if observed > now or observed > retrieved:
+                    return reject("INVALID", "release published after collection")
+                if now - observed > CONTEXT_WINDOW:
+                    return reject("STALE", "issuer release older than the two-day context window")
+            fields = {key: raw.get(key) for key in ISSUER_FIELDS}
+            if (not FISCAL_PERIOD.fullmatch(str(fields["fiscal_period"])) or fields["basis"] not in BASES
+                    or not isinstance(fields["release_id"], str) or not fields["release_id"]
+                    or any(raw.get(key) is not None for key in RELEASE_FIELDS)):
+                return reject("INVALID", "issuer result without a fiscal period, basis and release")
+            row.update(fields, status="AVAILABLE", freshness="DATED")
         elif row["frequency"] == "release":
             # Dated by its official publication time and current only in the session that published it, so no earlier
             # release can ever read as today's.
@@ -204,6 +240,55 @@ def source_record(raw):
     if result["expected_freshness"] not in FRESHNESS:
         raise ValueError("unsupported expected freshness")
     return result
+
+
+def bounded_text(value, limit):
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= limit
+
+
+def context_record(item, now, admitted):
+    """One dated context item (a Fed or issuer release) as its own compact record, or None when it is not admitted.
+
+    Its publication is either an instant with a time zone (`published_at`) or, when the source gives only a day, a date
+    (`published_on`); a date never becomes midnight. Missing, ambiguous, malformed, future and stale publications, an
+    unsafe or repeated item URL, oversized fields and items past the per-run limit are all not admitted."""
+    if len(admitted) >= CONTEXT_ITEM_LIMIT or not bounded_text(item["title"], CONTEXT_TITLE_LIMIT):
+        return None
+    record = {key: item.get(key) for key in ("id", "title", "source_id", "published_at", "checked_at",
+                                             "scheduled_at", "status")}
+    published_at, published_on = item.get("published_at"), item.get("published_on")
+    try:
+        if published_at and not published_on:
+            when = timestamp(published_at)
+            if when > now or now - when > CONTEXT_WINDOW:
+                return None
+        elif published_on and not published_at:
+            day = date.fromisoformat(published_on) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", published_on) else None
+            today = now.astimezone(ET).date()
+            if day is None or day > today or day < (now - CONTEXT_WINDOW).astimezone(ET).date():
+                return None
+            record["published_on"] = published_on
+        else:
+            return None
+    except (TypeError, ValueError, AttributeError):
+        return None
+    for key, limit in (("summary", CONTEXT_SUMMARY_LIMIT), ("attribution", CONTEXT_ATTRIBUTION_LIMIT),
+                       ("url", CONTEXT_URL_LIMIT)):
+        if item.get(key) is None:
+            continue
+        if not bounded_text(item[key], limit):
+            return None
+        record[key] = item[key]
+    if "url" in record:
+        try:
+            safe_url(record["url"])
+        except ValueError:
+            return None
+        if re.search(r"[\s<>\"'`\\]", record["url"]):
+            return None  # a link must read the same in the page and in its Markdown copy
+        if any(other.get("url") == record["url"] for other in admitted):
+            return None
+    return record
 
 
 def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
@@ -251,6 +336,13 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
             required = ("id", "title", "source_id")
             if not all(isinstance(item.get(k), str) and item[k] for k in required):
                 raise ValueError("malformed event/context item")
+            if field == "context_items":
+                record = context_record(item, now, packet["context_items"])
+                if record is not None:
+                    record["freshness"] = "DATED"
+                    record["expected_freshness"] = source["expected_freshness"]
+                    packet[field].append(record)
+                continue
             if item.get("published_at") and timestamp(item["published_at"]) > now:
                 continue
             record = {k: item.get(k) for k in (*required, "published_at", "checked_at",
@@ -272,11 +364,6 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
                 record["session_relation"] = ("NEXT SESSION" if event_date != now.astimezone(ET).date().isoformat()
                                               else session_relation(when, timestamp(session["open"]),
                                                                     timestamp(session["close"])))
-            elif now - timestamp(item["published_at"]) > timedelta(days=2):
-                continue
-            else:
-                record["freshness"] = "DATED"
-                record["expected_freshness"] = source["expected_freshness"]
             packet[field].append(record)
     identities = [row.get("id") for key in ("observations", "history", "events", "context_items")
                   for row in packet[key]]
@@ -392,12 +479,18 @@ def evidence_catalog(packet):
 
 MODEL_RECORD_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at",
                        "source_id", "status", "reason", "frequency", "freshness",
-                       "expected_freshness", "magnitude", "identity", *RELEASE_FIELDS)
+                       "expected_freshness", "magnitude", "identity", *RELEASE_FIELDS, *ISSUER_FIELDS)
 
 
 # A scheduled release is not a measurement: the analyst needs what it is, when it is and where it falls in the
 # session (to read it, or to time a watch to it with EVENT(<id>)), and none of its collection plumbing.
 MODEL_EVENT_FIELDS = ("id", "title", "scheduled_at", "session_relation", "source_id", "status")
+
+
+# A dated context item is not a measurement either: what it says (title, bounded summary, attribution), when it was
+# published (an instant, or only a date), where it is (its exact URL) and its source. Never its article body.
+MODEL_CONTEXT_FIELDS = ("id", "title", "summary", "attribution", "published_at", "published_on", "source_id", "url",
+                        "status")
 
 
 def compact_model_record(row):
@@ -409,13 +502,18 @@ def compact_model_event(row):
     return {key: row[key] for key in MODEL_EVENT_FIELDS if key in row}
 
 
+def compact_model_context(row):
+    return {key: row[key] for key in MODEL_CONTEXT_FIELDS if row.get(key) is not None}
+
+
 def model_packet(packet):
     from .curve import stale_movement  # the curve owns its freshness rule and imports this module
     result = copy.deepcopy(packet)
     allowed = {s["id"] for s in packet["sources"] if s["llm_allowed"] is True}
     result.pop("history", None)
     for field in ("observations", "derived", "events", "context_items"):
-        compact = compact_model_event if field == "events" else compact_model_record
+        compact = (compact_model_event if field == "events" else
+                   compact_model_context if field == "context_items" else compact_model_record)
         result[field] = [compact(r) for r in result[field]
                          if r.get("source_id") in allowed and r.get("status") in EVENT_STATES
                          and not stale_movement(packet, r)]

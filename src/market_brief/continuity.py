@@ -26,7 +26,8 @@ ANCHORS = ("previous_close", "premarket", "latest")
 SLOTS = ("close", "premarket", "latest", "interpretation")
 INTERPRETATION_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at", "frequency",
                          "source_id", "status", "magnitude", "title", "published_at", "scheduled_at",
-                         "session_relation")
+                         "session_relation", "summary", "attribution", "published_on", "url", "fiscal_period", "basis",
+                         "release_id")
 ASSESSMENTS = ("new", "strengthened", "weakened", "reversed", "unresolved")
 CARRIED_ASSESSMENTS = ("strengthened", "weakened", "reversed", "unresolved")
 LIFECYCLES = ("active", "expired", "retired")

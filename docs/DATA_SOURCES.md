@@ -52,7 +52,7 @@ unavailable. Optional failures are visible and do not invite invented facts.
 | Crude, gold, silver | Optional macro drivers use futures; metals ETFs in mirror | ETFs describe fund returns, not spot/continuous futures returns | CME delayed viewing [S8]; GLD/SLV/GDX from equity feed | Date, contract/roll, delay and benchmark explicit; O; no futures scraper |
 | FRED / economic backdrop | Some daily yields available | Release-to-release comparisons with revision context | FRED API [S5], registered key; keyless Treasury for initial rates | Latest known published vintage; optional in v0, no realtime-market inference |
 | Economic calendar | Some board event context | Order events, time-until event | BLS ICS, BEA schedule, Fed official calendar [S7] | Checked during run or dated cache ≤24h; E; calendar is bounded, not exhaustive |
-| Earnings | No comprehensive confirmed surface | Match attention symbols to dated issuer items | Issuer investor-relations earnings notices; SEC for filed results [S12] | Confirmed versus estimated date, BMO/AMC or unknown; O; no huge calendar engine |
+| Earnings | No comprehensive confirmed surface | Match attention symbols to dated issuer items | Issuer investor-relations earnings notices; SEC for filed results [S12]. Wired: NVIDIA's official press-release RSS [S14] | Confirmed versus estimated date, BMO/AMC or unknown; O; no huge calendar engine |
 | Macro news | Some limited context | Deduplicate titles/URLs/time; match events | Federal Reserve RSS; BLS/BEA releases [S7] | Published by cutoff, usually last 24h; E context attempt, emptiness is not no news |
 | Geopolitics/global developments | No assumed comprehensive coverage | No deterministic causal inference | Official institutional/government statements and permitted publisher feeds or sourced manual notes | Publication vs event time; corroborate consequential contested reports; O |
 | Higher-timeframe attention | Mirror relationships only | Two triggers specified in architecture | Same completed daily history | Date of last completed session; O |
@@ -125,9 +125,24 @@ unavailable. Optional failures are visible and do not invite invented facts.
   not a substitute for a forward earnings schedule. Use issuer notices for
   announced timing. The first build need not implement an EDGAR collector.
   [SEC APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces)
+  Deferred: no SEC request is made. SEC asks automated clients to identify
+  themselves, and the repository's only contact (`BLS_CONTACT`) identifies BLS
+  requests alone, so an EDGAR source waits for a separate SEC-specific contact.
 - **[S13] Session truth:** validate the chosen calendar's holidays and early closes
   against the exchange. Do not implement a weekday-only clock.
   [NYSE hours and calendars](https://www.nyse.com/trade/hours-calendars)
+- **[S14] NVIDIA Investor Relations:** the official press-release RSS, linked
+  from NVIDIA's Investor Resources, is read with one GET of the exact feed URL
+  (`https://nvidianews.nvidia.com/cats/press_release.xml`; nothing else on the
+  host, no crawl of release pages). Entries published within the two-day context
+  window become dated items: title, the feed's own short description, the
+  publication time (or the date alone when the feed gives no clock) and the
+  exact release URL, attributed as NVIDIA's statement. A results release also
+  yields the revenue and diluted EPS (GAAP and non-GAAP) its summary tables
+  report for its fiscal quarter; a table that does not read unambiguously
+  yields no figures. No consensus, surprise, price reaction or causal claim
+  comes from this source, and an announced results date is a disclosure, not
+  a result. General news coverage remains not automated.
 
 ## Provenance without a bibliography wall
 

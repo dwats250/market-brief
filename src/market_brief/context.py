@@ -7,7 +7,17 @@ which facts were supplied so that references can be checked against the exact co
 
 import re
 
-from .evidence import MODEL_EVENT_FIELDS, RELEASE_FIELDS, ROOT, digest, evidence_catalog, model_packet, read_json
+from .evidence import (
+    ISSUER_FIELDS,
+    MODEL_CONTEXT_FIELDS,
+    MODEL_EVENT_FIELDS,
+    RELEASE_FIELDS,
+    ROOT,
+    digest,
+    evidence_catalog,
+    model_packet,
+    read_json,
+)
 
 CONTEXT_SCHEMA = "market-brief.analyst-context.v1"
 ANCHOR_TOPICS = ("SPY", "QQQ", "GLD", "US 2Y", "US 5Y", "US 10Y", "US 30Y", "US 2s10s", "US 5s30s")
@@ -38,7 +48,10 @@ def edition_profile(checkpoint, config=None):
                 guidance=edition["guidance"], **profile)
 HISTORY_ERROR = re.compile(r"^(?P<symbol>[A-Z][\w.-]*): invalid/incomplete historical context \((?P<reason>.*)\)$")
 # A release value adds the month it measures (and a revision its month and estimates); no other row has those fields.
-FACT_FIELDS = ("id", "metric", "value", "unit", "magnitude", "status", "observed_at", *RELEASE_FIELDS)
+FACT_FIELDS = ("id", "metric", "value", "unit", "magnitude", "status", "observed_at", *RELEASE_FIELDS, *ISSUER_FIELDS)
+# A dated context item reaches the analyst whole: identity, title, bounded summary, attribution, its publication instant
+# (or date alone), source and exact URL. Its status is always AVAILABLE once admitted, so it is not repeated.
+CONTEXT_ITEM_FIELDS = tuple(key for key in MODEL_CONTEXT_FIELDS if key != "status")
 
 
 def history_error_summary(packet, errors):
@@ -130,7 +143,7 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
     for row in projected["events"]:
         events.append({key: row[key] for key in MODEL_EVENT_FIELDS if row.get(key) is not None})
     for row in projected["context_items"]:
-        context_items.append({key: row[key] for key in ("id", "title", "published_at") if row.get(key) is not None})
+        context_items.append({key: row[key] for key in CONTEXT_ITEM_FIELDS if row.get(key) is not None})
     session = projected["run"].get("session", {})
     run = dict(mode=projected["run"]["mode"], checkpoint=projected["run"]["checkpoint"],
                target_time=projected["run"]["target_time"],

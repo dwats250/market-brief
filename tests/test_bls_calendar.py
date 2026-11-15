@@ -361,10 +361,12 @@ def test_only_the_release_record_changes_shape_for_the_analyst(monkeypatch):
     assert {"checked_at", "published_at", "scheduled_at_et", "session_date", "freshness",
             "expected_freshness"} <= set(stored)  # collection plumbing the record keeps and the analyst never reads
     assert set(model_packet(packet)["events"][0]) == set(context["events"][0]) == RELEASE_FIELDS
-    # Context items and measurements keep their compact records: nothing else the analyst reads widens.
-    assert model_packet(packet)["context_items"] == [dict(id="fed-item-0", source_id="fed", status="AVAILABLE",
-                                                         freshness="DATED", expected_freshness="DATED")]
-    assert context["context_items"] == [dict(id="fed-item-0")]
+    # A context item is its own compact record: what it is and when it was published reach the analyst (they were once
+    # lost by routing items through the measurement fields), and its collection plumbing does not.
+    fed = dict(id="fed-item-0", title="Federal Reserve Board announces approval of an application",
+               published_at="2026-10-02T11:00:00+00:00", source_id="fed")
+    assert model_packet(packet)["context_items"] == [dict(fed, status="AVAILABLE")]
+    assert context["context_items"] == [fed]
     assert set(model_packet(fixture_packet())["observations"][0]) == {
         "baseline", "expected_freshness", "frequency", "freshness", "id", "identity", "metric", "observed_at",
         "reason", "source_id", "status", "topic", "unit", "value"}

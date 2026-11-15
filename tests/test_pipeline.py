@@ -214,9 +214,11 @@ def test_fetch_failures_are_bounded_and_cb_optional():
         raise SourceError("HTTP 403")
     raw = collect_live(NOW, True, fetcher=unavailable)
     # Treasury, the BLS calendar file, then its one official fallback page (September holds today and the next
-    # session), the Fed, Treasury's real curve (last of the shared-deadline sources), and Cuttingboard.
-    assert len(calls) == 6 and calls[2] == "https://www.bls.gov/schedule/2026/09_sched_list.htm" and calls[-1] == CB
+    # session), the Fed, Treasury's real curve, NVIDIA's press-release feed (last of the shared-deadline sources),
+    # and Cuttingboard.
+    assert len(calls) == 7 and calls[2] == "https://www.bls.gov/schedule/2026/09_sched_list.htm" and calls[-1] == CB
     assert "daily_treasury_real_yield_curve" in calls[4]
+    assert calls[5] == "https://nvidianews.nvidia.com/cats/press_release.xml"
     assert raw["cuttingboard"]["status"] == "UNAVAILABLE"
     assert raw["sources"][0]["reason"] == "HTTP 403"
     assert not raw["observations"]

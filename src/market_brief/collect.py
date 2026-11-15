@@ -27,6 +27,8 @@ from .actuals import (
 )
 from .evidence import ET as EASTERN
 from .evidence import ROOT, read_json, timestamp
+from .issuer import NVIDIA_IR, IssuerError, nvidia_releases
+from .issuer import SOURCE_NAME as NVIDIA_NAME
 from .schedule import next_session_date, prior_session_date
 from .stats_can import SCHEDULE as STATCAN_SCHEDULE
 from .stats_can import StatisticsCanadaError, lfs_actual, lfs_schedule
@@ -41,7 +43,7 @@ CB = "https://dwats250.github.io/cuttingboard/contract.json"
 ALPACA_DATA = "https://data.alpaca.markets"
 ALPACA_BARS = f"{ALPACA_DATA}/v2/stocks/bars"
 ALPACA_SNAPSHOTS = f"{ALPACA_DATA}/v2/stocks/snapshots"
-HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA, STATCAN_SCHEDULE)}
+HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA, STATCAN_SCHEDULE, NVIDIA_IR)}
 ALPACA_UNIVERSE = (
     "SPY", "QQQ", "XLK", "XLF", "XLE", "XLI", "XLY", "XLP", "XLV", "XLU",
     "XLB", "XLRE", "XLC", "GLD", "SLV", "GDX", "AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG",
@@ -59,10 +61,12 @@ class SourceError(ValueError):
 
 def allowed(url):
     """An allowlisted host over HTTPS; on BLS, only the calendar file, the monthly List View pages and the two
-    current-edition release pages."""
+    current-edition release pages; on NVIDIA's newsroom, only the press-release feed itself."""
     parts = urlsplit(url)
     if parts.scheme != "https" or parts.hostname not in HOSTS:
         return False
+    if parts.hostname == urlsplit(NVIDIA_IR).hostname:
+        return url == NVIDIA_IR
     if parts.hostname == urlsplit(BLS).hostname:
         return url == BLS or url in RELEASE_PAGES or bool(BLS_LIST.fullmatch(url))
     return (parts.hostname != urlsplit(STATCAN_SCHEDULE).hostname or url == STATCAN_SCHEDULE
@@ -447,7 +451,8 @@ def list_releases(text, year, month):
 
 
 def failure(exc):
-    return str(exc) if isinstance(exc, (SourceError, ReleaseError)) else f"malformed {type(exc).__name__}"
+    return (str(exc) if isinstance(exc, (SourceError, ReleaseError, IssuerError))
+            else f"malformed {type(exc).__name__}")
 
 
 def bls_calendar(now, deadline, fetcher):
@@ -891,7 +896,7 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
         ("treasury-real", "US Treasury real yields", "economic_series", TREASURY, treasury_real_url(year)),
     ]
     if not real_yields_on():
-        jobs.pop()
+        jobs.pop(3)
         raw["sources"].append(source("treasury-real", "US Treasury real yields", "economic_series", TREASURY, now,
                                      "UNAVAILABLE", "switched off in config/sources.json"))
     for ident, name, kind, url, request_url in jobs:
@@ -945,6 +950,21 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
     raw["sources"].extend(equity["sources"])
     raw["observations"].extend(equity["observations"])
     raw["history"].extend(equity["history"])
+    # This optional feed can consume two request timeouts; collect it after the time-sensitive Alpaca snapshots.
+    issuer = source("nvidia-ir", NVIDIA_NAME, "news", NVIDIA_IR, now)
+    try:
+        body = fetcher(NVIDIA_IR, deadline)
+        retrieved = datetime.now(timezone.utc)
+        issuer["retrieved_at"] = retrieved.isoformat()
+        items, rows, notes = nvidia_releases(xml_root(body), now, retrieved)
+        raw["context_items"].extend(items)
+        raw["observations"].extend(rows)
+        if notes:
+            # Left-out entries and unread figures are named; the admitted releases still stand.
+            issuer.update(status="DEGRADED", reason="; ".join(notes)[:600])
+    except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:
+        issuer.update(status="UNAVAILABLE", reason=failure(exc))
+    raw["sources"].append(issuer)
     raw["cuttingboard"] = dict(status="UNAVAILABLE", reason="optional source not requested")
     if include_cuttingboard:
         captured = datetime.now(timezone.utc)

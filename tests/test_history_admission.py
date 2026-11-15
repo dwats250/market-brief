@@ -17,10 +17,11 @@ def utc(value):
 
 
 def packet_at(now, last_history_date="2026-09-04", intraday=True, checkpoint="PREMARKET",
-              intraday_value=-0.53, events=(), sources=(), observations=()):
+              intraday_value=-0.53, events=(), sources=(), observations=(), context_items=()):
     raw = read_json(ROOT / "tests/fixtures/evidence.sample.json")
     raw["target_time"] = now.isoformat()
     raw["events"].extend(events)
+    raw["context_items"].extend(context_items)
     raw["sources"].extend(sources)
     raw["observations"].extend(observations)
     for row in raw["events"]:

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Minimal extract of NVIDIA's official press-release RSS (https://nvidianews.nvidia.com/cats/press_release.xml): only
+  title, link, description and pubDate, as the live feed carried them on 2026-11-14, plus, for the results release,
+  the two summary-table snippets the parser reads. Not article bodies.
+  The Q2 FY27 results entry had left the live feed by 2026-11-14; its values are as published on its release page
+  (https://nvidianews.nvidia.com/news/nvidia-announces-financial-results-for-second-quarter-fiscal-2027), which states
+  the date (August 26, 2026) but no clock, so its pubDate keeps that date alone. The Q3 FY27 results are scheduled
+  for 2026-11-17 (the conference-call entry) and not published as of this extract: no Q3 figure appears here.
+-->
+<rss version="2.0"><channel><title>Press Release - NVIDIA Newsroom</title><link>https://nvidianews.nvidia.com</link>
+<item><title>NVIDIA Announces CEO Transition</title><link>https://nvidianews.nvidia.com/news/nvidia-announces-ceo-transition</link><description>NVIDIA (NASDAQ: NVDA) Board of Directors announced today that Jensen Huang has resigned as President, Chief Executive Officer, and a member of the Board, effective immediately.</description><pubDate>Thu, 12 Nov 2026 13:48:00 GMT</pubDate></item>
+<item><title>Statement From the Independent Members of the NVIDIA Board</title><link>https://nvidianews.nvidia.com/news/statement-from-the-independent-members-of-the-nvidia-board</link><description>The independent members of the NVIDIA Board have retained former acting U.S. Attorney of the Southern District of New York Joon H. Kim and his firm Wachtell, Lipton, Rosen &amp; Katz to conduct a thorough and independent investigation as was announced on Sunday.</description><pubDate>Tue, 10 Nov 2026 19:07:00 GMT</pubDate></item>
+<item><title>Statement From NVIDIA Board of Directors</title><link>https://nvidianews.nvidia.com/news/statement-from-nvidia-board-of-directors</link><description>The NVIDIA Board is initiating an independent investigation in light of recent reporting that founder and CEO Jensen Huang has been the target of a foreign intelligence effort. A committee of ...</description><pubDate>Sun, 08 Nov 2026 20:00:00 GMT</pubDate></item>
+<item><title>NVIDIA Sets Conference Call for Third-Quarter Financial Results</title><link>https://nvidianews.nvidia.com/news/nvidia-sets-conference-call-for-third-quarter-financial-results-6928873</link><description>NVIDIA will host a conference call on Tuesday, November 17, at 2 p.m. PT (5 p.m. ET) to discuss its financial results for the third quarter of fiscal year 2027, which ended October 25, 2026.</description><pubDate>Wed, 28 Oct 2026 21:00:00 GMT</pubDate></item>
+<item><title>NVIDIA Announces Financial Results for Second Quarter Fiscal 2027</title><link>https://nvidianews.nvidia.com/news/nvidia-announces-financial-results-for-second-quarter-fiscal-2027</link><content>&lt;![CDATA[&lt;table&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td colspan="6"&gt;&lt;strong&gt;GAAP&lt;/strong&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;em&gt;($ in millions, except earnings per share)&lt;/em&gt;&lt;/td&gt;&lt;td&gt;&lt;strong&gt;Q2 FY27&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;&lt;strong&gt;Q1 FY27&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;&lt;strong&gt;Q2 FY26&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;&lt;strong&gt;Q/Q&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;&lt;strong&gt;Y/Y&lt;/strong&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;Revenue&lt;/td&gt;&lt;td&gt;$96,221&lt;/td&gt;&lt;td&gt;$81,615&lt;/td&gt;&lt;td&gt;$46,743&lt;/td&gt;&lt;td&gt;18 %&lt;/td&gt;&lt;td&gt;106 %&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;Gross margin&lt;/td&gt;&lt;td&gt;75.0 %&lt;/td&gt;&lt;td&gt;74.9 %&lt;/td&gt;&lt;td&gt;72.4 %&lt;/td&gt;&lt;td&gt;0.1 pts&lt;/td&gt;&lt;td&gt;2.6 pts&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;Diluted earnings per share&lt;/td&gt;&lt;td&gt;$2.46&lt;/td&gt;&lt;td&gt;$2.39&lt;/td&gt;&lt;td&gt;$1.08&lt;/td&gt;&lt;td&gt;3 %&lt;/td&gt;&lt;td&gt;128 %&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;
+&lt;table&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td colspan="6"&gt;&lt;strong&gt;Non-GAAP&lt;/strong&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;em&gt;($ in millions, except earnings per share)&lt;/em&gt;&lt;/td&gt;&lt;td&gt;&lt;strong&gt;Q2 FY27&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;&lt;strong&gt;Q1 FY27&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;&lt;strong&gt;Q2 FY26&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;&lt;strong&gt;Q/Q&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;&lt;strong&gt;Y/Y&lt;/strong&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;Revenue&lt;/td&gt;&lt;td&gt;$96,221&lt;/td&gt;&lt;td&gt;$81,615&lt;/td&gt;&lt;td&gt;$46,743&lt;/td&gt;&lt;td&gt;18 %&lt;/td&gt;&lt;td&gt;106 %&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;Diluted earnings per share&lt;/td&gt;&lt;td&gt;$2.22&lt;/td&gt;&lt;td&gt;$1.87&lt;/td&gt;&lt;td&gt;$1.01&lt;/td&gt;&lt;td&gt;19 %&lt;/td&gt;&lt;td&gt;120 %&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;]]&gt;</content><description>NVIDIA (NASDAQ: NVDA) today reported revenue for the second quarter ended July 26, 2026, of $96.2 billion, up 18% from the previous quarter and up 106% from a year ago. For the quarter, GAAP and non-GAAP gross margins were both 75.0%. GAAP and non-GAAP earnings per diluted share were $2.46 and $2.22, respectively.</description><pubDate>Wed, 26 Aug 2026</pubDate></item>
+</channel></rss>

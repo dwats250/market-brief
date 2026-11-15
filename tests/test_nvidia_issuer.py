@@ -339,6 +339,29 @@ def test_a_live_run_admits_recent_releases_and_names_what_it_left_out(frozen):
         "limitations"]
 
 
+def test_failed_optional_issuer_request_runs_after_equity_snapshot(frozen, monkeypatch):
+    now = utc("2026-11-12T15:00:00+00:00")
+    frozen(now)
+    order = []
+
+    def equity(_now):
+        order.append("alpaca snapshot")
+        return dict(sources=[], observations=[], history=[])
+
+    def fetcher(url, _deadline):
+        if url == NVIDIA_IR:
+            # Even if the real request consumes both 15-second attempts, the snapshot is already captured.
+            order.append("NVIDIA RSS request")
+            raise SourceError("network unavailable or timeout")
+        raise SourceError("offline")
+
+    monkeypatch.setattr(collect, "alpaca_collect", equity)
+    raw = collect_live(now, fetcher=fetcher)
+    assert order == ["alpaca snapshot", "NVIDIA RSS request"]
+    assert (nvidia_source(raw)["status"], nvidia_source(raw)["reason"]) == (
+        "UNAVAILABLE", "network unavailable or timeout")
+
+
 # --- Normalization: the dedicated context record and issuer result rows ---------------------------------------------
 
 NOW = utc("2026-11-12T15:00:00+00:00")

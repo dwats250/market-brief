@@ -894,8 +894,6 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
         ("fed", "Federal Reserve releases", "news", FED, FED),
         # After the calendar and the Fed, so a slow Treasury host can never spend their share of the deadline.
         ("treasury-real", "US Treasury real yields", "economic_series", TREASURY, treasury_real_url(year)),
-        # Issuer disclosures last: one exact feed URL, so it never spends the official macro sources' deadline.
-        ("nvidia-ir", NVIDIA_NAME, "news", NVIDIA_IR, NVIDIA_IR),
     ]
     if not real_yields_on():
         jobs.pop(3)
@@ -937,13 +935,6 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
                 if fallback:
                     # The level stands; the missing change is reported, never silently dropped.
                     record.update(status="DEGRADED", reason=f"{fallback}, so no daily real yield change")
-            elif ident == "nvidia-ir":
-                items, rows, notes = nvidia_releases(xml_root(body), now, retrieved)
-                raw["context_items"].extend(items)
-                raw["observations"].extend(rows)
-                if notes:
-                    # Left-out entries and unread figures are named; the admitted releases still stand.
-                    record.update(status="DEGRADED", reason="; ".join(notes)[:600])
             else:
                 raw["context_items"].extend(fed_context(body, now))
         except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:
@@ -959,6 +950,21 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
     raw["sources"].extend(equity["sources"])
     raw["observations"].extend(equity["observations"])
     raw["history"].extend(equity["history"])
+    # This optional feed can consume two request timeouts; collect it after the time-sensitive Alpaca snapshots.
+    issuer = source("nvidia-ir", NVIDIA_NAME, "news", NVIDIA_IR, now)
+    try:
+        body = fetcher(NVIDIA_IR, deadline)
+        retrieved = datetime.now(timezone.utc)
+        issuer["retrieved_at"] = retrieved.isoformat()
+        items, rows, notes = nvidia_releases(xml_root(body), now, retrieved)
+        raw["context_items"].extend(items)
+        raw["observations"].extend(rows)
+        if notes:
+            # Left-out entries and unread figures are named; the admitted releases still stand.
+            issuer.update(status="DEGRADED", reason="; ".join(notes)[:600])
+    except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:
+        issuer.update(status="UNAVAILABLE", reason=failure(exc))
+    raw["sources"].append(issuer)
     raw["cuttingboard"] = dict(status="UNAVAILABLE", reason="optional source not requested")
     if include_cuttingboard:
         captured = datetime.now(timezone.utc)

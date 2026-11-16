@@ -46,6 +46,8 @@ CONTEXT_ITEM_LIMIT = 12
 # A calendar event is SCHEDULED until its official page is admitted as that release (`collect.release_actuals`); its
 # time passing alone never changes it. Both states are citable evidence.
 EVENT_STATES = USABLE | {"SCHEDULED", "RELEASED"}
+# Optional fields of an issuer-announced event and their bounds (`event_extras`).
+EVENT_EXTRAS = {"url": CONTEXT_URL_LIMIT, "stated_time": 40, "note": 240, "announced_on": 10}
 SECTOR_ETFS = frozenset({"XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY"})
 
 
@@ -291,6 +293,38 @@ def context_record(item, now, admitted):
     return record
 
 
+def following_session(now):
+    """The exchange session after today's date (today's own session excluded), as an ISO date."""
+    cal = xcals.get_calendar("XNYS")
+    day = now.astimezone(ET).date().isoformat()
+    session = cal.date_to_session(day, direction="next")
+    if cal.is_session(day):
+        session = cal.next_session(session)
+    return session.date().isoformat()
+
+
+def event_extras(item):
+    """An issuer-announced event's optional presentation fields (`issuer.conference_calls`): the notice's exact URL,
+    the clock as the source states it, a short note and the notice's date. Bounded and checked, or the run fails
+    closed; a calendar event without them is unchanged. None reaches the analyst (`MODEL_EVENT_FIELDS`)."""
+    extras = {}
+    for key, limit in EVENT_EXTRAS.items():
+        value = item.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value or len(value) > limit:
+            raise ValueError(f"malformed event {key}")
+        try:
+            if key == "url":
+                safe_url(value)
+            if key == "announced_on":
+                date.fromisoformat(value)
+        except ValueError:
+            raise ValueError(f"malformed event {key}") from None
+        extras[key] = value
+    return extras
+
+
 def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
     if raw.get("mode") != mode or mode not in {"LIVE", "SAMPLE"}:
         raise ValueError("sample/live input mode mismatch")
@@ -348,13 +382,20 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
             record = {k: item.get(k) for k in (*required, "published_at", "checked_at",
                                                "scheduled_at", "status")}
             if field == "events":
+                record.update(event_extras(item))
                 when = timestamp(record["scheduled_at"])
                 checked = timestamp(record["checked_at"] or source["retrieved_at"])
                 if not now - timedelta(hours=24) <= checked <= now + timedelta(minutes=5):
                     continue
                 session = packet["run"]["session"]
                 event_date = when.astimezone(ET).date().isoformat()
-                if event_date not in {now.astimezone(ET).date().isoformat(), session["next_session"]}:
+                days = {now.astimezone(ET).date().isoformat(), session["next_session"]}
+                if record.get("stated_time"):
+                    # An issuer-announced event (a results call) is also upcoming during today's session when it falls
+                    # in the exchange session after today: Nov 16's opening page lists Nov 17's call. Calendar events
+                    # keep the shared horizon unchanged.
+                    days.add(following_session(now))
+                if event_date not in days:
                     continue
                 record["freshness"] = "DATED"
                 record["expected_freshness"] = source["expected_freshness"]

@@ -344,6 +344,20 @@ def pacific_time(value, include_date=False):
     return f"{date_part}{dt.strftime('%-I:%M %p')} PT"
 
 
+def event_clock(event):
+    """An event's displayed clock. A calendar event reads in the page's Pacific clock. An issuer-announced event keeps
+    the clock its source states (`2 p.m. PT (5 p.m. ET)`, where PT is US Pacific), never relabelled as the page's
+    Vancouver time; the Vancouver time is shown beside it under its own name, with the source's note and link."""
+    if not event.get("stated_time"):
+        return dict(scheduled_label=pacific_time(event["scheduled_at"], True), source_line="")
+    when = datetime.fromisoformat(event["scheduled_at"].replace("Z", "+00:00"))
+    day = when.astimezone(ET).strftime("%A, %b %-d")
+    local = when.astimezone(PACIFIC).strftime("%-I:%M %p")
+    announced = datetime.fromisoformat(event["announced_on"]).strftime("%b %-d") if event.get("announced_on") else ""
+    return dict(scheduled_label=f"{day} · {event['stated_time']}", local_label=f"{local} Vancouver time",
+                source_line=", ".join(filter(None, ("NVIDIA release", announced))))
+
+
 def short_date(value):
     """`2026-09-04` → `Fri, Sep 4`; an intraday clock keeps its Pacific time. The one daily-date formatter."""
     if not isinstance(value, str) or not value:
@@ -1192,11 +1206,12 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     happened = {ident for card in cards for ident in card["events"]}
     # An event whose scheduled time has passed without admitted values (Real Earnings; a release the collector
     # does not read) is no longer ahead: report only that the scheduled time passed and values were not collected.
-    events = [{**event, "scheduled_label": pacific_time(event["scheduled_at"], True),
+    events = [{**event, **event_clock(event),
                "relation_label": event.get("session_relation", "").lower(), "refs": refs([event["id"]], catalog),
                # A time that has passed proves nothing about publication: only an admitted page (a card above) says
-               # a release happened, so this says what is known.
-               "passed": (f"scheduled time passed · values {NOT_COLLECTED}"
+               # a release happened, so this says what is known. An announced call collects no values of its own.
+               "passed": (("scheduled time passed" if event.get("stated_time")
+                           else f"scheduled time passed · values {NOT_COLLECTED}")
                           if event.get("scheduled_at") and timestamp(event["scheduled_at"]) <= target else "")}
               for event in packet["events"] if event["id"] not in happened][:4]
 
@@ -1580,6 +1595,9 @@ def markdown(view):
         passed = f" · {esc(e['passed'])}" if e["passed"] else ""
         lines.append(f"- **Event** — {esc(e['title'])} · {esc(e['scheduled_label'])} · {esc(e['relation_label'])}"
                      f"{passed} {refs([e['id']])}")
+        if e["source_line"]:
+            note = f" {esc(e['note'])}" if e.get("note") else ""
+            lines.append(f"  {esc(e['local_label'])}.{note} Source: [{esc(e['source_line'])}]({e['url']})")
     lines.append("")
     mac = view["macro"]
     cross = view["cross_asset"]

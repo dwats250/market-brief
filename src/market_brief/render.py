@@ -55,7 +55,17 @@ from .curve import (
     rates,
     spread_rows,
 )
-from .evidence import ET, PLACEHOLDER, ROOT, SECTOR_ETFS, USABLE, evidence_catalog, read_json, timestamp
+from .evidence import (
+    ET,
+    NEAR_CLOSE_WINDOW,
+    PLACEHOLDER,
+    ROOT,
+    SECTOR_ETFS,
+    USABLE,
+    evidence_catalog,
+    read_json,
+    timestamp,
+)
 from .metrics import rank_by_spread
 from .schedule import CHECKPOINT_KINDS, checkpoint_kind, next_checkpoint, session_relation
 from .state import divergence
@@ -646,6 +656,42 @@ def compact_equity_rows(rows, symbols, allow_daily_today=True):
     return result
 
 
+def table_notes(rows, change_label, packet, session):
+    """Plain notes under one instrument table that separate what its cells are: last trades before the close (never
+    official closing prices), symbols whose only trades were after the close, and history columns that lag a session.
+    Empty when there is nothing to distinguish."""
+    notes = []
+    # The exchange's own clock: unambiguous, never the page's Vancouver time with a PT suffix.
+    close = (timestamp(session["close"]).astimezone(ET).strftime("%-I:%M %p ET regular-session")
+             if session.get("close") else "regular-session")
+    printed = [row["intraday"] for row in rows if row["intraday"]["id"]]
+    try:
+        bell = timestamp(session["close"])
+        final = [cell for cell in printed if bell - NEAR_CLOSE_WINDOW <= timestamp(cell["observed_at"]) <= bell]
+    except (KeyError, TypeError, ValueError):
+        final = []
+    if final and len(final) == len(printed):
+        # The last trades before the bell, at their own clocks: never official closing prices.
+        provisional = (" Collected well after the close, so provisional." if
+                       all(cell["status"] == "PROVISIONAL" for cell in final) else "")
+        notes.append(f"Each Change is the last trade seen before the {close} close, not an official closing "
+                     f"price.{provisional}")
+    symbols = {row["symbol"] for row in rows if not row["intraday"]["id"]}
+    after_hours = sorted({r["topic"] for r in packet["observations"]
+                          if r.get("frequency") == "intraday" and r["topic"] in symbols
+                          and r["status"] == "UNAVAILABLE" and (r.get("reason") or "").startswith("after-hours trade")})
+    if after_hours:
+        names = ", ".join(after_hours)
+        notes.append(f"No print for {names}: the latest trade came after the {close} close, and after-hours trades "
+                     "never stand for the session.")
+    lag = packet.get("history_lag")
+    if lag and rows:
+        notes.append(f"The 20-session and 50DMA columns use daily history through "
+                     f"{short_date(lag['history_through'])}; the {short_date(lag['completed_session'])} daily bar is "
+                     "not published yet.")
+    return notes
+
+
 def change_column(rows, allow_daily_today=True, session=None):
     """Settle one table's change column: one shared intraday clock with per-row exceptions, or one daily date.
 
@@ -1163,6 +1209,9 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     sector_change, sector_asof = change_column(sector_rows, daily_today, session)
     metal_rows = compact_equity_rows(facts, METALS, daily_today)
     metal_change, metal_asof = change_column(metal_rows, daily_today, session)
+    mega_notes = table_notes(mega_rows, mega_change, packet, session)
+    sector_notes = table_notes(sector_rows, sector_change, packet, session)
+    metal_notes = table_notes(metal_rows, metal_change, packet, session)
     module = rates_module(packet, treasuries, catalog)
     metal_pairs = [f"{row['symbol']} vs {row['relative_label']}" for row in metal_rows if row["relative"]["id"]]
     yields = module["yields"]
@@ -1527,6 +1576,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                   paragraphs=[paragraph(p) for key in ("attention", "events") for p in narrative["sections"][key]]),
         equities=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["equities"]],
                       rows=mega_rows, change_label=mega_change, asof=mega_asof, proof=proof(mega_rows),
+                      notes=mega_notes,
                       spread_label="20-session return spread vs QQQ",
                       lookback={s: v for s, v in packet.get("lookback", {}).items() if v["r20"] != "available"}),
         macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]], releases=cards,
@@ -1535,8 +1585,10 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                    yields_proof=refs(module["proof_ids"], catalog),
                    facts_proof=refs([row["id"] for row in other_macro], catalog)),
         sectors=dict(rows=sector_rows, change_label=sector_change, asof=sector_asof, proof=proof(sector_rows),
+                     notes=sector_notes,
                      spread_label="20-session return spread vs SPY, strongest to weakest"),
         cross_asset=dict(rows=metal_rows, change_label=metal_change, asof=metal_asof, proof=proof(metal_rows),
+                         notes=metal_notes,
                          spread_label=("20-session return spread, " + ", ".join(metal_pairs)) if metal_pairs else ""),
         guide=dict(move=(dict(label=module["curve"]["move"]["label"], text=module["curve"]["move"]["sentence"])
                          if module["curve"] and module["curve"]["move"] and not module["curve"]["move"]["unavailable"]
@@ -1715,7 +1767,7 @@ def markdown(view):
                           else row["relative"]["display"])
                 lines.append(f"| {esc(row['label'])} ({row['symbol']}) | {row['today']['display']} | "
                              f"{row['r20']['display']} | {spread} | {row['dma']['display']} |")
-            lines += ["", LEDGER_NOTE, ""]
+            lines += ["", *(text for note in cross["notes"] for text in (esc(note), "")), LEDGER_NOTE, ""]
     sec = view["sectors"]
     if sec["rows"]:
         asof = f" · {esc(sec['asof'])}" if sec["asof"] else ""
@@ -1725,7 +1777,7 @@ def markdown(view):
         for row in sec["rows"]:
             lines.append(f"| {esc(row['label'])} ({row['symbol']}) | {row['relative']['display']} | "
                          f"{row['r20']['display']} | {row['today']['display']} | {row['dma']['display']} |")
-        lines += ["", LEDGER_NOTE, ""]
+        lines += ["", *(text for note in sec["notes"] for text in (esc(note), "")), LEDGER_NOTE, ""]
     eq = view["equities"]
     if eq["paragraphs"] or eq["rows"]:
         lines += ["## Equity structure", ""]
@@ -1739,7 +1791,7 @@ def markdown(view):
             for row in eq["rows"]:
                 lines.append(f"| {row['symbol']} | {row['today']['display']} | {row['r20']['display']} | "
                              f"{row['relative']['display']} | {row['dma']['display']} |")
-            lines += ["", LEDGER_NOTE, ""]
+            lines += ["", *(text for note in eq["notes"] for text in (esc(note), "")), LEDGER_NOTE, ""]
         for symbol, state in eq["lookback"].items():
             lines.append(f"{esc(symbol)} 20-session return unavailable: {state['sessions']} sessions of history")
         if eq["lookback"]:

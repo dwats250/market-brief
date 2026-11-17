@@ -108,12 +108,12 @@ section.audit h2{font-size:20px}section.audit .fine{max-width:700px}
 {% for p in macro.paragraphs %}{{ paragraph(p) }}{% endfor %}
 {% if macro.yields %}{{ table_proof(macro.yields_proof) }}{% endif %}
 {% if macro.facts %}<div class="caption">Observed</div><table><thead><tr><th>Measure</th><th class="number">Observation</th><th>Date / source</th></tr></thead><tbody>{% for row in macro.facts %}<tr><td>{{ row.measure }}</td><td class="number primary direction-{{ row.direction }}">{{ row.display }}</td><td><small>{{ row.observed_label }} · {{ row.status }}</small></td></tr>{% endfor %}</tbody></table>{{ table_proof(macro.facts_proof) }}{% endif %}
-{% if cross_asset.rows %}{{ caption('Metals', cross_asset.spread_label, cross_asset.change_label, cross_asset.asof) }}{{ instrument_table(cross_asset.rows, 'Instrument', 'Spread', true, 'relative') }}{{ table_proof(cross_asset.proof) }}{% endif %}
+{% if cross_asset.rows %}{{ caption('Metals', cross_asset.spread_label, cross_asset.change_label, cross_asset.asof) }}{{ instrument_table(cross_asset.rows, 'Instrument', 'Spread', true, 'relative') }}{% for note in cross_asset.notes %}<p class="fine">{{ note }}</p>{% endfor %}{{ table_proof(cross_asset.proof) }}{% endif %}
 </section>{% endif %}
-{% if sectors.rows %}<section><h2>Sector view</h2>{{ caption(sectors.spread_label, none, sectors.change_label, sectors.asof) }}{{ instrument_table(sectors.rows, 'Sector', 'vs SPY', true, 'relative') }}{{ table_proof(sectors.proof) }}</section>{% endif %}
+{% if sectors.rows %}<section><h2>Sector view</h2>{{ caption(sectors.spread_label, none, sectors.change_label, sectors.asof) }}{{ instrument_table(sectors.rows, 'Sector', 'vs SPY', true, 'relative') }}{% for note in sectors.notes %}<p class="fine">{{ note }}</p>{% endfor %}{{ table_proof(sectors.proof) }}</section>{% endif %}
 {% if equities.paragraphs or equities.rows %}<section><h2>Equity structure</h2>
 {% for p in equities.paragraphs %}{{ paragraph(p) }}{% endfor %}
-{% if equities.rows %}{{ caption('Mega-cap snapshot', equities.spread_label, equities.change_label, equities.asof) }}{{ instrument_table(equities.rows, 'Symbol', 'vs QQQ', false, 'relative') }}{{ table_proof(equities.proof) }}{% endif %}
+{% if equities.rows %}{{ caption('Mega-cap snapshot', equities.spread_label, equities.change_label, equities.asof) }}{{ instrument_table(equities.rows, 'Symbol', 'vs QQQ', false, 'relative') }}{% for note in equities.notes %}<p class="fine">{{ note }}</p>{% endfor %}{{ table_proof(equities.proof) }}{% endif %}
 {% for symbol, state in equities.lookback.items() %}<p class="fine">{{ symbol }} 20-session return unavailable: {{ state.sessions }} sessions of history.</p>{% endfor %}
 </section>{% endif %}
 {% if cuttingboard_section.visible %}<section><h2>Cuttingboard context</h2>{% for p in cuttingboard_section.paragraphs %}{{ paragraph(p) }}{% endfor %}

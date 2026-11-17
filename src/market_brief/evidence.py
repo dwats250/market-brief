@@ -305,8 +305,16 @@ def following_session(now):
 
 def event_extras(item):
     """An issuer-announced event's optional presentation fields (`issuer.conference_calls`): the notice's exact URL,
-    the clock as the source states it, a short note and the notice's date. Bounded and checked, or the run fails
-    closed; a calendar event without them is unchanged. None reaches the analyst (`MODEL_EVENT_FIELDS`)."""
+    the clock as the source states it, a short note and the notice's date. Only the NVIDIA issuer source may carry
+    them, and its URL must be an exact newsroom release URL (`issuer.ARTICLE`: HTTPS, the one host, `/news/` and one
+    bounded lowercase slug); anything else fails the run closed. A calendar event without them is unchanged. None
+    reaches the analyst (`MODEL_EVENT_FIELDS`)."""
+    from .issuer import ARTICLE
+    from .issuer import SOURCE_ID as ISSUER_SOURCE  # issuer.py imports this module
+
+    present = [key for key in EVENT_EXTRAS if item.get(key) is not None]
+    if present and item.get("source_id") != ISSUER_SOURCE:
+        raise ValueError(f"malformed event {present[0]}: only the {ISSUER_SOURCE} source carries it")
     extras = {}
     for key, limit in EVENT_EXTRAS.items():
         value = item.get(key)
@@ -317,6 +325,8 @@ def event_extras(item):
         try:
             if key == "url":
                 safe_url(value)
+                if not ARTICLE.fullmatch(value):
+                    raise ValueError
             if key == "announced_on":
                 date.fromisoformat(value)
         except ValueError:

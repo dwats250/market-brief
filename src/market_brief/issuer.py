@@ -53,10 +53,15 @@ CALL = re.compile(r"NVIDIA will host a conference call on (Monday|Tuesday|Wednes
                   r"(\d{1,2}), at (\d{1,2})(?::(\d{2}))? ([ap])\.m\. PT \((\d{1,2})(?::(\d{2}))? ([ap])\.m\. ET\) "
                   r"to discuss its financial results for the (first|second|third|fourth) quarter of fiscal year "
                   r"(\d{4})")
-# The body's results timing, read only when both statements are there exactly once; the time is NVIDIA's own
-# approximation and stays one ("approximately"), never an exact publication time.
+# The body's results timing, read only when it is stated exactly once; the time is NVIDIA's own approximation and
+# stays one ("approximately"), never an exact publication time.
 RESULTS_AT = re.compile(r"results are publicly announced at approximately (\d{1,2}):(\d{2}) ([ap])\.m\. PT")
-CFO = re.compile(r"NVIDIA will provide written commentary on its (first|second|third|fourth)-quarter results")
+# The CFO commentary's timing is stated only when the source itself ties it to the announcement: the commentary
+# sentence, then (within one short following span, nothing guessed across the body) a statement that it is posted
+# "immediately after the company's results are publicly announced". Anything else omits the relationship.
+CFO_TIMING = re.compile(r"NVIDIA will provide written commentary on its (first|second|third|fourth)-quarter results"
+                        r".{0,240}?\bposted\b.{0,160}?immediately after the company's results are publicly announced "
+                        r"at approximately (\d{1,2}):(\d{2}) ([ap])\.m\. PT")
 US_PACIFIC = ZoneInfo("America/Los_Angeles")
 MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
                "November", "December")
@@ -358,11 +363,14 @@ def conference_call(entry, title, published):
         body = text_of(release_body(entry))
     except IssuerError:
         body = ""
-    timing, commentary = RESULTS_AT.findall(body), CFO.findall(body)
-    if len(timing) == 1 and len(commentary) == 1 and commentary[0].capitalize() == match[1]:
-        rh, rm = clock(timing[0][0], timing[0][1], timing[0][2])
-        note = (f"NVIDIA says results are publicly announced at approximately {spoken(rh, rm)} PT, with written CFO "
-                "commentary posted immediately after; no exact publication time is given.")
+    timing, commentary = RESULTS_AT.findall(body), CFO_TIMING.findall(body)
+    if len(timing) == 1:
+        rh, rm = clock(*timing[0])
+        tied = (len(commentary) == 1 and commentary[0][0].capitalize() == match[1]
+                and commentary[0][1:] == timing[0])
+        note = (f"NVIDIA says results are publicly announced at approximately {spoken(rh, rm)} PT"
+                + (", with written CFO commentary posted immediately after" if tied else "")
+                + "; no exact publication time is given.")
     else:
         note = "The results time is not read from this feed entry."
     fields = dict(id=f"{SOURCE_ID}-call-fy{year}-q{fiscal_quarter}",

@@ -4,14 +4,16 @@ The regular-session boundary is unchanged: a trade stamped after the close is af
 Alpaca's snapshot offers no other regular-session print with its own trade clock (`dailyBar` and `minuteBar` carry a
 bar start, not a trade time), so nothing new is admitted; the page now says, under each table, which cells are the
 last trades before the close (never official closing prices), which symbols traded only after it, and which columns
-use daily history a session behind. Scenario: the 2026-11-16 close (XLI and QQQ traded only after the bell; NVDA here
-stands in for AAPL, which the sample fixture does not carry). Values are test-only.
+use daily history a session behind. Scenario: the 2026-11-16 close, where QQQ, XLI and AAPL traded only after the bell.
+The sample fixture carries no AAPL, so `with_aapl` adds a TEST-ONLY dated AAPL close history (NVDA's fixture closes
+under AAPL's name) for its row to render. Values are test-only.
 """
 
 import copy
 import re
 
 import pytest
+import test_history_admission
 from test_market_state import CLOSING, DAY, opening_record, prints
 from test_pipeline import narrative
 
@@ -23,6 +25,20 @@ CLOSE_NOW = f"{DAY}T21:01:00+00:00"
 FINAL = {symbol: f"{DAY}T20:59:{54 + n % 6:02d}+00:00" for n, symbol in enumerate(CLOSING)}
 LAST_TRADE = "Each Change is the last trade seen before the 4:00 PM ET regular-session close, not an official " \
              "closing price."
+
+
+@pytest.fixture
+def with_aapl(monkeypatch):
+    """The sample fixture plus a TEST-ONLY dated AAPL close history, so the mega-cap table has an AAPL row."""
+    original = test_history_admission.read_json
+
+    def read(path):
+        value = original(path)
+        if str(path).endswith("evidence.sample.json"):
+            nvda = next(h for h in value["history"] if h["symbol"] == "NVDA")
+            value["history"].append(dict(copy.deepcopy(nvda), id="history-AAPL", symbol="AAPL"))
+        return value
+    monkeypatch.setattr(test_history_admission, "read_json", read)
 
 
 def close_page(values=CLOSING, clocks=FINAL, now=CLOSE_NOW, after_hours=None):
@@ -62,22 +78,37 @@ def test_the_close_boundary_is_exact(observed, admitted):
         assert row["value"] is None and row["reason"] == "after-hours trade, after the regular-session close"
 
 
-def test_after_hours_only_symbols_are_named_under_their_table_and_never_shown_as_session_prices():
-    packet = close_page(after_hours={"XLI": -1.2, "QQQ": -2.3, "NVDA": 1.4})
-    for symbol in ("XLI", "QQQ", "NVDA"):
-        assert intraday(packet, symbol)["value"] is None
+def test_after_hours_only_symbols_are_named_under_their_table_and_never_shown_as_session_prices(with_aapl):
+    # 2026-11-16: QQQ, XLI and AAPL had only after-hours IEX trades at the close snapshot.
+    packet = close_page(after_hours={"XLI": -1.2, "QQQ": -2.3, "AAPL": -0.8})
+    for symbol in ("XLI", "QQQ", "AAPL"):
+        row = intraday(packet, symbol)
+        assert (row["value"], row["status"]) == (None, "UNAVAILABLE")
+        assert row["reason"] == "after-hours trade, after the regular-session close"
     view = presentation(packet, interpretation=opening_record())
-    sector = next(row for row in view["sectors"]["rows"] if row["symbol"] == "XLI")
-    assert sector["today"]["display"] == "no print"
+    cells = {row["symbol"]: row["today"]["display"] for table in ("sectors", "equities")
+             for row in view[table]["rows"]}
+    assert cells["XLI"] == "no print" and cells["AAPL"] == "no print"
     after_hours = ("No print for {}: the latest trade came after the 4:00 PM ET regular-session close, and "
                    "after-hours trades never stand for the session.")
     assert after_hours.format("XLI") in view["sectors"]["notes"]
-    assert after_hours.format("NVDA") in view["equities"]["notes"]
+    assert after_hours.format("AAPL") in view["equities"]["notes"]
     # QQQ sits in no table; Coverage limitations still name it.
     assert not any("QQQ" in note for table in ("sectors", "equities", "cross_asset") for note in view[table]["notes"])
     markdown, page = render(packet, interpretation=opening_record())
-    assert after_hours.format("XLI") in markdown and after_hours.format("XLI") in page
-    assert "QQQ: after-hours trade, after the regular-session close" in markdown
+    for text in (markdown, page):
+        assert after_hours.format("XLI") in text and after_hours.format("AAPL") in text
+        for symbol in ("QQQ", "XLI", "AAPL"):
+            assert (f"{symbol}: no regular-session print, so no session value is shown; its latest trade was after "
+                    "the regular-session close (after-hours)") in text
+    # QQQ has no table row: the coverage line is its one reader statement, exact in both editions.
+    qqq = ("QQQ: no regular-session print, so no session value is shown; its latest trade was after the "
+           "regular-session close (after-hours)")
+    assert f"- {qqq}" in markdown and f"<li>{qqq}</li>" in page
+    assert "QQQ: after-hours trade" not in page and "QQQ: after-hours trade" not in markdown
+    # The packet keeps its own reason and status.
+    assert "QQQ: after-hours trade, after the regular-session close" in packet["coverage"]["limitations"]
+    assert "| AAPL | no print |" in markdown
     # Nothing on the page claims an official close.
     assert not re.search(r"(?<![\w-])[Cc]lose vs prior close|official closing price(?!\.)|closing price:", page)
 

@@ -177,6 +177,8 @@ NOT_APPLICABLE = "—"
 # a short run of words with no figure and no sentence of its own qualifies; a cited value or an aside stays.
 TRAILING_TAG = re.compile(r"(?<=[.!?])\s*\([A-Za-z][A-Za-z '’&/-]{0,39}\)\s*$")
 NOT_COLLECTED = "not collected"
+# The normalizer's reason for a trade stamped after the regular-session close (`evidence.normalize_observation`).
+AFTER_HOURS_REASON = "after-hours trade, after the regular-session close"
 # Rows whose print is this far behind the table's shared clock carry their own clock.
 SHARED_CLOCK_TOLERANCE = timedelta(minutes=5)
 # The header's three clocks. The interpretation is named by the synthesis edition that wrote it.
@@ -479,6 +481,10 @@ def reader_limitation(text):
     name, separator, reason = text.partition(": ")
     if separator and reason.startswith("not automated"):
         return f"{name}: {NOT_COLLECTED}"
+    if separator and reason == AFTER_HOURS_REASON:
+        # The packet keeps its reason and status; the reader is told plainly that no session value exists.
+        return (f"{name}: no regular-session print, so no session value is shown; its latest trade was after the "
+                "regular-session close (after-hours)")
     return text
 
 
@@ -1060,10 +1066,21 @@ def state_notice(interpretation, packet, carried, refs, catalog):
                 result["kind"] == "reversal" else
                 f"Sector ETFs have moved broadly {word} since the analysis above was written.")
     order = sorted(set(opening_rows) | set(current_rows), key=lambda t: (t != "SPY", t != "QQQ", t))
-    earlier = [dict(r, anchor=False) for r in
-               refs([opening_rows[t]["id"] for t in order if t in opening_rows],
-                    {row["id"]: row for row in opening_rows.values()}, False)]
+    # The analysis's prints have their own ledger rows (`ledger` below) under `analysis-state-<id>`, a namespace no
+    # current (`evidence-<id>`) or frozen-citation (`interpretation-evidence-<id>`) anchor uses, so a link to SPY at
+    # the analysis's clock never lands on this run's SPY row.
+    opening = [opening_rows[t] for t in order if t in opening_rows]
+    earlier = [dict(r, anchor=True, anchor_id=f"analysis-state-{r['id']}") for r in
+               refs([row["id"] for row in opening], {row["id"]: row for row in opening}, False)]
     later = refs([current_rows[t]["id"] for t in order if t in current_rows], catalog, False)
+    session = packet["run"]["session"]
+    names = {source["id"]: source["name"] for source in packet["sources"]}
+    ledger = [dict(id=row["id"], anchor_id=f"analysis-state-{row['id']}",
+                   label=f"{instrument_label(row['topic'])} · {reader_metric_label(row, session)}",
+                   display=formatted(row), when=compact_clock(row["observed_at"]), observed_at=row["observed_at"],
+                   baseline=row.get("baseline") or "", source_id=row.get("source_id") or "source not preserved",
+                   source_name=names.get(row.get("source_id"), row.get("source_id") or "source not preserved"))
+              for row in opening]
     return dict(caption="Since the analysis",
                 window=(f"{pacific_time(before['last'].isoformat())} → {pacific_time(after['last'].isoformat())}"
                         f" · vs prior close {short_date(before['prior_close'])}"),
@@ -1072,8 +1089,9 @@ def state_notice(interpretation, packet, carried, refs, catalog):
                 note=(f"Counts are of the {before['n']} sector ETFs held at both clocks"
                       + (f" (of {len(SECTOR_ETFS)})" if before["n"] < len(SECTOR_ETFS) else "")
                       + ", not S&P 500 breadth. Each row keeps its own clock."),
-                refs=[*earlier, *later], current_ids=[row["id"] for row in later], kind=result["kind"],
-                direction=word)
+                refs=[*earlier, *later], current_ids=[row["id"] for row in later],
+                opening_ids=[row["id"] for row in opening], ledger=ledger,
+                opening_clock=pacific_time(before["last"].isoformat()), kind=result["kind"], direction=word)
 
 
 def presentation(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None,
@@ -1647,7 +1665,9 @@ def markdown(view):
     if shift:
         measures = " · ".join(f"{m['label']} {m['earlier']} → {m['later']}" for m in shift["measures"])
         lines += [f"**{shift['caption'].upper()}** · {esc(shift['window'])} · {esc(shift['sentence'])} {measures}. "
-                  f"{esc(shift['note'])} {refs(shift['current_ids'])}", ""]
+                  f"{esc(shift['note'])}",
+                  "At the analysis: " + " · ".join(f"[{esc(i)}](#analysis-state-{i})" for i in shift["opening_ids"])
+                  + ". Now: " + " · ".join(f"[{esc(i)}](#evidence-{i})" for i in shift["current_ids"]) + ".", ""]
     since = view["since"]
     if since["entries"] or since["note"]:
         lines += [f"## {since['heading']}" + (f" · {esc(since['label'])}" if since["label"] else ""), ""]
@@ -1829,6 +1849,12 @@ def markdown(view):
                           f"{esc(row['display'])} · {esc(row.get('baseline', 'published / scheduled item'))} "
                           f"· observed/published {when} · source {source}"
                           + (f" · [release](<{row['url']}>)" if row.get("url") else ""), ""]
+    if view["shift"]:
+        lines += [f"**Prints at analysis · {esc(view['shift']['opening_clock'])} · since-the-analysis check**", ""]
+        for row in view["shift"]["ledger"]:
+            lines += [f'<a id="{row["anchor_id"]}"></a>',
+                      f"**{esc(row['id'])}** · {esc(row['label'])} · {esc(row['display'])} · {esc(row['baseline'])} "
+                      f"· observed {esc(row['observed_at'])} · source {esc(row['source_id'])}", ""]
     for group in view["evidence_groups"]:
         lines += [f"**{esc(group['topic'])}**", ""]
         for row in group["rows"]:

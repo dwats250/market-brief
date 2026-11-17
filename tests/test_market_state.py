@@ -9,6 +9,7 @@ a test-only choice that reproduces those counts and medians; QQQ at HOURLY_1500 
 
 import copy
 import json
+import re
 from datetime import timedelta
 from statistics import median
 
@@ -229,10 +230,13 @@ def test_the_refresh_page_shows_the_notice_with_clocks_measures_and_evidence():
         ("SPY", "−1.13%", "−1.88%"), ("QQQ", "−2.01%", "−2.40%")]
     assert shift["note"] == ("Counts are of the 10 sector ETFs held at both clocks (of 11), not S&P 500 breadth. "
                              "Each row keeps its own clock.")
-    # Evidence: both clocks' rows, the analysis's own unlinked (they are not this run's ledger rows).
+    # Evidence: both clocks' rows, each linked to its own ledger row (checked in the next test).
     clocks = {r["when"] for r in shift["refs"]}
     assert len(shift["refs"]) == 13 + 12 and len(clocks) == 2
-    assert all(not r["anchor"] for r in shift["refs"][:13]) and all(r["anchor"] for r in shift["refs"][13:])
+    assert [r["anchor_id"] for r in shift["refs"][:2]] == ["analysis-state-SPY-intraday",
+                                                           "analysis-state-QQQ-intraday"]
+    assert all(r["anchor"] and r["anchor_id"].startswith("analysis-state-") for r in shift["refs"][:13])
+    assert all(r["anchor"] and r["anchor_id"].startswith("evidence-") for r in shift["refs"][13:])
     markdown, page = render(hourly(), interpretation=record)
     assert '<div class="shift"><div class="caption">Since the analysis<span>8:01 AM PT → 1:00 PM PT' in page
     assert "Sector ETFs lower <b>5 of 10 → 9 of 10</b>" in page and "Median sector ETF <b>−0.08% → −1.15%</b>" in page
@@ -241,6 +245,45 @@ def test_the_refresh_page_shows_the_notice_with_clocks_measures_and_evidence():
     assert "Sector ETFs lower 5 of 10 → 9 of 10" in markdown and "(#evidence-SPY-intraday)" in markdown
     # Never called comprehensive breadth anywhere on the page.
     assert "not S&amp;P 500 breadth" in page and "comprehensive" not in page.lower()
+
+
+def test_both_clocks_link_to_their_own_ledger_rows_in_html_and_markdown():
+    record = opening_record()
+    markdown, page = render(hourly(), interpretation=record)
+    ids = re.findall(r'\sid="([^"]+)"', page)
+    assert len(ids) == len(set(ids)), "anchors must be unique"
+    block = page[page.index('<div class="shift">'):]
+    block = block[:block.index("</div><div") if "</div><div" in block else len(block)]
+    hrefs = set(re.findall(r'href="#((?:analysis-state|evidence)-[^"]+)"', block))
+    opening = {f"analysis-state-{s}-intraday" for s in record["market_state"]["rows"]}
+    current = {f"evidence-{s}-intraday" for s in snapshot(hourly())["rows"]}
+    assert opening <= hrefs and current <= hrefs
+    for target in opening | current:
+        assert target in ids
+    # The analysis's SPY row: its own value, clock, baseline and source, never this run's.
+    row = page[page.index('id="analysis-state-SPY-intraday"'):]
+    row = row[:row.index("</div>")]
+    assert "−1.13%" in row and "8:01 AM PT" in row and "sample-prices · SPY-intraday" in row
+    current_row = page[page.index('id="evidence-SPY-intraday"'):]
+    current_row = current_row[:current_row.index("</div>")]
+    assert "−1.88%" in current_row and "1:00 PM PT" in current_row
+    # Markdown: the same targets, as anchors in its ledger.
+    md_ids = set(re.findall(r'<a id="([^"]+)"></a>', markdown))
+    md_links = set(re.findall(r"\]\(#((?:analysis-state|evidence)-[^)]+)\)", markdown))
+    assert opening <= md_links and current <= md_links and (opening | current) <= md_ids
+    md_row = markdown[markdown.index('<a id="analysis-state-SPY-intraday"></a>'):].split("\n")[1]
+    assert ("−1.13%" in md_row and f"observed {DAY}T15:01:00+00:00" in md_row
+            and "source sample-prices" in md_row)
+
+
+def test_the_notice_leaves_the_frozen_record_and_its_identity_alone():
+    record = opening_record()
+    before = (copy.deepcopy(record), record["origin"]["target_time"], record["origin"]["run_id"],
+              record["content_hash"] if "content_hash" in record else None)
+    render(hourly(), interpretation=record)
+    assert (record, record["origin"]["target_time"], record["origin"]["run_id"],
+            record.get("content_hash")) == before
+    assert digest(record["narrative"]) == record["origin"]["narrative_hash"]
 
 
 def test_the_close_page_shows_no_notice():

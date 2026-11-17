@@ -17,6 +17,7 @@ import exchange_calendars as xcals
 from .curve import SPREAD_CHANGE, SPREAD_LEVEL, stale_movement
 from .evidence import ET, PLACEHOLDER, USABLE, digest, evidence_catalog, model_packet, read_json, timestamp
 from .schedule import CHECKPOINT_TITLES, VANCOUVER, next_session_date, next_synthesis
+from .state import snapshot as market_snapshot
 
 CONTINUITY_SCHEMA = "market-brief.continuity.v1"
 BUNDLE_SCHEMA = "market-brief.continuity-bundle.v1"
@@ -846,7 +847,10 @@ def interpretation_record(packet, narrative, context=None, app_version="", conte
                                   for watch in prior.get("watches", [])]),
         continuity=dict(comparisons=sum(counts.values()), changed=counts.get("changed", 0),
                         repeated=counts.get("no_new_observation", 0)),
-        horizons=horizons, attention=attention)
+        horizons=horizons, attention=attention,
+        # The prints this analysis was written on, reduced to the measures `state.divergence` compares (additive,
+        # deterministic, never shown to the analyst); a record frozen without it simply has no divergence check.
+        market_state=market_snapshot(packet))
     if origin:
         record["origin"].update(origin)
     return _hashed(record)

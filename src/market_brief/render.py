@@ -55,9 +55,11 @@ from .curve import (
     rates,
     spread_rows,
 )
-from .evidence import ET, PLACEHOLDER, ROOT, USABLE, evidence_catalog, read_json, timestamp
+from .evidence import ET, PLACEHOLDER, ROOT, SECTOR_ETFS, USABLE, evidence_catalog, read_json, timestamp
 from .metrics import rank_by_spread
 from .schedule import CHECKPOINT_KINDS, checkpoint_kind, next_checkpoint, session_relation
+from .state import divergence
+from .state import snapshot as market_snapshot
 
 PACIFIC = ZoneInfo("America/Vancouver")
 DISPLAY_STATUSES = {"LIVE", "LIVE COMMISSIONING", "LAST GOOD BRIEF", "SAMPLE"}
@@ -984,6 +986,50 @@ def since_caption(anchors, unpublished=()):
     return "vs " + " and ".join(parts) if parts else None
 
 
+def state_notice(interpretation, packet, carried, refs, catalog):
+    """The compact "since the analysis" notice (`state.divergence`) for a page that carries an earlier analysis, or
+    None. Deterministic fact on the inset surface: both clocks, the measures at each, and the rows behind them; the
+    analysis above it is never edited."""
+    if not carried:
+        return None
+    result = divergence(interpretation.get("market_state"), market_snapshot(packet))
+    if result["status"] != "shown":
+        return None
+    before, after, side = result["before"], result["after"], result["side"]
+    word = result["direction"]
+
+    def pct(value):
+        return formatted(dict(value=value, unit="%"))
+
+    measures = [dict(label=f"Sector ETFs {word}", earlier=f"{before[side]} of {before['n']}",
+                     later=f"{after[side]} of {after['n']}"),
+                dict(label="Median sector ETF", earlier=pct(before["median"]), later=pct(after["median"])),
+                dict(label="SPY", earlier=pct(before["spy"]), later=pct(after["spy"]))]
+    opening_rows, current_rows = result["opening_rows"], result["current_rows"]
+    for symbol in ("QQQ",):
+        if symbol in opening_rows and symbol in current_rows:
+            measures.append(dict(label=symbol, earlier=pct(opening_rows[symbol]["value"]),
+                                 later=pct(current_rows[symbol]["value"])))
+    sentence = (f"Sector ETFs have reversed {word} since the analysis above was written." if
+                result["kind"] == "reversal" else
+                f"Sector ETFs have moved broadly {word} since the analysis above was written.")
+    order = sorted(set(opening_rows) | set(current_rows), key=lambda t: (t != "SPY", t != "QQQ", t))
+    earlier = [dict(r, anchor=False) for r in
+               refs([opening_rows[t]["id"] for t in order if t in opening_rows],
+                    {row["id"]: row for row in opening_rows.values()}, False)]
+    later = refs([current_rows[t]["id"] for t in order if t in current_rows], catalog, False)
+    return dict(caption="Since the analysis",
+                window=(f"{pacific_time(before['last'].isoformat())} → {pacific_time(after['last'].isoformat())}"
+                        f" · vs prior close {short_date(before['prior_close'])}"),
+                sentence=sentence + " The analysis is unchanged; these later prints are not part of it.",
+                measures=measures,
+                note=(f"Counts are of the {before['n']} sector ETFs held at both clocks"
+                      + (f" (of {len(SECTOR_ETFS)})" if before["n"] < len(SECTOR_ETFS) else "")
+                      + ", not S&P 500 breadth. Each row keeps its own clock."),
+                refs=[*earlier, *later], current_ids=[row["id"] for row in later], kind=result["kind"],
+                direction=word)
+
+
 def presentation(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None,
                  degraded=None):
     if interpretation is None:
@@ -1472,6 +1518,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         character_ids=narrative["character"]["evidence_ids"],
         character_refs=refs(narrative["character"]["evidence_ids"]),
         summary=[paragraph(p) for p in narrative["summary"]], take=take, rates_lead=rates_lead,
+        shift=state_notice(interpretation, packet, carried, refs, catalog),
         evidence_charts=charts_for,
         since=dict(heading="What changed", label=since_label, entries=since_entries, note=since_note,
                    status=prior.get("status", "cold_start")),
@@ -1544,6 +1591,11 @@ def markdown(view):
         move = f" · {lead_rates['move']}" if lead_rates["move"] else ""
         lines += [f"**RATES** · {esc(lead_rates['caption'])} · {tenors}" + (f" · {spreads}" if spreads else "") + move
                   + (f" · {esc(lead_rates['note'])}" if lead_rates["note"] else ""), ""]
+    shift = view["shift"]
+    if shift:
+        measures = " · ".join(f"{m['label']} {m['earlier']} → {m['later']}" for m in shift["measures"])
+        lines += [f"**{shift['caption'].upper()}** · {esc(shift['window'])} · {esc(shift['sentence'])} {measures}. "
+                  f"{esc(shift['note'])} {refs(shift['current_ids'])}", ""]
     since = view["since"]
     if since["entries"] or since["note"]:
         lines += [f"## {since['heading']}" + (f" · {esc(since['label'])}" if since["label"] else ""), ""]

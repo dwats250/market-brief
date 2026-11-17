@@ -61,7 +61,7 @@ def test_valid_regular_session_prints_keep_their_own_clock_and_status():
     # Collected a minute after the bell: admitted, DELAYED, at the trade's own clock; never an official close.
     assert (spy["status"], spy["observed_at"], spy["value"]) == ("DELAYED", f"{DAY}T20:59:58+00:00", -1.887)
     view = sectors(packet)
-    assert view["change_label"] == "Intraday vs prior close" and view["asof"] == "as of 1:59 PM PT"
+    assert view["change_label"] == "Intraday vs prior close" and view["asof"] == "as of 1:59 PM Vancouver time"
     assert LAST_TRADE in view["notes"]
 
 
@@ -152,9 +152,9 @@ def test_delayed_daily_history_is_dated_where_its_columns_are_used():
 
 def test_the_close_label_is_the_exchange_clock_in_every_season():
     # Daylight time (Sep 8 close 20:00Z) and standard time (Nov 16 close 21:00Z) both read 4:00 PM ET, never a
-    # Vancouver clock with a PT suffix.
+    # Vancouver clock.
     nov = sectors(close_page())["notes"]
-    assert LAST_TRADE in nov and not any(" PM PT" in note for note in nov)
+    assert LAST_TRADE in nov and not any(" PM PT" in note or "Vancouver time" in note for note in nov)
     row = dict(symbol="SPY", intraday=dict(id="SPY-intraday", observed_at="2026-09-08T19:59:30+00:00",
                                            status="AVAILABLE"))
     sep = table_notes([row], "Intraday vs prior close", dict(observations=[]),

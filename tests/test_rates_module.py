@@ -196,7 +196,7 @@ def test_release_note_lands_in_the_module_notes():
     event = dict(id="cpi", title="Consumer Price Index", source_id="bls", published_at=None,
                  checked_at=NOW.isoformat(), scheduled_at="2026-09-08T12:30:00+00:00", status="SCHEDULED")
     md, page = render(rates_packet(events=[event]), narrative())
-    note = "Curve predates the 5:30 AM PT Consumer Price Index release."
+    note = "Curve predates the 5:30 AM Vancouver time Consumer Price Index release."
     assert f'<p class="fine">{note}</p>' in macro_section(page) and note in md
 
 

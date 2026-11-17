@@ -16,7 +16,7 @@ import re
 from datetime import date, datetime, time, timedelta
 
 from .evidence import ET, ROOT, USABLE, read_json, timestamp
-from .schedule import VANCOUVER
+from .schedule import VANCOUVER, VANCOUVER_LABEL
 
 TENORS = ("2Y", "5Y", "10Y", "30Y")
 # (name, short leg, long leg): each spread is the long leg minus the short leg, in basis points.
@@ -203,13 +203,13 @@ def spread_rows(tenors):
 
 def _clock(value, run):
     when = timestamp(value).astimezone(VANCOUVER)
-    clock = when.strftime("%-I:%M %p") + " PT"
+    clock = f"{when.strftime('%-I:%M %p')} {VANCOUVER_LABEL}"
     return clock if when.date() == run.astimezone(VANCOUVER).date() else when.strftime("%a, %b %-d · ") + clock
 
 
 def release_notes(curve_date, run, events, context_items):
     """Releases the curve predates: scheduled calendar releases after the curve's 3:30 PM ET reference quotes and
-    at or before this run, and FOMC policy statements published in the same window. Titles as given; PT clocks."""
+    at or before this run, plus FOMC statements published in the same window. Titles as given; Vancouver time clocks."""
     reference = datetime.combine(curve_date, QUOTE_TIME, tzinfo=ET)
     found = []
     for item in events:

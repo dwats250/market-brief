@@ -224,7 +224,7 @@ def test_the_refresh_page_shows_the_notice_with_clocks_measures_and_evidence():
     record = opening_record()
     view = presentation(hourly(), interpretation=record)
     shift = view["shift"]
-    assert shift["window"] == "8:01 AM PT → 1:00 PM PT · vs prior close Fri, Nov 13"
+    assert shift["window"] == "8:01 AM Vancouver time → 1:00 PM Vancouver time · vs prior close Fri, Nov 13"
     assert [(m["label"], m["earlier"], m["later"]) for m in shift["measures"]] == [
         ("Sector ETFs lower", "5 of 10", "9 of 10"), ("Median sector ETF", "−0.08%", "−1.15%"),
         ("SPY", "−1.13%", "−1.88%"), ("QQQ", "−2.01%", "−2.40%")]
@@ -238,10 +238,11 @@ def test_the_refresh_page_shows_the_notice_with_clocks_measures_and_evidence():
     assert all(r["anchor"] and r["anchor_id"].startswith("analysis-state-") for r in shift["refs"][:13])
     assert all(r["anchor"] and r["anchor_id"].startswith("evidence-") for r in shift["refs"][13:])
     markdown, page = render(hourly(), interpretation=record)
-    assert '<div class="shift"><div class="caption">Since the analysis<span>8:01 AM PT → 1:00 PM PT' in page
+    assert ('<div class="shift"><div class="caption">Since the analysis<span>8:01 AM Vancouver time → '
+            '1:00 PM Vancouver time') in page
     assert "Sector ETFs lower <b>5 of 10 → 9 of 10</b>" in page and "Median sector ETF <b>−0.08% → −1.15%</b>" in page
     assert "Sector ETFs have moved broadly lower since the analysis above was written." in page
-    assert "**SINCE THE ANALYSIS** · 8:01 AM PT → 1:00 PM PT" in markdown
+    assert "**SINCE THE ANALYSIS** · 8:01 AM Vancouver time → 1:00 PM Vancouver time" in markdown
     assert "Sector ETFs lower 5 of 10 → 9 of 10" in markdown and "(#evidence-SPY-intraday)" in markdown
     # Never called comprehensive breadth anywhere on the page.
     assert "not S&amp;P 500 breadth" in page and "comprehensive" not in page.lower()
@@ -263,10 +264,10 @@ def test_both_clocks_link_to_their_own_ledger_rows_in_html_and_markdown():
     # The analysis's SPY row: its own value, clock, baseline and source, never this run's.
     row = page[page.index('id="analysis-state-SPY-intraday"'):]
     row = row[:row.index("</div>")]
-    assert "−1.13%" in row and "8:01 AM PT" in row and "sample-prices · SPY-intraday" in row
+    assert "−1.13%" in row and "8:01 AM Vancouver time" in row and "sample-prices · SPY-intraday" in row
     current_row = page[page.index('id="evidence-SPY-intraday"'):]
     current_row = current_row[:current_row.index("</div>")]
-    assert "−1.88%" in current_row and "1:00 PM PT" in current_row
+    assert "−1.88%" in current_row and "1:00 PM Vancouver time" in current_row
     # Markdown: the same targets, as anchors in its ledger.
     md_ids = set(re.findall(r'<a id="([^"]+)"></a>', markdown))
     md_links = set(re.findall(r"\]\(#((?:analysis-state|evidence)-[^)]+)\)", markdown))

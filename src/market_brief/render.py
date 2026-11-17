@@ -67,7 +67,7 @@ from .evidence import (
     timestamp,
 )
 from .metrics import rank_by_spread
-from .schedule import CHECKPOINT_KINDS, checkpoint_kind, next_checkpoint, session_relation
+from .schedule import CHECKPOINT_KINDS, VANCOUVER_LABEL, checkpoint_kind, next_checkpoint, session_relation
 from .state import divergence
 from .state import snapshot as market_snapshot
 
@@ -281,11 +281,11 @@ def movement_rows(rows, session, anchored=(), stated=""):
             continue
         if family == "print":
             phases = [PHASE_WORDS.get(current_print_label(row, session), "") for row in (earlier, later)]
-            clocks = [pacific_time(row["observed_at"]).removesuffix(" PT") for row in (earlier, later)]
+            clocks = [pacific_time(row["observed_at"]).removesuffix(f" {VANCOUVER_LABEL}") for row in (earlier, later)]
             if phases[0] == phases[1]:
-                window = f"{phases[0]} · {clocks[0]} → {clocks[1]} PT".lstrip(" ·")
+                window = f"{phases[0]} · {clocks[0]} → {clocks[1]} {VANCOUVER_LABEL}".lstrip(" ·")
             else:
-                window = f"{phases[0]} {clocks[0]} → {phases[1]} {clocks[1]} PT"
+                window = f"{phases[0]} {clocks[0]} → {phases[1]} {clocks[1]} {VANCOUVER_LABEL}"
             measure = PRINT_MEASURE
         else:
             window = f"{compact_clock(earlier['observed_at'])} → {compact_clock(later['observed_at'])}"
@@ -341,7 +341,8 @@ def evidence_chart(history, prints=(), average=None, session_date=None, sessions
         share = zone[0] + (zone[1] - zone[0]) * (index + 0.5) / len(dots)
         labelled = len(dots) <= EVIDENCE_DOT_LABELS or index in (0, len(dots) - 1)
         marks.append(dict(x=x(share), y=y(row["value"]), direction=direction(row),
-                          label=pacific_time(row["observed_at"]).removesuffix(" PT") if labelled else ""))
+                          label=(pacific_time(row["observed_at"]).removesuffix(f" {VANCOUVER_LABEL}")
+                                 if labelled else "")))
     return dict(height=EVIDENCE_HEIGHT, label_y=EVIDENCE_LABEL_Y, zero_y=y(0),
                 reference_y=y(reference) if reference is not None else None,
                 path=dict(points=points, segments=segments), prior=points[-1],
@@ -355,11 +356,11 @@ def evidence_chart(history, prints=(), average=None, session_date=None, sessions
 def pacific_time(value, include_date=False):
     dt = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(PACIFIC)
     date_part = dt.strftime("%A, %b %-d · ") if include_date else ""
-    return f"{date_part}{dt.strftime('%-I:%M %p')} PT"
+    return f"{date_part}{dt.strftime('%-I:%M %p')} {VANCOUVER_LABEL}"
 
 
 def event_clock(event):
-    """An event's displayed clock. A calendar event reads in the page's Pacific clock. An issuer-announced event keeps
+    """An event's displayed clock. A calendar event reads in the page's Vancouver clock. An issuer-announced event keeps
     the clock its source states (`2 p.m. PT (5 p.m. ET)`, where PT is US Pacific), never relabelled as the page's
     Vancouver time; the Vancouver time is shown beside it under its own name, with the source's note and link."""
     if not event.get("stated_time"):
@@ -368,7 +369,7 @@ def event_clock(event):
     day = when.astimezone(ET).strftime("%A, %b %-d")
     local = when.astimezone(PACIFIC).strftime("%-I:%M %p")
     announced = datetime.fromisoformat(event["announced_on"]).strftime("%b %-d") if event.get("announced_on") else ""
-    return dict(scheduled_label=f"{day} · {event['stated_time']}", local_label=f"{local} Vancouver time",
+    return dict(scheduled_label=f"{day} · {event['stated_time']}", local_label=f"{local} {VANCOUVER_LABEL}",
                 source_line=", ".join(filter(None, ("NVIDIA release", announced))))
 
 
@@ -539,8 +540,10 @@ def item_detail(row):
 
 
 def release_clock(row, session):
-    """A release value's official time: `5:30 AM PT` in the session that published it, dated in any other (a carried
-    Friday print on Monday's page never reads as this morning's)."""
+    """A release value's official time: `5:30 AM Vancouver time` in its session, dated in any other.
+
+    A carried Friday print on Monday's page never reads as this morning's.
+    """
     value = row.get("observed_at") or ""
     if "T" in value and timestamp(value).astimezone(ET).date().isoformat() != (session or {}).get("date"):
         return pacific_time(value, True)
@@ -548,7 +551,9 @@ def release_clock(row, session):
 
 
 def compact_clock(value):
-    """Reader-facing clock above the audit layer: `Thu, Sep 10` for a dated row, `1:02 PM PT` for a print."""
+    """Reader-facing clock above the audit layer: `Thu, Sep 10` for a dated row,
+    `1:02 PM Vancouver time` for a print.
+    """
     if not isinstance(value, str) or not value:
         return ""
     return pacific_time(value) if "T" in value else short_date(value)
@@ -1006,7 +1011,7 @@ def release_cards(rows, events, sources=(), unpublished=()):
 
 
 def next_update(info, session_date):
-    """The scheduler's next checkpoint in reader words, its PT display time, and its absolute scheduled time."""
+    """The scheduler's next checkpoint in reader words, its Vancouver display time, and its absolute scheduled time."""
     clock = pacific_time(info["scheduled_at"])
     if info["session_date"] != session_date:
         when, kind = f"{short_date(info['session_date'])} · {clock}", "premarket analysis"
@@ -1016,15 +1021,15 @@ def next_update(info, session_date):
 
 
 def next_update_label(info, session_date):
-    """`11:00 AM PT · price refresh`, `7:00 AM PT · analysis update`, `1:01 PM PT · close snapshot`, or
-    `Mon, Sep 28 · 6:00 AM PT · premarket analysis`."""
+    """`8:00 AM Vancouver time · price refresh`, `7:00 AM Vancouver time · analysis update`,
+    `1:01 PM Vancouver time · close snapshot`, or `Mon, Sep 28 · 6:00 AM Vancouver time · premarket analysis`."""
     return next_update(info, session_date)["text"]
 
 
 def since_caption(anchors, unpublished=()):
     """`vs the previous close · Fri, Sep 11` or `vs premarket and the 7:00 AM update`. An anchor that was collected
-    but never published reads `the unpublished 6:32 AM PT refresh`: readers never saw it, though it is still what
-    the comparison was made against."""
+    but never published reads `the unpublished 6:32 AM Vancouver time refresh`: readers never saw it, though it is
+    still what the comparison was made against."""
     if "previous_close" in anchors:
         return f"vs the previous close · {short_date(anchors['previous_close']['session_date'])}"
     parts = []
@@ -1484,7 +1489,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         failed = EDITION_WORDS.get(degraded["checkpoint"], "analysis")
         kept = EDITION_WORDS.get(interpreted.get("checkpoint"), "earlier")
         due = timestamp(degraded["scheduled_at"])
-        clock = (f"{due.astimezone(ET):%-I:%M %p} ET ({due.astimezone(PACIFIC):%-I:%M %p} PT)")
+        clock = (f"{due.astimezone(ET):%-I:%M %p} ET ({due.astimezone(PACIFIC):%-I:%M %p} {VANCOUVER_LABEL})")
         truth = (f"The {failed} analysis due {clock} was not accepted, so no new analysis was published; the "
                  f"{kept} analysis stands and the prices are this update's.")
     source_names = {s["id"]: s["name"] for s in packet["sources"]}

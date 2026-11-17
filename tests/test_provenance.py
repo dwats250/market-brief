@@ -48,13 +48,13 @@ def test_frozen_interpretation_citation_links_to_its_own_provenance_while_live_r
     cited = re.search(
         r'<span class="ref"><a href="#interpretation-evidence-QQQ-intraday">([^<]+)</a>'
         r'<b>([^<]+)</b><small>([^<]+)</small></span>', page)
-    assert cited.groups() == ("QQQ · Premarket vs prior close", "+0.87%", "5:44 AM PT")
+    assert cited.groups() == ("QQQ · Premarket vs prior close", "+0.87%", "5:44 AM Vancouver time")
     frozen_row = page.split('id="interpretation-evidence-QQQ-intraday"', 1)[1].split("</div>", 1)[0]
     live_row = page.split('id="evidence-QQQ-intraday"', 1)[1].split("</div>", 1)[0]
-    assert "+0.87%" in frozen_row and "5:44 AM PT" in frozen_row
+    assert "+0.87%" in frozen_row and "5:44 AM Vancouver time" in frozen_row
     assert "IEX latest trade versus previous regular close" in frozen_row
     assert "sample-prices" in frozen_row
-    assert "−0.37%" in live_row and "6:14 AM PT" in live_row
+    assert "−0.37%" in live_row and "6:14 AM Vancouver time" in live_row
     assert "−0.37%" in markdown
     assert "[evidence](#interpretation-evidence-QQQ-intraday)" in markdown
     assert '<a id="interpretation-evidence-QQQ-intraday"></a>' in markdown
@@ -83,12 +83,12 @@ def test_carried_watch_citation_links_to_its_creation_time_snapshot():
     _, page = render(refreshed, interpretation=frozen)
 
     assert 'href="#watch-evidence-watch-from-premarket-QQQ-intraday">QQQ · Premarket vs prior close</a>' in page
-    assert '<b>+0.87%</b><small>5:58 AM PT</small>' in page
+    assert '<b>+0.87%</b><small>5:58 AM Vancouver time</small>' in page
     snapshot = page.split('id="watch-evidence-watch-from-premarket-QQQ-intraday"', 1)[1].split("</div>", 1)[0]
-    assert "+0.87%" in snapshot and "5:58 AM PT" in snapshot
+    assert "+0.87%" in snapshot and "5:58 AM Vancouver time" in snapshot
     assert "IEX latest trade versus previous regular close" in snapshot and "sample-prices" in snapshot
     live = page.split('id="evidence-QQQ-intraday"', 1)[1].split("</div>", 1)[0]
-    assert "−0.37%" in live and "6:14 AM PT" in live
+    assert "−0.37%" in live and "6:14 AM Vancouver time" in live
 
 
 def test_multiple_carried_watches_get_distinct_creation_time_evidence_destinations():
@@ -135,8 +135,8 @@ def test_multiple_carried_watches_get_distinct_creation_time_evidence_destinatio
     markdown, page = render(refreshed, interpretation=frozen)
 
     for watch_id, value, clock, source in (
-            ("watch-open", "+0.06%", "5:58 AM PT", "opening-prices"),
-            ("watch-midday", "+0.12%", "6:02 AM PT", "midday-prices")):
+            ("watch-open", "+0.06%", "5:58 AM Vancouver time", "opening-prices"),
+            ("watch-midday", "+0.12%", "6:02 AM Vancouver time", "midday-prices")):
         anchor = f"watch-evidence-{watch_id}-SPY-daily"
         assert f'href="#{anchor}">SPY · Daily return</a><b>{value}</b><small>{clock}</small>' in page
         assert f'id="{anchor}"' in page

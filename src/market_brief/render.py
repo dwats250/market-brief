@@ -55,9 +55,21 @@ from .curve import (
     rates,
     spread_rows,
 )
-from .evidence import ET, PLACEHOLDER, ROOT, USABLE, evidence_catalog, read_json, timestamp
+from .evidence import (
+    ET,
+    NEAR_CLOSE_WINDOW,
+    PLACEHOLDER,
+    ROOT,
+    SECTOR_ETFS,
+    USABLE,
+    evidence_catalog,
+    read_json,
+    timestamp,
+)
 from .metrics import rank_by_spread
-from .schedule import CHECKPOINT_KINDS, checkpoint_kind, next_checkpoint, session_relation
+from .schedule import CHECKPOINT_KINDS, VANCOUVER_LABEL, checkpoint_kind, next_checkpoint, session_relation
+from .state import divergence
+from .state import snapshot as market_snapshot
 
 PACIFIC = ZoneInfo("America/Vancouver")
 DISPLAY_STATUSES = {"LIVE", "LIVE COMMISSIONING", "LAST GOOD BRIEF", "SAMPLE"}
@@ -165,6 +177,8 @@ NOT_APPLICABLE = "—"
 # a short run of words with no figure and no sentence of its own qualifies; a cited value or an aside stays.
 TRAILING_TAG = re.compile(r"(?<=[.!?])\s*\([A-Za-z][A-Za-z '’&/-]{0,39}\)\s*$")
 NOT_COLLECTED = "not collected"
+# The normalizer's reason for a trade stamped after the regular-session close (`evidence.normalize_observation`).
+AFTER_HOURS_REASON = "after-hours trade, after the regular-session close"
 # Rows whose print is this far behind the table's shared clock carry their own clock.
 SHARED_CLOCK_TOLERANCE = timedelta(minutes=5)
 # The header's three clocks. The interpretation is named by the synthesis edition that wrote it.
@@ -267,11 +281,11 @@ def movement_rows(rows, session, anchored=(), stated=""):
             continue
         if family == "print":
             phases = [PHASE_WORDS.get(current_print_label(row, session), "") for row in (earlier, later)]
-            clocks = [pacific_time(row["observed_at"]).removesuffix(" PT") for row in (earlier, later)]
+            clocks = [pacific_time(row["observed_at"]).removesuffix(f" {VANCOUVER_LABEL}") for row in (earlier, later)]
             if phases[0] == phases[1]:
-                window = f"{phases[0]} · {clocks[0]} → {clocks[1]} PT".lstrip(" ·")
+                window = f"{phases[0]} · {clocks[0]} → {clocks[1]} {VANCOUVER_LABEL}".lstrip(" ·")
             else:
-                window = f"{phases[0]} {clocks[0]} → {phases[1]} {clocks[1]} PT"
+                window = f"{phases[0]} {clocks[0]} → {phases[1]} {clocks[1]} {VANCOUVER_LABEL}"
             measure = PRINT_MEASURE
         else:
             window = f"{compact_clock(earlier['observed_at'])} → {compact_clock(later['observed_at'])}"
@@ -327,7 +341,8 @@ def evidence_chart(history, prints=(), average=None, session_date=None, sessions
         share = zone[0] + (zone[1] - zone[0]) * (index + 0.5) / len(dots)
         labelled = len(dots) <= EVIDENCE_DOT_LABELS or index in (0, len(dots) - 1)
         marks.append(dict(x=x(share), y=y(row["value"]), direction=direction(row),
-                          label=pacific_time(row["observed_at"]).removesuffix(" PT") if labelled else ""))
+                          label=(pacific_time(row["observed_at"]).removesuffix(f" {VANCOUVER_LABEL}")
+                                 if labelled else "")))
     return dict(height=EVIDENCE_HEIGHT, label_y=EVIDENCE_LABEL_Y, zero_y=y(0),
                 reference_y=y(reference) if reference is not None else None,
                 path=dict(points=points, segments=segments), prior=points[-1],
@@ -341,7 +356,21 @@ def evidence_chart(history, prints=(), average=None, session_date=None, sessions
 def pacific_time(value, include_date=False):
     dt = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(PACIFIC)
     date_part = dt.strftime("%A, %b %-d · ") if include_date else ""
-    return f"{date_part}{dt.strftime('%-I:%M %p')} PT"
+    return f"{date_part}{dt.strftime('%-I:%M %p')} {VANCOUVER_LABEL}"
+
+
+def event_clock(event):
+    """An event's displayed clock. A calendar event reads in the page's Vancouver clock. An issuer-announced event keeps
+    the clock its source states (`2 p.m. PT (5 p.m. ET)`, where PT is US Pacific), never relabelled as the page's
+    Vancouver time; the Vancouver time is shown beside it under its own name, with the source's note and link."""
+    if not event.get("stated_time"):
+        return dict(scheduled_label=pacific_time(event["scheduled_at"], True), source_line="")
+    when = datetime.fromisoformat(event["scheduled_at"].replace("Z", "+00:00"))
+    day = when.astimezone(ET).strftime("%A, %b %-d")
+    local = when.astimezone(PACIFIC).strftime("%-I:%M %p")
+    announced = datetime.fromisoformat(event["announced_on"]).strftime("%b %-d") if event.get("announced_on") else ""
+    return dict(scheduled_label=f"{day} · {event['stated_time']}", local_label=f"{local} {VANCOUVER_LABEL}",
+                source_line=", ".join(filter(None, ("NVIDIA release", announced))))
 
 
 def short_date(value):
@@ -453,6 +482,10 @@ def reader_limitation(text):
     name, separator, reason = text.partition(": ")
     if separator and reason.startswith("not automated"):
         return f"{name}: {NOT_COLLECTED}"
+    if separator and reason == AFTER_HOURS_REASON:
+        # The packet keeps its reason and status; the reader is told plainly that no session value exists.
+        return (f"{name}: no regular-session print, so no session value is shown; its latest trade was after the "
+                "regular-session close (after-hours)")
     return text
 
 
@@ -507,8 +540,10 @@ def item_detail(row):
 
 
 def release_clock(row, session):
-    """A release value's official time: `5:30 AM PT` in the session that published it, dated in any other (a carried
-    Friday print on Monday's page never reads as this morning's)."""
+    """A release value's official time: `5:30 AM Vancouver time` in its session, dated in any other.
+
+    A carried Friday print on Monday's page never reads as this morning's.
+    """
     value = row.get("observed_at") or ""
     if "T" in value and timestamp(value).astimezone(ET).date().isoformat() != (session or {}).get("date"):
         return pacific_time(value, True)
@@ -516,7 +551,9 @@ def release_clock(row, session):
 
 
 def compact_clock(value):
-    """Reader-facing clock above the audit layer: `Thu, Sep 10` for a dated row, `1:02 PM PT` for a print."""
+    """Reader-facing clock above the audit layer: `Thu, Sep 10` for a dated row,
+    `1:02 PM Vancouver time` for a print.
+    """
     if not isinstance(value, str) or not value:
         return ""
     return pacific_time(value) if "T" in value else short_date(value)
@@ -628,6 +665,42 @@ def compact_equity_rows(rows, symbols, allow_daily_today=True):
                            average=cell(average, bare=True), dma=cell(distance),
                            current_is_intraday=bool(current)))
     return result
+
+
+def table_notes(rows, change_label, packet, session):
+    """Plain notes under one instrument table that separate what its cells are: last trades before the close (never
+    official closing prices), symbols whose only trades were after the close, and history columns that lag a session.
+    Empty when there is nothing to distinguish."""
+    notes = []
+    # The exchange's own clock: unambiguous, never the page's Vancouver time with a PT suffix.
+    close = (timestamp(session["close"]).astimezone(ET).strftime("%-I:%M %p ET regular-session")
+             if session.get("close") else "regular-session")
+    printed = [row["intraday"] for row in rows if row["intraday"]["id"]]
+    try:
+        bell = timestamp(session["close"])
+        final = [cell for cell in printed if bell - NEAR_CLOSE_WINDOW <= timestamp(cell["observed_at"]) <= bell]
+    except (KeyError, TypeError, ValueError):
+        final = []
+    if final and len(final) == len(printed):
+        # The last trades before the bell, at their own clocks: never official closing prices.
+        provisional = (" Collected well after the close, so provisional." if
+                       all(cell["status"] == "PROVISIONAL" for cell in final) else "")
+        notes.append(f"Each Change is the last trade seen before the {close} close, not an official closing "
+                     f"price.{provisional}")
+    symbols = {row["symbol"] for row in rows if not row["intraday"]["id"]}
+    after_hours = sorted({r["topic"] for r in packet["observations"]
+                          if r.get("frequency") == "intraday" and r["topic"] in symbols
+                          and r["status"] == "UNAVAILABLE" and (r.get("reason") or "").startswith("after-hours trade")})
+    if after_hours:
+        names = ", ".join(after_hours)
+        notes.append(f"No print for {names}: the latest trade came after the {close} close, and after-hours trades "
+                     "never stand for the session.")
+    lag = packet.get("history_lag")
+    if lag and rows:
+        notes.append(f"The 20-session and 50DMA columns use daily history through "
+                     f"{short_date(lag['history_through'])}; the {short_date(lag['completed_session'])} daily bar is "
+                     "not published yet.")
+    return notes
 
 
 def change_column(rows, allow_daily_today=True, session=None):
@@ -938,7 +1011,7 @@ def release_cards(rows, events, sources=(), unpublished=()):
 
 
 def next_update(info, session_date):
-    """The scheduler's next checkpoint in reader words, its PT display time, and its absolute scheduled time."""
+    """The scheduler's next checkpoint in reader words, its Vancouver display time, and its absolute scheduled time."""
     clock = pacific_time(info["scheduled_at"])
     if info["session_date"] != session_date:
         when, kind = f"{short_date(info['session_date'])} · {clock}", "premarket analysis"
@@ -948,15 +1021,15 @@ def next_update(info, session_date):
 
 
 def next_update_label(info, session_date):
-    """`11:00 AM PT · price refresh`, `7:00 AM PT · analysis update`, `1:01 PM PT · close snapshot`, or
-    `Mon, Sep 28 · 6:00 AM PT · premarket analysis`."""
+    """`8:00 AM Vancouver time · price refresh`, `7:00 AM Vancouver time · analysis update`,
+    `1:01 PM Vancouver time · close snapshot`, or `Mon, Sep 28 · 6:00 AM Vancouver time · premarket analysis`."""
     return next_update(info, session_date)["text"]
 
 
 def since_caption(anchors, unpublished=()):
     """`vs the previous close · Fri, Sep 11` or `vs premarket and the 7:00 AM update`. An anchor that was collected
-    but never published reads `the unpublished 6:32 AM PT refresh`: readers never saw it, though it is still what
-    the comparison was made against."""
+    but never published reads `the unpublished 6:32 AM Vancouver time refresh`: readers never saw it, though it is
+    still what the comparison was made against."""
     if "previous_close" in anchors:
         return f"vs the previous close · {short_date(anchors['previous_close']['session_date'])}"
     parts = []
@@ -968,6 +1041,62 @@ def since_caption(anchors, unpublished=()):
             noun = "refresh" if CHECKPOINT_KINDS.get(anchor.get("checkpoint")) == "refresh" else "update"
             parts.append(f"the {hidden}{pacific_time(anchor['evidence_cutoff'])} {noun}")
     return "vs " + " and ".join(parts) if parts else None
+
+
+def state_notice(interpretation, packet, carried, refs, catalog):
+    """The compact "since the analysis" notice (`state.divergence`) for a page that carries an earlier analysis, or
+    None. Deterministic fact on the inset surface: both clocks, the measures at each, and the rows behind them; the
+    analysis above it is never edited."""
+    if not carried:
+        return None
+    result = divergence(interpretation.get("market_state"), market_snapshot(packet))
+    if result["status"] != "shown":
+        return None
+    before, after, side = result["before"], result["after"], result["side"]
+    word = result["direction"]
+
+    def pct(value):
+        return formatted(dict(value=value, unit="%"))
+
+    measures = [dict(label=f"Sector ETFs {word}", earlier=f"{before[side]} of {before['n']}",
+                     later=f"{after[side]} of {after['n']}"),
+                dict(label="Median sector ETF", earlier=pct(before["median"]), later=pct(after["median"])),
+                dict(label="SPY", earlier=pct(before["spy"]), later=pct(after["spy"]))]
+    opening_rows, current_rows = result["opening_rows"], result["current_rows"]
+    for symbol in ("QQQ",):
+        if symbol in opening_rows and symbol in current_rows:
+            measures.append(dict(label=symbol, earlier=pct(opening_rows[symbol]["value"]),
+                                 later=pct(current_rows[symbol]["value"])))
+    sentence = (f"Sector ETFs have reversed {word} since the analysis above was written." if
+                result["kind"] == "reversal" else
+                f"Sector ETFs have moved broadly {word} since the analysis above was written.")
+    order = sorted(set(opening_rows) | set(current_rows), key=lambda t: (t != "SPY", t != "QQQ", t))
+    # The analysis's prints have their own ledger rows (`ledger` below) under `analysis-state-<id>`, a namespace no
+    # current (`evidence-<id>`) or frozen-citation (`interpretation-evidence-<id>`) anchor uses, so a link to SPY at
+    # the analysis's clock never lands on this run's SPY row.
+    opening = [opening_rows[t] for t in order if t in opening_rows]
+    earlier = [dict(r, anchor=True, anchor_id=f"analysis-state-{r['id']}") for r in
+               refs([row["id"] for row in opening], {row["id"]: row for row in opening}, False)]
+    later = refs([current_rows[t]["id"] for t in order if t in current_rows], catalog, False)
+    session = packet["run"]["session"]
+    names = {source["id"]: source["name"] for source in packet["sources"]}
+    ledger = [dict(id=row["id"], anchor_id=f"analysis-state-{row['id']}",
+                   label=f"{instrument_label(row['topic'])} · {reader_metric_label(row, session)}",
+                   display=formatted(row), when=compact_clock(row["observed_at"]), observed_at=row["observed_at"],
+                   baseline=row.get("baseline") or "", source_id=row.get("source_id") or "source not preserved",
+                   source_name=names.get(row.get("source_id"), row.get("source_id") or "source not preserved"))
+              for row in opening]
+    return dict(caption="Since the analysis",
+                window=(f"{pacific_time(before['last'].isoformat())} → {pacific_time(after['last'].isoformat())}"
+                        f" · vs prior close {short_date(before['prior_close'])}"),
+                sentence=sentence + " The analysis is unchanged; these later prints are not part of it.",
+                measures=measures,
+                note=(f"Counts are of the {before['n']} sector ETFs held at both clocks"
+                      + (f" (of {len(SECTOR_ETFS)})" if before["n"] < len(SECTOR_ETFS) else "")
+                      + ", not S&P 500 breadth. Each row keeps its own clock."),
+                refs=[*earlier, *later], current_ids=[row["id"] for row in later],
+                opening_ids=[row["id"] for row in opening], ledger=ledger,
+                opening_clock=pacific_time(before["last"].isoformat()), kind=result["kind"], direction=word)
 
 
 def presentation(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None,
@@ -1103,6 +1232,9 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     sector_change, sector_asof = change_column(sector_rows, daily_today, session)
     metal_rows = compact_equity_rows(facts, METALS, daily_today)
     metal_change, metal_asof = change_column(metal_rows, daily_today, session)
+    mega_notes = table_notes(mega_rows, mega_change, packet, session)
+    sector_notes = table_notes(sector_rows, sector_change, packet, session)
+    metal_notes = table_notes(metal_rows, metal_change, packet, session)
     module = rates_module(packet, treasuries, catalog)
     metal_pairs = [f"{row['symbol']} vs {row['relative_label']}" for row in metal_rows if row["relative"]["id"]]
     yields = module["yields"]
@@ -1192,11 +1324,12 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     happened = {ident for card in cards for ident in card["events"]}
     # An event whose scheduled time has passed without admitted values (Real Earnings; a release the collector
     # does not read) is no longer ahead: report only that the scheduled time passed and values were not collected.
-    events = [{**event, "scheduled_label": pacific_time(event["scheduled_at"], True),
+    events = [{**event, **event_clock(event),
                "relation_label": event.get("session_relation", "").lower(), "refs": refs([event["id"]], catalog),
                # A time that has passed proves nothing about publication: only an admitted page (a card above) says
-               # a release happened, so this says what is known.
-               "passed": (f"scheduled time passed · values {NOT_COLLECTED}"
+               # a release happened, so this says what is known. An announced call collects no values of its own.
+               "passed": (("scheduled time passed" if event.get("stated_time")
+                           else f"scheduled time passed · values {NOT_COLLECTED}")
                           if event.get("scheduled_at") and timestamp(event["scheduled_at"]) <= target else "")}
               for event in packet["events"] if event["id"] not in happened][:4]
 
@@ -1356,7 +1489,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         failed = EDITION_WORDS.get(degraded["checkpoint"], "analysis")
         kept = EDITION_WORDS.get(interpreted.get("checkpoint"), "earlier")
         due = timestamp(degraded["scheduled_at"])
-        clock = (f"{due.astimezone(ET):%-I:%M %p} ET ({due.astimezone(PACIFIC):%-I:%M %p} PT)")
+        clock = (f"{due.astimezone(ET):%-I:%M %p} ET ({due.astimezone(PACIFIC):%-I:%M %p} {VANCOUVER_LABEL})")
         truth = (f"The {failed} analysis due {clock} was not accepted, so no new analysis was published; the "
                  f"{kept} analysis stands and the prices are this update's.")
     source_names = {s["id"]: s["name"] for s in packet["sources"]}
@@ -1457,6 +1590,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         character_ids=narrative["character"]["evidence_ids"],
         character_refs=refs(narrative["character"]["evidence_ids"]),
         summary=[paragraph(p) for p in narrative["summary"]], take=take, rates_lead=rates_lead,
+        shift=state_notice(interpretation, packet, carried, refs, catalog),
         evidence_charts=charts_for,
         since=dict(heading="What changed", label=since_label, entries=since_entries, note=since_note,
                    status=prior.get("status", "cold_start")),
@@ -1465,6 +1599,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                   paragraphs=[paragraph(p) for key in ("attention", "events") for p in narrative["sections"][key]]),
         equities=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["equities"]],
                       rows=mega_rows, change_label=mega_change, asof=mega_asof, proof=proof(mega_rows),
+                      notes=mega_notes,
                       spread_label="20-session return spread vs QQQ",
                       lookback={s: v for s, v in packet.get("lookback", {}).items() if v["r20"] != "available"}),
         macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]], releases=cards,
@@ -1473,8 +1608,10 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                    yields_proof=refs(module["proof_ids"], catalog),
                    facts_proof=refs([row["id"] for row in other_macro], catalog)),
         sectors=dict(rows=sector_rows, change_label=sector_change, asof=sector_asof, proof=proof(sector_rows),
+                     notes=sector_notes,
                      spread_label="20-session return spread vs SPY, strongest to weakest"),
         cross_asset=dict(rows=metal_rows, change_label=metal_change, asof=metal_asof, proof=proof(metal_rows),
+                         notes=metal_notes,
                          spread_label=("20-session return spread, " + ", ".join(metal_pairs)) if metal_pairs else ""),
         guide=dict(move=(dict(label=module["curve"]["move"]["label"], text=module["curve"]["move"]["sentence"])
                          if module["curve"] and module["curve"]["move"] and not module["curve"]["move"]["unavailable"]
@@ -1529,6 +1666,13 @@ def markdown(view):
         move = f" · {lead_rates['move']}" if lead_rates["move"] else ""
         lines += [f"**RATES** · {esc(lead_rates['caption'])} · {tenors}" + (f" · {spreads}" if spreads else "") + move
                   + (f" · {esc(lead_rates['note'])}" if lead_rates["note"] else ""), ""]
+    shift = view["shift"]
+    if shift:
+        measures = " · ".join(f"{m['label']} {m['earlier']} → {m['later']}" for m in shift["measures"])
+        lines += [f"**{shift['caption'].upper()}** · {esc(shift['window'])} · {esc(shift['sentence'])} {measures}. "
+                  f"{esc(shift['note'])}",
+                  "At the analysis: " + " · ".join(f"[{esc(i)}](#analysis-state-{i})" for i in shift["opening_ids"])
+                  + ". Now: " + " · ".join(f"[{esc(i)}](#evidence-{i})" for i in shift["current_ids"]) + ".", ""]
     since = view["since"]
     if since["entries"] or since["note"]:
         lines += [f"## {since['heading']}" + (f" · {esc(since['label'])}" if since["label"] else ""), ""]
@@ -1580,6 +1724,9 @@ def markdown(view):
         passed = f" · {esc(e['passed'])}" if e["passed"] else ""
         lines.append(f"- **Event** — {esc(e['title'])} · {esc(e['scheduled_label'])} · {esc(e['relation_label'])}"
                      f"{passed} {refs([e['id']])}")
+        if e["source_line"]:
+            note = f" {esc(e['note'])}" if e.get("note") else ""
+            lines.append(f"  {esc(e['local_label'])}.{note} Source: [{esc(e['source_line'])}]({e['url']})")
     lines.append("")
     mac = view["macro"]
     cross = view["cross_asset"]
@@ -1645,7 +1792,7 @@ def markdown(view):
                           else row["relative"]["display"])
                 lines.append(f"| {esc(row['label'])} ({row['symbol']}) | {row['today']['display']} | "
                              f"{row['r20']['display']} | {spread} | {row['dma']['display']} |")
-            lines += ["", LEDGER_NOTE, ""]
+            lines += ["", *(text for note in cross["notes"] for text in (esc(note), "")), LEDGER_NOTE, ""]
     sec = view["sectors"]
     if sec["rows"]:
         asof = f" · {esc(sec['asof'])}" if sec["asof"] else ""
@@ -1655,7 +1802,7 @@ def markdown(view):
         for row in sec["rows"]:
             lines.append(f"| {esc(row['label'])} ({row['symbol']}) | {row['relative']['display']} | "
                          f"{row['r20']['display']} | {row['today']['display']} | {row['dma']['display']} |")
-        lines += ["", LEDGER_NOTE, ""]
+        lines += ["", *(text for note in sec["notes"] for text in (esc(note), "")), LEDGER_NOTE, ""]
     eq = view["equities"]
     if eq["paragraphs"] or eq["rows"]:
         lines += ["## Equity structure", ""]
@@ -1669,7 +1816,7 @@ def markdown(view):
             for row in eq["rows"]:
                 lines.append(f"| {row['symbol']} | {row['today']['display']} | {row['r20']['display']} | "
                              f"{row['relative']['display']} | {row['dma']['display']} |")
-            lines += ["", LEDGER_NOTE, ""]
+            lines += ["", *(text for note in eq["notes"] for text in (esc(note), "")), LEDGER_NOTE, ""]
         for symbol, state in eq["lookback"].items():
             lines.append(f"{esc(symbol)} 20-session return unavailable: {state['sessions']} sessions of history")
         if eq["lookback"]:
@@ -1707,6 +1854,12 @@ def markdown(view):
                           f"{esc(row['display'])} · {esc(row.get('baseline', 'published / scheduled item'))} "
                           f"· observed/published {when} · source {source}"
                           + (f" · [release](<{row['url']}>)" if row.get("url") else ""), ""]
+    if view["shift"]:
+        lines += [f"**Prints at analysis · {esc(view['shift']['opening_clock'])} · since-the-analysis check**", ""]
+        for row in view["shift"]["ledger"]:
+            lines += [f'<a id="{row["anchor_id"]}"></a>',
+                      f"**{esc(row['id'])}** · {esc(row['label'])} · {esc(row['display'])} · {esc(row['baseline'])} "
+                      f"· observed {esc(row['observed_at'])} · source {esc(row['source_id'])}", ""]
     for group in view["evidence_groups"]:
         lines += [f"**{esc(group['topic'])}**", ""]
         for row in group["rows"]:

@@ -89,14 +89,44 @@ def test_checkpoints_are_anchored_to_the_exchange_session_in_both_seasons():
               for c in ("PREMARKET", "OPEN_1M", "OPEN_30M")}
     winter = {c: utc(checkpoint_session(utc("2027-01-12T12:00:00+00:00"), c)["scheduled_at"])
               for c in ("PREMARKET", "OPEN_1M", "OPEN_30M")}
-    assert [pacific_time(t.isoformat()) for t in summer.values()] == ["6:00 AM PT", "6:31 AM PT", "7:00 AM PT"]
+    assert [pacific_time(t.isoformat()) for t in summer.values()] == [
+        "6:00 AM Vancouver time", "6:31 AM Vancouver time", "7:00 AM Vancouver time"]
     # In winter the exchange time is one UTC hour later; what that reads in Pacific time depends on
     # whether British Columbia still follows New York's fall-back (tzdata 2026b says it does not).
     assert [(w.hour - s.hour, w.minute - s.minute) for w, s in zip(winter.values(), summer.values())] == [(1, 0)] * 3
     displayed = [pacific_time(t.isoformat()) for t in winter.values()]
-    assert displayed == [t.astimezone(VANCOUVER).strftime("%-I:%M %p") + " PT" for t in winter.values()]
+    assert displayed == [t.astimezone(VANCOUVER).strftime("%-I:%M %p") + " Vancouver time" for t in winter.values()]
     if winter["OPEN_30M"].astimezone(VANCOUVER).utcoffset() == timedelta(hours=-7):
-        assert displayed == ["7:00 AM PT", "7:31 AM PT", "8:00 AM PT"]
+        assert displayed == ["7:00 AM Vancouver time", "7:31 AM Vancouver time", "8:00 AM Vancouver time"]
+
+
+def test_reader_clocks_say_vancouver_time_in_summer_and_winter_and_the_instants_do_not_move():
+    """Display only: one label for every clock converted through America/Vancouver, in PDT (UTC−7) and PST (UTC−8),
+    while the scheduled UTC instants, the scheduler's resolution and the stored local ISO time are unchanged."""
+    from market_brief.continuity import resolve_horizon
+    from market_brief.render import next_update_label, pacific_time
+    from market_brief.schedule import VANCOUVER_LABEL
+    assert VANCOUVER_LABEL == "Vancouver time"
+    assert pacific_time("2026-07-06T13:00:00+00:00", include_date=True) == (
+        "Monday, Jul 6 · 6:00 AM Vancouver time")
+    # Summer 2026 (New York EDT, Vancouver PDT) and winter 2026 (EST, PST): the same exchange offsets, different UTC.
+    for now, premarket, synthesis, local in (
+            ("2026-07-06T12:00:00+00:00", "2026-07-06T13:00:00+00:00", "2026-07-06T14:00:00+00:00", "-07:00"),
+            ("2026-01-12T12:00:00+00:00", "2026-01-12T14:00:00+00:00", "2026-01-12T15:00:00+00:00", "-08:00")):
+        info = checkpoint_session(utc(now), "PREMARKET")
+        assert info["scheduled_at"] == premarket
+        assert info["scheduled_local"] == f"{now[:10]}T06:00:00{local}"
+        assert scheduled_checkpoint(utc(premarket)) == "PREMARKET"
+        assert pacific_time(premarket) == "6:00 AM Vancouver time"
+        assert pacific_time(premarket, True).endswith(" · 6:00 AM Vancouver time")
+        opening = checkpoint_session(utc(now), "OPEN_30M")
+        assert opening["scheduled_at"] == synthesis
+        assert next_update_label(opening, now[:10]) == "7:00 AM Vancouver time · analysis update"
+        horizon = resolve_horizon("NEXT_BRIEF", utc(premarket), current_checkpoint="PREMARKET")
+        assert horizon["phrase"] == "By the 7:00 AM Vancouver time update" and horizon["expires_at"] == synthesis
+    # After British Columbia kept UTC−7 year-round (Nov 16, 2026: New York EST), 15:01 UTC reads 8:01 AM.
+    assert pacific_time("2026-11-16T15:01:00+00:00") == "8:01 AM Vancouver time"
+    assert " PT" not in pacific_time("2026-11-16T15:01:00+00:00", True)
 
 
 def test_every_session_keeps_the_opening_checkpoints_after_the_open_and_refreshes_inside_it():

@@ -68,7 +68,8 @@ MISMATCH = "take text and evidence must be both present or both empty"
 # lead, and section tabs, with a finer rule and no document structure changes.
 # WP-RATES-02 approves neutral direction arrows, stacked direction labels and stronger bp typography.
 # Keep the whole stylesheet fingerprint so unrelated CSS changes still require explicit review.
-STYLE_SHA256 = "4f133079d31cbf5fdbf07e2c184512150029020df1d186390f67d554f4521181"
+# WP-MB-STATE-01 adds the .shift rules for the "Since the analysis" check (inset surface, rates-lead metrics).
+STYLE_SHA256 = "5da00a068cd3695d5e59d96296759f0af832b55303641585b7dbacd998dc7b16"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):
@@ -519,7 +520,7 @@ def test_a_carried_take_keeps_the_values_and_clock_its_analyst_saw(monkeypatch, 
         marker = re.search(
             r'href="#interpretation-evidence-SPY-intraday">([^<]*)</a><b>([^<]*)</b>'
             r'<small>([^<]*)</small>', line)
-        assert marker.groups() == ("SPY · Intraday vs prior close", "−0.53%", "7:01 AM PT")
+        assert marker.groups() == ("SPY · Intraday vs prior close", "−0.53%", "7:01 AM Vancouver time")
     ledger = refresh.split('id="evidence-SPY-intraday"', 1)[1].split("</div>", 1)[0]
     assert '<span class="value">+0.80%</span>' in ledger
     assert interpretation_fragments(refresh) == interpretation_fragments(structure)
@@ -541,7 +542,7 @@ def test_a_legacy_v1_interpretation_frozen_before_the_upgrade_still_refreshes(mo
     assert day.run(f"{TUE}T13:31:00+00:00", "OPEN_1M") == 0
     assert day.calls == ["PREMARKET"]
     page = day.page("OPEN_1M")
-    assert "The take" not in page and "<dt>Analysis</dt><dd>6:00 AM PT · premarket</dd>" in page
+    assert "The take" not in page and "<dt>Analysis</dt><dd>6:00 AM Vancouver time · premarket</dd>" in page
     assert day.metadata("OPEN_1M")["validation"] == "PASS"
     # Continuity is not migrated: the frozen record stays exactly as it was written.
     assert day.bundle()["interpretation"] == bundle["interpretation"]

@@ -11,9 +11,10 @@ no surprise, no price reaction, no article body.
 
 import hashlib
 import re
-from datetime import date, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
+from zoneinfo import ZoneInfo
 
 from .evidence import CONTEXT_WINDOW, ET
 
@@ -21,7 +22,12 @@ NVIDIA_IR = "https://nvidianews.nvidia.com/cats/press_release.xml"
 SOURCE_ID = "nvidia-ir"
 SOURCE_NAME = "NVIDIA official press releases"
 ATTRIBUTION = "NVIDIA statement"
-ARTICLE = re.compile(r"https://nvidianews\.nvidia\.com/news/[a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?")
+# One release page: HTTPS, this exact host, `/news/` and one lowercase slug of letters, digits and inner hyphens;
+# nothing else (no query, fragment, credentials, port, second path segment or other host). The slug bound is finite
+# and set by the longest valid release seen: the 2026-11 IBM/Fermi release's slug is 201 characters (the old bound
+# was 200).
+SLUG_LIMIT = 201
+ARTICLE = re.compile(r"https://nvidianews\.nvidia\.com/news/[a-z0-9](?:[a-z0-9-]{0,%d}[a-z0-9])?" % (SLUG_LIMIT - 2))
 ITEM_LIMIT = 4
 TITLE_LIMIT = 200
 SUMMARY_LIMIT = 300
@@ -38,6 +44,30 @@ TABLE_CAPTION = "($ in millions, except earnings per share)"
 FIGURES = {"Revenue": ("revenue", "revenue", "USD millions", re.compile(r"\$(\d{1,3}(?:,\d{3})+|\d{1,3})")),
            "Diluted earnings per share": ("diluted-eps", "diluted EPS", "USD per share",
                                           re.compile(r"(\()?\$(\d{1,3}\.\d{2})(?(1)\))"))}
+# A results-schedule notice (`NVIDIA Sets Conference Call for Third-Quarter Financial Results`) and the one sentence
+# that schedules the call. NVIDIA's "PT" is US Pacific (Los Angeles), not the page's British Columbia clock; the
+# Eastern time it states must name the same instant, or the notice is not read.
+CALL_TITLE = re.compile(r"NVIDIA Sets Conference Call for (First|Second|Third|Fourth)-Quarter Financial Results")
+CALL = re.compile(r"NVIDIA will host a conference call on (Monday|Tuesday|Wednesday|Thursday|Friday), "
+                  r"(January|February|March|April|May|June|July|August|September|October|November|December) "
+                  r"(\d{1,2}), at (\d{1,2})(?::(\d{2}))? ([ap])\.m\. PT \((\d{1,2})(?::(\d{2}))? ([ap])\.m\. ET\) "
+                  r"to discuss its financial results for the (first|second|third|fourth) quarter of fiscal year "
+                  r"(\d{4})")
+# The body's results timing, read only when it is stated exactly once; the time is NVIDIA's own approximation and
+# stays one ("approximately"), never an exact publication time.
+RESULTS_AT = re.compile(r"results are publicly announced at approximately (\d{1,2}):(\d{2}) ([ap])\.m\. PT")
+# The CFO commentary's timing is stated only when the source itself ties it to the announcement: the commentary
+# sentence, then (within one short following span, nothing guessed across the body) a statement that it is posted
+# "immediately after the company's results are publicly announced". Anything else omits the relationship.
+CFO_TIMING = re.compile(r"NVIDIA will provide written commentary on its (first|second|third|fourth)-quarter results"
+                        r".{0,240}?\bposted\b.{0,160}?immediately after the company's results are publicly announced "
+                        r"at approximately (\d{1,2}):(\d{2}) ([ap])\.m\. PT")
+US_PACIFIC = ZoneInfo("America/Los_Angeles")
+MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+               "November", "December")
+DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+# A notice schedules a call weeks ahead, never months: anything further out is not read as this notice.
+CALL_HORIZON = timedelta(days=120)
 REQUIRED = {("GAAP", "Revenue"), ("GAAP", "Diluted earnings per share"), ("non-GAAP", "Diluted earnings per share")}
 
 
@@ -278,3 +308,106 @@ def nvidia_releases(root, now, retrieved):
             periods.add(figures[0]["fiscal_period"])
             rows += figures
     return items, rows, notes
+
+
+def clock(hour, minute, half):
+    hour = int(hour)
+    if not 1 <= hour <= 12 or minute is not None and not 0 <= int(minute) <= 59:
+        raise IssuerError("conference call time does not exist")
+    return hour % 12 + (12 if half == "p" else 0), int(minute or 0)
+
+
+def spoken(hour, minute):
+    """`14, 0` → `2 p.m.`, `13, 20` → `1:20 p.m.`: the release's own style."""
+    half = "p.m." if hour >= 12 else "a.m."
+    text = str(hour % 12 or 12) + (f":{minute:02d}" if minute else "")
+    return f"{text} {half}"
+
+
+def conference_call(entry, title, published):
+    """One scheduled results call from its notice: `(event fields, note)`; raises IssuerError when the notice does not
+    read unambiguously. The day, the US Pacific and Eastern clocks, the quarter (title and sentence) must all agree."""
+    match = CALL_TITLE.fullmatch(title)
+    sentence = CALL.search(" ".join((entry.findtext("description") or "").split()))
+    if not sentence:
+        raise IssuerError("conference call notice does not state its day, time and quarter")
+    weekday, month, day, ph, pm, phalf, eh, em, ehalf, quarter, year = sentence.groups()
+    if quarter.capitalize() != match[1]:
+        raise IssuerError("conference call notice names two quarters")
+    hour, minute = clock(ph, pm, phalf)
+    eastern = clock(eh, em, ehalf)
+    announced = published.astimezone(US_PACIFIC).date() if isinstance(published, datetime) else published
+    when = None
+    # The sentence names no year: the call is the first such day on or after the notice.
+    for candidate in (announced.year, announced.year + 1):
+        try:
+            day_ = date(candidate, MONTH_NAMES.index(month) + 1, int(day))
+        except ValueError:
+            continue
+        if day_ >= announced:
+            when = datetime(day_.year, day_.month, day_.day, hour, minute, tzinfo=US_PACIFIC)
+            break
+    if when is None:
+        raise IssuerError("conference call day does not exist")
+    if when.weekday() >= 5 or DAY_NAMES[when.weekday()] != weekday:
+        raise IssuerError("conference call day and weekday disagree")
+    if (when.astimezone(ET).hour, when.astimezone(ET).minute) != eastern:
+        raise IssuerError("conference call Pacific and Eastern times disagree")
+    if when.date() - announced > CALL_HORIZON:
+        raise IssuerError("conference call is too far from its notice")
+    fiscal_quarter = QUARTERS[match[1]]
+    # The source's own clock, as it states it: never relabelled as the page's Vancouver time.
+    stated = f"{spoken(hour, minute)} PT ({spoken(*eastern)} ET)"
+    note = ""
+    try:
+        body = text_of(release_body(entry))
+    except IssuerError:
+        body = ""
+    timing, commentary = RESULTS_AT.findall(body), CFO_TIMING.findall(body)
+    if len(timing) == 1:
+        rh, rm = clock(*timing[0])
+        tied = (len(commentary) == 1 and commentary[0][0].capitalize() == match[1]
+                and commentary[0][1:] == timing[0])
+        note = (f"NVIDIA says results are publicly announced at approximately {spoken(rh, rm)} PT"
+                + (", with written CFO commentary posted immediately after" if tied else "")
+                + "; no exact publication time is given.")
+    else:
+        note = "The results time is not read from this feed entry."
+    fields = dict(id=f"{SOURCE_ID}-call-fy{year}-q{fiscal_quarter}",
+                  title=f"NVIDIA {match[1].lower()}-quarter fiscal {year} results conference call",
+                  scheduled_at=when.astimezone(timezone.utc).isoformat(), stated_time=stated)
+    return fields, note
+
+
+def conference_calls(root, now, retrieved):
+    """Upcoming results calls the feed's own notices schedule, as calendar events: `(events, notes)`. Only a notice
+    with this feed's exact release URL, a valid publication and an unambiguous call sentence counts; a notice that does
+    not read is named, never guessed. A call whose scheduled time has passed is not upcoming and is left out quietly.
+    Events carry the notice's URL, NVIDIA's stated clock and a short note on the results timing; no results,
+    consensus or exact publication time."""
+    events, notes, seen = [], [], set()
+    today = now.astimezone(ET).date()
+    for entry in root.findall("./channel/item"):
+        title = " ".join((entry.findtext("title") or "").split())
+        if not CALL_TITLE.fullmatch(title):
+            continue
+        url = (entry.findtext("link") or "").strip()
+        try:
+            if not ARTICLE.fullmatch(url):
+                raise IssuerError("entry link is not an NVIDIA newsroom release URL")
+            precision, published = publication(entry.findtext("pubDate"))
+            if precision == "at" and published > now or precision == "on" and published > today:
+                continue  # named by `releases` when it is recent; a future notice is never read early
+            fields, note = conference_call(entry, title, published)
+        except IssuerError as exc:
+            notes.append(f"{title}: {exc}")
+            continue
+        # Upcoming only: once the scheduled call time has passed, the call is no longer listed.
+        if datetime.fromisoformat(fields["scheduled_at"]) <= now or fields["id"] in seen:
+            continue
+        seen.add(fields["id"])
+        events.append(dict(fields, source_id=SOURCE_ID, published_at=None, checked_at=retrieved.isoformat(),
+                           status="SCHEDULED", url=url, note=note,
+                           announced_on=(published.astimezone(US_PACIFIC).date() if precision == "at"
+                                         else published).isoformat()))
+    return events, notes

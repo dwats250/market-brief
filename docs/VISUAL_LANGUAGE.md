@@ -35,7 +35,7 @@ something a person cared about, never as a dashboard, a terminal, a card grid or
 | Plane | Holds | Its one signature |
 |---|---|---|
 | Narrative | Headline, dek, paragraphs, the take, What changed, flags, events | None: ink on paper |
-| Evidence | Tables, the curve module, the release card, opened `§` evidence (its rows and, when useful, its chart), the before → after lines under a verdict, the one-line rates takeaway after the take | Caps caption and tabular figures; compact objects on the inset surface |
+| Evidence | Tables, the curve module, the release card, opened `§` evidence (its rows and, when useful, its chart), the before → after lines under a verdict, the one-line rates takeaway after the take, the "Since the analysis" check on a carried page | Caps caption and tabular figures; compact objects on the inset surface |
 | Watch | Open and carried watches | The teal gutter rule, grey once the horizon has passed |
 | Audit | The guide, Sources & coverage, the footer | Small muted type behind a disclosure; Coverage limitations open when there are any |
 
@@ -50,7 +50,7 @@ An object earns `--surface` only when all three hold:
 2. it is self-contained, with its own label and time;
 3. it is compact, no taller than about half a phone screen.
 
-Today: the economic-release card, the rates summary after the take, the before → after movement group under a verdict, opened `§` evidence and proof lines, and a targeted ledger row. An opened `§` inside the movement group shows its rows on that same surface, never a second one.
+Today: the economic-release card, the rates summary after the take, the "Since the analysis" check (a carried page whose live prints moved materially since its analysis: caption with both clocks, one sentence, the measures as `then → now`, a `§` with both clocks' rows), the before → after movement group under a verdict, opened `§` evidence and proof lines, and a targeted ledger row. An opened `§` inside the movement group shows its rows on that same surface, never a second one.
 
 The tint has 6px corners, no border and no shadow. Like the sample/replay notice, it sits on the column edge
 with its text inset by one `--hang` of padding, at most the 560px data width; it never bleeds into the gutter,

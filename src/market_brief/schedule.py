@@ -17,6 +17,9 @@ from zoneinfo import ZoneInfo
 import exchange_calendars as xcals
 
 VANCOUVER = ZoneInfo("America/Vancouver")
+# The reader's name for a clock converted through VANCOUVER. Display only: no schedule or stored time uses it, and an
+# issuer's own stated clock (`2 p.m. PT`, US Pacific) keeps the source's words.
+VANCOUVER_LABEL = "Vancouver time"
 ET = ZoneInfo("America/New_York")
 CHECKPOINTS = ("PREMARKET", "OPEN_1M", "OPEN_30M", "HOURLY_1100", "HOURLY_1200", "HOURLY_1300",
                "HOURLY_1400", "HOURLY_1500", "CLOSE_1M")

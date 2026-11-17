@@ -27,7 +27,7 @@ from .actuals import (
 )
 from .evidence import ET as EASTERN
 from .evidence import ROOT, read_json, timestamp
-from .issuer import NVIDIA_IR, IssuerError, nvidia_releases
+from .issuer import NVIDIA_IR, IssuerError, conference_calls, nvidia_releases
 from .issuer import SOURCE_NAME as NVIDIA_NAME
 from .schedule import next_session_date, prior_session_date
 from .stats_can import SCHEDULE as STATCAN_SCHEDULE
@@ -956,9 +956,14 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
         body = fetcher(NVIDIA_IR, deadline)
         retrieved = datetime.now(timezone.utc)
         issuer["retrieved_at"] = retrieved.isoformat()
-        items, rows, notes = nvidia_releases(xml_root(body), now, retrieved)
+        root = xml_root(body)
+        items, rows, notes = nvidia_releases(root, now, retrieved)
+        # The feed's own results-schedule notice, read for the upcoming call's day and NVIDIA's stated clock only.
+        events, call_notes = conference_calls(root, now, retrieved)
+        notes += call_notes
         raw["context_items"].extend(items)
         raw["observations"].extend(rows)
+        raw["events"].extend(events)
         if notes:
             # Left-out entries and unread figures are named; the admitted releases still stand.
             issuer.update(status="DEGRADED", reason="; ".join(notes)[:600])

@@ -237,7 +237,11 @@ def summary_table(tables, basis, column):
         raise IssuerError(f"release does not hold exactly one {heading} summary table")
     table = found[0]
     if len(table) < 3 or table[1][:2] != [TABLE_CAPTION, column]:
-        raise IssuerError(f"{heading} summary table does not state {column} in {TABLE_CAPTION}")
+        # Name what the header actually held (bounded): the release body is not retained, so this reason is the only
+        # record of the mismatch (2026-11-17 to 11-19: the Q3 FY27 release failed here, shape unknown; WP-MB-NOV19).
+        seen = " | ".join(table[1][:3]) if len(table) > 1 else "no header row"
+        raise IssuerError(f"{heading} summary table does not state {column} in {TABLE_CAPTION}; "
+                          f"its header reads: {bounded(seen, 120)}")
     return table[2:]
 
 

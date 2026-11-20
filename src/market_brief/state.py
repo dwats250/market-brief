@@ -22,8 +22,12 @@ The notice is shown only when every requirement holds (otherwise nothing is show
 - separated: the current prints start at least MIN_SEPARATION after the analysis's prints end;
 - covered: SPY at both clocks, and at least SECTOR_FLOOR sector ETFs held at both clocks (the common cohort);
 - material, all three in one direction: on the cohort, the median sector ETF moved at least MEDIAN_SHIFT percentage
-  points and the share of sector ETFs on that side of their prior close grew by at least SHARE_SHIFT, and SPY moved
-  at least BENCHMARK_SHIFT points the same way.
+  points and the share of sector ETFs on that side of their prior close grew by at least SHARE_SHIFT, or grew to every
+  sector ETF in the cohort, and SPY moved at least BENCHMARK_SHIFT points the same way. The second branch only
+  removes a ceiling: when the analysis already had more than 1 − SHARE_SHIFT of the cohort on one side (2026-11-19:
+  9 of 11 lower at 8:02 AM PT), the share could never grow by SHARE_SHIFT, so the notice was unreachable however far
+  the market then moved that way (median −0.30% → −1.73%, SPY +0.81% → −1.84%, 11 of 11 lower). Unanimity still has
+  to be reached, and the median and SPY tests still apply unchanged.
 
 A move that also flips the cohort median's sign (each side at least REVERSAL_FLOOR from zero) reads as a reversal;
 otherwise as broadening. Thresholds are deliberately wide: a quiet page is the normal outcome.
@@ -129,7 +133,8 @@ def divergence(opening, current):
     sign = -1 if shift < 0 else 1
     side = "down" if sign < 0 else "up"
     share = after[side] / after["n"] - before[side] / before["n"]
-    material = (abs(shift) >= MEDIAN_SHIFT and share >= SHARE_SHIFT
+    broadened = share >= SHARE_SHIFT or (share > 0 and after[side] == after["n"])
+    material = (abs(shift) >= MEDIAN_SHIFT and broadened
                 and abs(spy) >= BENCHMARK_SHIFT and math.copysign(1, spy) == sign)
     if not material:
         return dict(status="quiet", reason="no material divergence")

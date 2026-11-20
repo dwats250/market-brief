@@ -425,13 +425,28 @@ def compare_all(prior, packet):
 
 
 def evaluability(watch, prior, comparisons):
-    """Can the carried watch be judged on current evidence? Missing data is not survival."""
+    """Can the carried watch be judged on current evidence? Missing data is not survival.
+
+    A watch is assessable when one of its own measurements moved, or when another measurement of an instrument its
+    evidence names moved (a `changed` comparison: same identity, later entry, same session for prints). A premarket
+    watch often cites daily context (a twenty-session spread) for criteria about the session's prints, because the
+    sector funds had no premarket trade; that context cannot change intraday, so on its own identities the watch
+    would stay unjudgeable while the very prints its criteria name are on the page (WP-MB-NOV19). Missing,
+    repeated and incomparable data still never make a watch assessable, and an assessment must still cite current
+    evidence.
+    """
     refs = set(watch.get("evidence_refs", []))
-    statuses = [c["status"] for c in comparisons if c["prior_ref"].split(":", 1)[1] in refs]
-    if not statuses or all(status == "unavailable" for status in statuses):
-        return "missing_evidence"
+    own = [c for c in comparisons if c["prior_ref"].split(":", 1)[1] in refs]
+    statuses = [c["status"] for c in own]
     if any(status == "changed" for status in statuses):
         return "assessable"
+    topics = {c["topic"] for c in own if c.get("topic")}
+    for snapshots in prior.get("snapshots", {}).values():
+        topics |= {row["topic"] for ident, row in snapshots.items() if ident in refs and row.get("topic")}
+    if any(c["status"] == "changed" and c.get("topic") in topics for c in comparisons):
+        return "assessable"
+    if not statuses or all(status == "unavailable" for status in statuses):
+        return "missing_evidence"
     return "not_comparable"
 
 

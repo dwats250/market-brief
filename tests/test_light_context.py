@@ -226,3 +226,35 @@ def test_a_change_can_name_a_retained_changed_comparison_but_not_an_omitted_one(
 def test_saved_light_context_round_trips_through_json():
     _, _, _, context = light_edition(OPEN_1M_TUE, "OPEN_30M", "sample-open_1m-tue", intraday_value=0.21)
     assert json.loads(compact_json(context)) == context
+
+
+# --- WP-MB-NOV19: a watch citing daily context is judgeable once its instruments' prints move -------------------------
+
+def nov19_prior_and_comparisons():
+    prior, comparisons = synthetic_prior(), synthetic_comparisons()
+    prior["watches"].append(dict(id="w-sector-prints", lifecycle="active", hypothesis="bid spreads",
+                                 confirmation="XLK and XLY above prior closes", contradiction="XLP and XLU lead",
+                                 horizon={"declared": "NEXT_BRIEF"}, evidence_refs=["AAPL-spread20"],
+                                 origin_run_id="run-prior", assessments=[{"status": "open"}]))
+    return prior, comparisons
+
+
+def test_a_changed_print_of_the_watchs_instrument_makes_it_assessable():
+    prior, comparisons = nov19_prior_and_comparisons()
+    # AAPL-spread20 itself cannot move intraday (no_new_observation); AAPL's session print moved.
+    comparisons.append(dict(comparisons[0], id="cmp-latest-AAPL-intraday", anchor="latest", topic="AAPL",
+                            prior_ref="latest:AAPL-intraday", current_ref="AAPL-intraday"))
+    watches = {w["id"]: w for w in continuity_context(prior, comparisons, LIGHT)["prior_state"]["watches"]}
+    assert watches["w-sector-prints"]["evaluability"] == "assessable"
+    # The other watches are unchanged: a move of another instrument never makes a watch assessable.
+    assert {i: w["evaluability"] for i, w in watches.items() if i != "w-sector-prints"} == {
+        "w-assessable": "assessable", "w-missing": "missing_evidence", "w-not-comparable": "not_comparable"}
+
+
+@pytest.mark.parametrize("status", ["unavailable", "no_new_observation", "not_comparable"])
+def test_an_instrument_comparison_that_did_not_move_never_makes_a_watch_assessable(status):
+    prior, comparisons = nov19_prior_and_comparisons()
+    comparisons.append(dict(comparisons[0], id="cmp-latest-AAPL-intraday", anchor="latest", topic="AAPL",
+                            prior_ref="latest:AAPL-intraday", current_ref="AAPL-intraday", status=status))
+    watches = {w["id"]: w for w in continuity_context(prior, comparisons, LIGHT)["prior_state"]["watches"]}
+    assert watches["w-sector-prints"]["evaluability"] == "not_comparable"

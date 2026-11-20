@@ -318,3 +318,45 @@ def test_the_snapshot_never_reaches_the_analyst():
 def test_the_median_is_the_plain_median_of_the_cohort():
     result = divergence(opening_record()["market_state"], snapshot(hourly()))
     assert result["after"]["median"] == median(HOURLY[s] for s in result["cohort"])
+
+
+# --- WP-MB-NOV19: a lopsided analysis must not make the notice unreachable -----------------------------------------
+# Brief pages 5ee4e87 (8:02 AM PT, OPEN_30M) and e93569b (1:02 PM PT, HOURLY_1500) of 2026-11-19, ledger values; the
+# test reuses the Nov 16 clocks and prior close, only the values matter here.
+NOV19_OPENING = dict(XLB=-0.80, XLC=0.36, XLE=-0.03, XLF=-0.16, XLI=-0.14, XLK=2.75, XLP=-1.86, XLRE=-0.89,
+                     XLU=-1.10, XLV=-1.36, XLY=-0.30, SPY=0.81, QQQ=1.87)
+NOV19_AFTERNOON = dict(XLB=-1.94, XLC=-2.24, XLE=-0.57, XLF=-1.40, XLI=-1.90, XLK=-1.73, XLP=-1.50, XLRE=-1.56,
+                       XLU=-1.11, XLV=-2.20, XLY=-2.69, SPY=-1.84, QQQ=-2.16)
+
+
+def test_nov_19_reversal_is_shown_although_the_share_could_only_grow_two_elevenths():
+    result = divergence(opening_record(NOV19_OPENING)["market_state"], snapshot(hourly(NOV19_AFTERNOON, clocks=None)))
+    before, after = result["before"], result["after"]
+    assert (before["down"], after["down"], after["n"]) == (9, 11, 11)
+    assert after["down"] / 11 - before["down"] / 11 < SHARE_SHIFT  # the old rule's ceiling
+    assert (result["status"], result["direction"], result["kind"]) == ("shown", "lower", "broadening")
+
+
+def test_nov_19_at_eleven_et_ten_of_eleven_lower_is_still_quiet():
+    eleven = dict(NOV19_AFTERNOON, XLE=0.2, SPY=-0.11)
+    eleven.update(XLB=-1.21, XLC=-0.22, XLF=-0.90, XLI=-0.80, XLK=1.10, XLP=-1.69, XLRE=-1.15, XLU=-1.05, XLV=-2.00,
+                  XLY=-0.83)
+    result = divergence(opening_record(NOV19_OPENING)["market_state"], snapshot(hourly(eleven, clocks=None)))
+    assert result["status"] == "quiet"
+
+
+@pytest.mark.parametrize("current", [
+    dict(NOV19_AFTERNOON, SPY=1.0),                          # unanimous and median −1.43 pp, but SPY rose
+    dict(NOV19_AFTERNOON, SPY=0.5),                          # SPY fell only 0.31 pp
+    dict(NOV19_OPENING, XLK=-0.20, XLC=-0.10, SPY=-0.5),     # unanimous and SPY −1.31 pp, but the median held
+])
+def test_unanimity_does_not_relax_the_median_or_spy_tests(current):
+    result = divergence(opening_record(NOV19_OPENING)["market_state"], snapshot(hourly(current, clocks=None)))
+    assert all(v < 0 for k, v in current.items() if k in SECTOR_ETFS)
+    assert result["status"] == "quiet"
+
+
+def test_an_analysis_already_unanimous_needs_the_share_to_grow():
+    lower = {s: v - 1.0 for s, v in NOV19_AFTERNOON.items()}
+    result = divergence(opening_record(NOV19_AFTERNOON)["market_state"], snapshot(hourly(lower, clocks=None)))
+    assert result["status"] == "quiet"  # 11 of 11 then and now: deepening, not broadening

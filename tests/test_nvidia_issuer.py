@@ -230,6 +230,10 @@ def test_q2_fy27_results_yield_only_the_reported_revenue_and_diluted_eps():
 @pytest.mark.parametrize("body,reason", [
     (table("GAAP", "Q3 FY27", "$11,111", "$1.11") + table("Non-GAAP", "Q3 FY27", "$11,111", "$1.01"),
      "does not state Q2 FY27"),
+    # A header that differs only by a footnote marker is still refused, and the refusal names what it read.
+    (table("GAAP", "Q2 FY27 (1)", "$96,221", "$2.46") + table("Non-GAAP", "Q2 FY27", "$96,221", "$2.22"),
+     "does not state Q2 FY27 in ($ in millions, except earnings per share); its header reads: "
+     "($ in millions, except earnings per share) | Q2 FY27 (1) | prior"),
     (table("GAAP", "Q2 FY27", "$96,221", "$2.46"), "exactly one Non-GAAP summary table"),
     (table("GAAP", "Q2 FY27", "$96,221", "$2.46") * 2 + table("Non-GAAP", "Q2 FY27", "$96,221", "$2.22"),
      "exactly one GAAP summary table"),

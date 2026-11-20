@@ -428,7 +428,8 @@ def evaluability(watch, prior, comparisons):
     """Can the carried watch be judged on current evidence? Missing data is not survival.
 
     A watch is assessable when one of its own measurements moved, or when another measurement of an instrument its
-    evidence names moved (a `changed` comparison: same identity, later entry, same session for prints). A premarket
+    evidence names moved: a `changed` comparison of that instrument's session print (same identity, later entry, same
+    session). A premarket
     watch often cites daily context (a twenty-session spread) for criteria about the session's prints, because the
     sector funds had no premarket trade; that context cannot change intraday, so on its own identities the watch
     would stay unjudgeable while the very prints its criteria name are on the page (WP-MB-NOV19). Missing,
@@ -438,15 +439,24 @@ def evaluability(watch, prior, comparisons):
     refs = set(watch.get("evidence_refs", []))
     own = [c for c in comparisons if c["prior_ref"].split(":", 1)[1] in refs]
     statuses = [c["status"] for c in own]
-    if any(status == "changed" for status in statuses):
-        return "assessable"
-    topics = {c["topic"] for c in own if c.get("topic")}
-    for snapshots in prior.get("snapshots", {}).values():
-        topics |= {row["topic"] for ident, row in snapshots.items() if ident in refs and row.get("topic")}
-    if any(c["status"] == "changed" and c.get("topic") in topics for c in comparisons):
-        return "assessable"
     if not statuses or all(status == "unavailable" for status in statuses):
         return "missing_evidence"
+    if any(status == "changed" for status in statuses):
+        return "assessable"
+    snapshots = prior.get("snapshots", {})
+    topics = {c["topic"] for c in own if c.get("topic")}
+    for rows in snapshots.values():
+        topics |= {row["topic"] for ident, row in rows.items() if ident in refs and row.get("topic")}
+
+    def session_print(comparison):
+        # Only a moved print of this session counts: `compare_anchor` marks prints from different sessions
+        # `not_comparable`, so a `changed` intraday comparison is same-session. A daily or twenty-session row that
+        # rolled forward overnight is not a test of a watch about the session's prints.
+        anchor, ident = comparison["prior_ref"].split(":", 1)
+        return (snapshots.get(anchor) or {}).get(ident, {}).get("frequency") == "intraday"
+
+    if any(c["status"] == "changed" and c.get("topic") in topics and session_print(c) for c in comparisons):
+        return "assessable"
     return "not_comparable"
 
 

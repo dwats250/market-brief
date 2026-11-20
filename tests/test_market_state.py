@@ -329,7 +329,7 @@ NOV19_AFTERNOON = dict(XLB=-1.94, XLC=-2.24, XLE=-0.57, XLF=-1.40, XLI=-1.90, XL
                        XLU=-1.11, XLV=-2.20, XLY=-2.69, SPY=-1.84, QQQ=-2.16)
 
 
-def test_nov_19_reversal_is_shown_although_the_share_could_only_grow_two_elevenths():
+def test_nov_19_broadening_is_shown_although_the_share_could_only_grow_two_elevenths():
     result = divergence(opening_record(NOV19_OPENING)["market_state"], snapshot(hourly(NOV19_AFTERNOON, clocks=None)))
     before, after = result["before"], result["after"]
     assert (before["down"], after["down"], after["n"]) == (9, 11, 11)

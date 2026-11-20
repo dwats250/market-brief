@@ -228,33 +228,49 @@ def test_saved_light_context_round_trips_through_json():
     assert json.loads(compact_json(context)) == context
 
 
-# --- WP-MB-NOV19: a watch citing daily context is judgeable once its instruments' prints move -------------------------
+# --- WP-MB-NOV19: a watch citing daily context is judgeable once its instruments' session prints move ----------------
 
-def nov19_prior_and_comparisons():
+def nov19_prior_and_comparisons(sibling_status="changed", frequency="intraday", own_status=None):
     prior, comparisons = synthetic_prior(), synthetic_comparisons()
     prior["watches"].append(dict(id="w-sector-prints", lifecycle="active", hypothesis="bid spreads",
                                  confirmation="XLK and XLY above prior closes", contradiction="XLP and XLU lead",
                                  horizon={"declared": "NEXT_BRIEF"}, evidence_refs=["AAPL-spread20"],
                                  origin_run_id="run-prior", assessments=[{"status": "open"}]))
+    prior["anchors"]["latest"] = dict(run_id="run-latest")
+    prior["snapshots"]["latest"] = {"AAPL-intraday": dict(
+        id="AAPL-intraday", topic="AAPL", metric="intraday return", unit="%", value=0.4, frequency=frequency,
+        observed_at="2026-09-08T13:32:00+00:00", run_id="run-latest", identity=dict(key="AAPL|intraday return"))}
+    if own_status:
+        comparisons = [dict(c, status=own_status) if c["prior_ref"] == "premarket:AAPL-spread20" else c
+                       for c in comparisons]
+    comparisons.append(dict(comparisons[0], id="cmp-latest-AAPL-intraday", anchor="latest", topic="AAPL",
+                            prior_ref="latest:AAPL-intraday", current_ref="AAPL-intraday", status=sibling_status))
     return prior, comparisons
 
 
-def test_a_changed_print_of_the_watchs_instrument_makes_it_assessable():
-    prior, comparisons = nov19_prior_and_comparisons()
+def watch_evaluability(prior, comparisons):
+    return {w["id"]: w["evaluability"] for w in continuity_context(prior, comparisons, LIGHT)["prior_state"]["watches"]}
+
+
+def test_a_moved_session_print_of_the_watchs_instrument_makes_it_assessable():
     # AAPL-spread20 itself cannot move intraday (no_new_observation); AAPL's session print moved.
-    comparisons.append(dict(comparisons[0], id="cmp-latest-AAPL-intraday", anchor="latest", topic="AAPL",
-                            prior_ref="latest:AAPL-intraday", current_ref="AAPL-intraday"))
-    watches = {w["id"]: w for w in continuity_context(prior, comparisons, LIGHT)["prior_state"]["watches"]}
-    assert watches["w-sector-prints"]["evaluability"] == "assessable"
-    # The other watches are unchanged: a move of another instrument never makes a watch assessable.
-    assert {i: w["evaluability"] for i, w in watches.items() if i != "w-sector-prints"} == {
+    assert watch_evaluability(*nov19_prior_and_comparisons()) == {
+        "w-sector-prints": "assessable",
+        # The other watches are unchanged: a move of another instrument never makes a watch assessable.
         "w-assessable": "assessable", "w-missing": "missing_evidence", "w-not-comparable": "not_comparable"}
 
 
 @pytest.mark.parametrize("status", ["unavailable", "no_new_observation", "not_comparable"])
 def test_an_instrument_comparison_that_did_not_move_never_makes_a_watch_assessable(status):
-    prior, comparisons = nov19_prior_and_comparisons()
-    comparisons.append(dict(comparisons[0], id="cmp-latest-AAPL-intraday", anchor="latest", topic="AAPL",
-                            prior_ref="latest:AAPL-intraday", current_ref="AAPL-intraday", status=status))
-    watches = {w["id"]: w for w in continuity_context(prior, comparisons, LIGHT)["prior_state"]["watches"]}
-    assert watches["w-sector-prints"]["evaluability"] == "not_comparable"
+    assert watch_evaluability(*nov19_prior_and_comparisons(status))["w-sector-prints"] == "not_comparable"
+
+
+def test_a_daily_row_that_rolled_forward_is_not_a_session_print():
+    # At the next premarket the previous close's daily and twenty-session rows move overnight; they never test a
+    # watch about the session's prints.
+    assert watch_evaluability(*nov19_prior_and_comparisons(frequency="daily"))["w-sector-prints"] == "not_comparable"
+
+
+def test_missing_own_evidence_stays_missing_whatever_else_moved():
+    prior, comparisons = nov19_prior_and_comparisons(own_status="unavailable")
+    assert watch_evaluability(prior, comparisons)["w-sector-prints"] == "missing_evidence"

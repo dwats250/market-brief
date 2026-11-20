@@ -232,8 +232,8 @@ def test_q2_fy27_results_yield_only_the_reported_revenue_and_diluted_eps():
      "does not state Q2 FY27"),
     # A header that differs only by a footnote marker is still refused, and the refusal names what it read.
     (table("GAAP", "Q2 FY27 (1)", "$96,221", "$2.46") + table("Non-GAAP", "Q2 FY27", "$96,221", "$2.22"),
-     "does not state Q2 FY27 in ($ in millions, except earnings per share); its header reads: "
-     "($ in millions, except earnings per share) | Q2 FY27 (1) | prior"),
+     "does not state Q2 FY27 in ($ in millions, except earnings per share); its quarter columns read: "
+     "Q2 FY27 (1) | prior"),
     (table("GAAP", "Q2 FY27", "$96,221", "$2.46"), "exactly one Non-GAAP summary table"),
     (table("GAAP", "Q2 FY27", "$96,221", "$2.46") * 2 + table("Non-GAAP", "Q2 FY27", "$96,221", "$2.22"),
      "exactly one GAAP summary table"),

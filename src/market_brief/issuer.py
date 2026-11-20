@@ -239,9 +239,12 @@ def summary_table(tables, basis, column):
     if len(table) < 3 or table[1][:2] != [TABLE_CAPTION, column]:
         # Name what the header actually held (bounded): the release body is not retained, so this reason is the only
         # record of the mismatch (2026-11-17 to 11-19: the Q3 FY27 release failed here, shape unknown; WP-MB-NOV19).
-        seen = " | ".join(table[1][:3]) if len(table) > 1 else "no header row"
+        # Only the characters a table header needs survive, so release text cannot carry instructions or markup
+        # into the source note the analyst reads.
+        seen = " | ".join(table[1][1:3]) if len(table) > 1 else "no header row"
+        seen = re.sub(r"[^A-Za-z0-9 $().,%/|-]", "?", seen)
         raise IssuerError(f"{heading} summary table does not state {column} in {TABLE_CAPTION}; "
-                          f"its header reads: {bounded(seen, 120)}")
+                          f"its quarter columns read: {bounded(seen, 48)}")
     return table[2:]
 
 

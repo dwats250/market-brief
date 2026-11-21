@@ -15,8 +15,19 @@ from pathlib import Path
 import exchange_calendars as xcals
 
 from .curve import SPREAD_CHANGE, SPREAD_LEVEL, stale_movement
-from .evidence import ET, PLACEHOLDER, USABLE, digest, evidence_catalog, model_packet, read_json, timestamp
+from .evidence import (
+    ET,
+    NEAR_CLOSE_WINDOW,
+    PLACEHOLDER,
+    USABLE,
+    digest,
+    evidence_catalog,
+    model_packet,
+    read_json,
+    timestamp,
+)
 from .schedule import CHECKPOINT_TITLES, VANCOUVER, VANCOUVER_LABEL, next_session_date, next_synthesis
+from .state import live_snapshot
 from .state import snapshot as market_snapshot
 
 CONTINUITY_SCHEMA = "market-brief.continuity.v1"
@@ -309,6 +320,9 @@ def admit_prior_state(bundle, packet):
             result["anchors"][slot] = _anchor_summary(record)
             result["snapshots"][slot] = record["observed"]["snapshots"]
             carrier = record
+            if record["observed"].get("market_state"):
+                # The last live market snapshot a refresh kept (`state.live_snapshot`), for this session's pages.
+                result["market_state"] = record["observed"]["market_state"]
         if not result["anchors"]:
             result["reason"] = "same-session continuity unavailable: " + "; ".join(reasons)
             return result
@@ -424,10 +438,78 @@ def compare_all(prior, packet):
     return comparisons
 
 
+HORIZON_WINDOW = NEAR_CLOSE_WINDOW  # how close to its horizon a print must be to stand for the horizon
+
+
+def _is_daily(ref, watch, prior):
+    """Is this evidence row a daily (prior-day background) measure? Read from any anchor's snapshot of it, or from the
+    watch's own creation-time values when no snapshot kept it. Unknown counts as timestamped (stricter)."""
+    rows = [(anchor_rows or {}).get(ref) for anchor_rows in prior.get("snapshots", {}).values()]
+    rows.append((watch.get("values") or {}).get(ref))
+    return any(row and row.get("frequency") == "daily" for row in rows)
+
+
+def horizon_refs(watch, prior):
+    """The prints that decide an expired watch at its horizon, as namespaced prior refs (WP-MB-TRUTH-01).
+
+    A close test is decided by the session's last regular-session prints, not by the next morning's premarket
+    (another session) or by their absence. An admitted earlier edition's snapshot of one of the watch's own
+    evidence rows qualifies when it is a usable timestamped print of the session the horizon closed, taken by a
+    later run than the watch's, after the watch was written, no later than the horizon (an after-hours trade never
+    stands for the session) and within `HORIZON_WINDOW` of it. The latest qualifying print per row is named. Every
+    timestamped print the watch cites needs one, or none are named: a partly covered horizon stays undecided, and a
+    later session's print never fills the gap. Daily rows it cites are prior-day background and need none.
+    """
+    if watch.get("lifecycle") != "expired":
+        return []
+    horizon = watch.get("horizon") or {}
+    try:
+        written, ends = timestamp(watch["first_observed_at"]), timestamp(horizon["expires_at"])
+    except (KeyError, TypeError, ValueError):
+        return []
+    refs, needed = [], 0
+    for ref in watch.get("evidence_refs", []):
+        if _is_daily(ref, watch, prior):
+            continue
+        needed += 1
+        best = None
+        for anchor in ANCHORS:
+            row = (prior.get("snapshots", {}).get(anchor) or {}).get(ref)
+            if (not row or row.get("frequency") != "intraday" or row.get("status") not in USABLE
+                    or row.get("value") is None or row.get("run_id") == watch.get("origin_run_id")
+                    or "T" not in str(row.get("observed_at") or "")):
+                continue
+            try:
+                observed = timestamp(row["observed_at"])
+            except (TypeError, ValueError):
+                continue
+            if (written < observed <= ends and ends - observed <= HORIZON_WINDOW
+                    and _observation_date(row) == horizon.get("expires_session")
+                    and (best is None or observed > best[0])):
+                best = (observed, f"{anchor}:{ref}")
+        if best:
+            refs.append(best[1])
+    return refs if refs and len(refs) == needed else []
+
+
 def evaluability(watch, prior, comparisons):
-    """Can the carried watch be judged on current evidence? Missing data is not survival."""
+    """Can the carried watch be judged on current evidence, or (expired) on its horizon's prints? Missing data is
+    not survival."""
+    if horizon_refs(watch, prior):
+        return "assessable"
     refs = set(watch.get("evidence_refs", []))
     statuses = [c["status"] for c in comparisons if c["prior_ref"].split(":", 1)[1] in refs]
+    expired_session = (watch.get("horizon") or {}).get("expires_session") if watch.get("lifecycle") == "expired" \
+        else None
+    if expired_session:
+        # Judged after its horizon: only a timestamped move in the horizon's own session can decide it. A later
+        # session's print, or a daily measure that moved, never stands in for missing horizon prints.
+        statuses = ["not_comparable" if status == "changed" and (
+                        "T" not in str(c.get("current_observed_at") or "")
+                        or _observation_date(dict(observed_at=c["current_observed_at"])) != expired_session)
+                    else status
+                    for status, c in zip(statuses, [c for c in comparisons
+                                                    if c["prior_ref"].split(":", 1)[1] in refs])]
     if not statuses or all(status == "unavailable" for status in statuses):
         return "missing_evidence"
     if any(status == "changed" for status in statuses):
@@ -467,6 +549,7 @@ def continuity_context(prior, comparisons, profile=None):
     changed_refs = {c["prior_ref"] for c in comparisons if c["status"] == "changed"}
     observed = set()
     watches = []
+    deciding = set()
     for watch in prior["watches"]:
         record = dict(id=watch["id"], lifecycle=watch["lifecycle"],
                       evaluability=evaluability(watch, prior, comparisons),
@@ -474,6 +557,11 @@ def continuity_context(prior, comparisons, profile=None):
                       contradiction=watch["contradiction"], horizon=watch["horizon"],
                       evidence_refs=watch["evidence_refs"], origin_run_id=watch["origin_run_id"],
                       latest_assessment=watch["assessments"][-1]["status"])
+        decided_by = horizon_refs(watch, prior)
+        if decided_by:
+            # Present only when the horizon's own prints decide the watch, so other contexts are unchanged.
+            record["horizon_refs"] = decided_by
+            deciding |= set(decided_by)
         if watch.get("values"):
             # The numbers the criteria quote, as the author saw them, with the identity that labels them;
             # they are not current evidence.
@@ -490,7 +578,9 @@ def continuity_context(prior, comparisons, profile=None):
                 # Anchors are visited in order; a later anchor's identical observation adds nothing
                 # unless it is the prior side of a changed comparison, which stays citable.
                 observation = (ident, row["value"], row["observed_at"])
-                if ident not in citable or (observation in observed and f"{anchor}:{ident}" not in changed_refs):
+                ref = f"{anchor}:{ident}"
+                if ident not in citable or (observation in observed and ref not in changed_refs
+                                            and ref not in deciding):
                     continue
                 observed.add(observation)
             snapshots.append(dict(ref=f"{anchor}:{ident}", topic=row["topic"], metric=row["metric"],
@@ -500,6 +590,10 @@ def continuity_context(prior, comparisons, profile=None):
         "Describe current conditions from current evidence first; cite prior refs only in changes, "
         "relationships, and watch_updates."), "anchors": prior["anchors"], "watches": watches,
         "relationships": relationships, "closing_character": prior["closing_character"], "snapshots": snapshots}
+    if deciding:
+        prior_state["note"] += (
+            " An expired watch with horizon_refs is judged on those snapshots, the last regular-session prints at "
+            "its horizon, never on later prints from another session; a verdict cites only them.")
     if prior.get("reason"):
         prior_state["limitation"] = prior["reason"]
     if not bounded:
@@ -553,7 +647,17 @@ def validate_state(narrative, context, shown, topics):
         if watch["evaluability"] != "assessable" and update["assessment"] != "unresolved":
             raise ValueError("a watch without comparable current evidence can only be unresolved")
         check_refs(update, True, f"watch_updates[{index}]")
-        if not any(":" not in ref for ref in update["evidence_ids"]) and watch["evaluability"] == "assessable":
+        if watch.get("horizon_refs"):
+            # Decided at its horizon: a verdict rests on those prints, never on another session's alone.
+            # Its horizon prints, plus only dated prior-day background (a daily snapshot); never a current print.
+            cited = set(update["evidence_ids"])
+            background = {ref for ref in cited if ":" in ref and "T" not in str(
+                (prior_values(context).get(ref) or {}).get("observed_at") or "T")}
+            if update["assessment"] != "unresolved" and (not cited & set(watch["horizon_refs"])
+                                                        or not cited <= set(watch["horizon_refs"]) | background):
+                raise ValueError(f"a verdict on an expired watch must cite only its horizon prints at "
+                                 f"watch_updates[{index}]: {', '.join(watch['horizon_refs'])}")
+        elif not any(":" not in ref for ref in update["evidence_ids"]) and watch["evaluability"] == "assessable":
             raise ValueError("an assessed watch must cite current evidence")
     for index, relationship in enumerate(narrative["relationships"]):
         carried = relationship["carried_id"]
@@ -910,7 +1014,12 @@ def carried_state(packet, prior, comparisons, interpretation, app_version=""):
                      evidence_cutoff=run["target_time"]),
         observed=dict(data_status=data_status(packet), anchors=prior.get("anchors", {}),
                       continuity=prior["status"], continuity_reason=prior.get("reason", ""),
-                      comparisons=comparisons, snapshots=snapshots),
+                      comparisons=comparisons, snapshots=snapshots,
+                      # The last live market snapshot of this session (`state.live_snapshot`): this run's own when
+                      # comparable, else the one an earlier refresh kept. Display evidence only; never compared as
+                      # continuity and never shown to the analyst.
+                      market_state=live_snapshot(market_snapshot(packet), prior.get("market_state"),
+                                                 (interpretation or {}).get("market_state"))),
         assessment={"class": "INTERPRETATION", "origin": "carried", "interpretation_run_id": interpreted_by,
                     "character": character, "relationships": relationships, "watches": watches,
                     "retired": [], "changes": []},

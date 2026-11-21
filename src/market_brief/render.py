@@ -1050,6 +1050,15 @@ def state_notice(interpretation, packet, carried, refs, catalog):
     if not carried:
         return None
     result = divergence(interpretation.get("market_state"), market_snapshot(packet))
+    stopped = ""
+    if result["status"] == "insufficient":
+        # This page's own prints cannot be compared (at the close every print is the last regular-session trade,
+        # DELAYED by collection). The session's last live snapshot, kept by an earlier refresh, still can: shown at
+        # its own clock, with its own ledger rows (WP-MB-TRUTH-01). Live prints now always take precedence.
+        kept = (packet.get("continuity") or {}).get("market_state")
+        earlier = divergence(interpretation.get("market_state"), kept) if kept else result
+        if earlier["status"] == "shown":
+            result, stopped = earlier, result["reason"]
     if result["status"] != "shown":
         return None
     before, after, side = result["before"], result["after"], result["side"]
@@ -1070,6 +1079,13 @@ def state_notice(interpretation, packet, carried, refs, catalog):
     sentence = (f"Sector ETFs have reversed {word} since the analysis above was written." if
                 result["kind"] == "reversal" else
                 f"Sector ETFs have moved broadly {word} since the analysis above was written.")
+    if stopped:
+        moved = f"reversed {word}" if result["kind"] == "reversal" else f"moved broadly {word}"
+        why = ("This page's own prints, the last trades before the close, are not compared."
+               if packet["run"]["checkpoint"] == "CLOSE_1M"
+               else "This page's own prints cannot be compared with the analysis.")
+        sentence = (f"By {pacific_time(after['last'].isoformat())}, the last live prints, sector ETFs had {moved} "
+                    f"since the analysis above was written. {why}")
     order = sorted(set(opening_rows) | set(current_rows), key=lambda t: (t != "SPY", t != "QQQ", t))
     # The analysis's prints have their own ledger rows (`ledger` below) under `analysis-state-<id>`, a namespace no
     # current (`evidence-<id>`) or frozen-citation (`interpretation-evidence-<id>`) anchor uses, so a link to SPY at
@@ -1077,15 +1093,28 @@ def state_notice(interpretation, packet, carried, refs, catalog):
     opening = [opening_rows[t] for t in order if t in opening_rows]
     earlier = [dict(r, anchor=True, anchor_id=f"analysis-state-{r['id']}") for r in
                refs([row["id"] for row in opening], {row["id"]: row for row in opening}, False)]
-    later = refs([current_rows[t]["id"] for t in order if t in current_rows], catalog, False)
     session = packet["run"]["session"]
     names = {source["id"]: source["name"] for source in packet["sources"]}
-    ledger = [dict(id=row["id"], anchor_id=f"analysis-state-{row['id']}",
-                   label=f"{instrument_label(row['topic'])} · {reader_metric_label(row, session)}",
-                   display=formatted(row), when=compact_clock(row["observed_at"]), observed_at=row["observed_at"],
-                   baseline=row.get("baseline") or "", source_id=row.get("source_id") or "source not preserved",
-                   source_name=names.get(row.get("source_id"), row.get("source_id") or "source not preserved"))
-              for row in opening]
+
+    def ledger_rows(rows, namespace):
+        return [dict(id=row["id"], anchor_id=f"{namespace}-{row['id']}",
+                     label=f"{instrument_label(row['topic'])} · {reader_metric_label(row, session)}",
+                     display=formatted(row), when=compact_clock(row["observed_at"]), observed_at=row["observed_at"],
+                     baseline=row.get("baseline") or "", source_id=row.get("source_id") or "source not preserved",
+                     source_name=names.get(row.get("source_id"), row.get("source_id") or "source not preserved"))
+                for row in rows]
+
+    later_ledger = []
+    if stopped:
+        # The earlier refresh's prints are not this run's rows: they get their own anchors (`live-state-<id>`), so a
+        # link to SPY at 1:00 PM never lands on this page's close print of SPY.
+        current = [current_rows[t] for t in order if t in current_rows]
+        later = [dict(r, anchor=True, anchor_id=f"live-state-{r['id']}") for r in
+                 refs([row["id"] for row in current], {row["id"]: row for row in current}, False)]
+        later_ledger = ledger_rows(current, "live-state")
+    else:
+        later = refs([current_rows[t]["id"] for t in order if t in current_rows], catalog, False)
+    ledger = ledger_rows(opening, "analysis-state")
     return dict(caption="Since the analysis",
                 window=(f"{pacific_time(before['last'].isoformat())} → {pacific_time(after['last'].isoformat())}"
                         f" · vs prior close {short_date(before['prior_close'])}"),
@@ -1096,7 +1125,9 @@ def state_notice(interpretation, packet, carried, refs, catalog):
                       + ", not S&P 500 breadth. Each row keeps its own clock."),
                 refs=[*earlier, *later], current_ids=[row["id"] for row in later],
                 opening_ids=[row["id"] for row in opening], ledger=ledger,
-                opening_clock=pacific_time(before["last"].isoformat()), kind=result["kind"], direction=word)
+                opening_clock=pacific_time(before["last"].isoformat()), kind=result["kind"], direction=word,
+                later_ledger=later_ledger, later_clock=pacific_time(after["last"].isoformat()),
+                later_namespace="live-state" if stopped else "evidence")
 
 
 def presentation(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None,
@@ -1672,7 +1703,9 @@ def markdown(view):
         lines += [f"**{shift['caption'].upper()}** · {esc(shift['window'])} · {esc(shift['sentence'])} {measures}. "
                   f"{esc(shift['note'])}",
                   "At the analysis: " + " · ".join(f"[{esc(i)}](#analysis-state-{i})" for i in shift["opening_ids"])
-                  + ". Now: " + " · ".join(f"[{esc(i)}](#evidence-{i})" for i in shift["current_ids"]) + ".", ""]
+                  + (f". At {esc(shift['later_clock'])}: " if shift["later_ledger"] else ". Now: ")
+                  + " · ".join(f"[{esc(i)}](#{shift['later_namespace']}-{i})" for i in shift["current_ids"]) + ".",
+                  ""]
     since = view["since"]
     if since["entries"] or since["note"]:
         lines += [f"## {since['heading']}" + (f" · {esc(since['label'])}" if since["label"] else ""), ""]
@@ -1860,6 +1893,13 @@ def markdown(view):
             lines += [f'<a id="{row["anchor_id"]}"></a>',
                       f"**{esc(row['id'])}** · {esc(row['label'])} · {esc(row['display'])} · {esc(row['baseline'])} "
                       f"· observed {esc(row['observed_at'])} · source {esc(row['source_id'])}", ""]
+        if view["shift"]["later_ledger"]:
+            lines += [f"**Last live prints · {esc(view['shift']['later_clock'])} · since-the-analysis check**", ""]
+            for row in view["shift"]["later_ledger"]:
+                lines += [f'<a id="{row["anchor_id"]}"></a>',
+                          f"**{esc(row['id'])}** · {esc(row['label'])} · {esc(row['display'])} · "
+                          f"{esc(row['baseline'])} · observed {esc(row['observed_at'])} · source "
+                          f"{esc(row['source_id'])}", ""]
     for group in view["evidence_groups"]:
         lines += [f"**{esc(group['topic'])}**", ""]
         for row in group["rows"]:

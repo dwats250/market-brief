@@ -14,6 +14,8 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
+import exchange_calendars as xcals
+
 from .actuals import (
     FAMILIES,
     MONTHS,
@@ -715,7 +717,8 @@ def _snapshot_prior_close(snapshot, trade_date):
     return max(candidates) if candidates else (None, None)
 
 
-def _alpaca_intraday(payload, histories, now, retrieved_at, source_id, missing=None, prior_session=None):
+def _alpaca_intraday(payload, histories, now, retrieved_at, source_id, missing=None, prior_session=None,
+                     recovered=()):
     """Current prints from one snapshot response. `missing`, when given, receives {symbol: reason} for every
     symbol the response reported but this function did not admit, so no drop is silent.
 
@@ -789,8 +792,61 @@ def _alpaca_intraday(payload, histories, now, retrieved_at, source_id, missing=N
             value=value, unit="%", baseline="Alpaca IEX latest trade versus previous regular close",
             frequency="intraday", observed_at=observed_at, retrieved_at=retrieved_at.isoformat(),
             source_id=source_id, status="AVAILABLE",
-            reason=f"feed=IEX; latest trade timestamp; prior close {close_date} regular session"))
+            reason=(f"feed=IEX; {RECOVERED_TRADE if symbol in recovered else 'latest trade timestamp'}; "
+                    f"prior close {close_date} regular session")))
     return observations
+
+
+RECOVERED_TRADE = "last regular-session trade at or before the close, from IEX historical trades"
+
+
+def _regular_session_trades(snapshots, now, deadline, key_id, secret_key):
+    """After the close, each snapshot whose latest trade came after it (after-hours, which admission refuses) gets
+    that symbol's last IEX trade at or before the regular-session close instead (WP-MB-TRUTH-01).
+
+    Returns `(snapshots, recovered, failures)`: a copy with those trades in place of the after-hours ones, the symbols
+    replaced, and `{symbol: reason}` for every lookup that found nothing usable. A trade outside the session, or an
+    answer that is not one, is never used: the after-hours trade then stays, and admission refuses it as before.
+    """
+    session = xcals.get_calendar("XNYS")
+    day = now.astimezone(EASTERN).date().isoformat()
+    if not session.is_session(day):
+        return snapshots, set(), {}
+    opening = session.session_open(day).to_pydatetime()
+    closing = session.session_close(day).to_pydatetime()
+    if now < closing:
+        return snapshots, set(), {}
+    replaced, recovered, failures = dict(snapshots), set(), {}
+    for symbol, snapshot in snapshots.items():
+        trade = (snapshot or {}).get("latestTrade") or {}
+        try:
+            after_hours = isinstance(trade.get("t"), str) and timestamp(trade["t"]) > closing
+        except ValueError:
+            continue
+        if not after_hours:
+            continue
+        try:
+            answer = _alpaca_request(f"/v2/stocks/{symbol}/trades", {
+                "start": opening.isoformat().replace("+00:00", "Z"),
+                "end": closing.isoformat().replace("+00:00", "Z"),
+                "limit": 1, "feed": "iex", "sort": "desc",
+            }, deadline, key_id, secret_key)
+        except SourceError as exc:
+            failures[symbol] = str(exc)
+            continue
+        # The answer must name the symbol asked for: another instrument's price never meets this one's prior close.
+        found = answer.get("trades") if isinstance(answer, dict) and answer.get("symbol") == symbol else None
+        last = found[0] if isinstance(found, list) and found and isinstance(found[0], dict) else {}
+        try:
+            when = timestamp(last["t"]) if isinstance(last.get("t"), str) else None
+        except ValueError:
+            when = None
+        if when is None or not opening <= when <= closing or not finite_number(last.get("p")):
+            failures[symbol] = "no regular-session trade returned"
+            continue
+        replaced[symbol] = dict(snapshot, latestTrade=dict(last))
+        recovered.add(symbol)
+    return replaced, recovered, failures
 
 
 def alpaca_probe(now, symbols=("SPY", "QQQ"), key_id=None, secret_key=None, fetcher=_alpaca_request):
@@ -867,17 +923,21 @@ def alpaca_collect(now, symbols=ALPACA_UNIVERSE, key_id=None, secret_key=None):
         # it reports and is when this source was checked.
         snapped = datetime.now(timezone.utc)
         intraday["retrieved_at"] = snapped.isoformat()
+        snapshots, recovered, lookups = _regular_session_trades(snapshots, snapped, deadline, key_id, secret_key)
         missing = {}
         observations = _alpaca_intraday(snapshots, histories, now, snapped, "alpaca-iex", missing,
-                                         prior_session=prior_session_date(now))
+                                         prior_session=prior_session_date(now), recovered=recovered)
         missing.update({symbol: "not returned by the snapshot" for symbol in symbols if symbol not in snapshots})
         intraday["coverage_symbols"] = len(observations)
         if not observations:
             intraday.update(status="UNAVAILABLE", reason="no current IEX trade timestamps returned")
-        elif missing:
+        elif missing or lookups:
             # A partial snapshot is not "Available": the Sources drawer, Coverage limitations and the analyst's
-            # source list name every symbol without a current print and why.
-            intraday.update(status="DEGRADED", reason=missing_prints(missing, symbols))
+            # source list name every symbol without a current print and why, and every close lookup that failed.
+            notes = [missing_prints(missing, symbols)] if missing else []
+            notes += ["last regular-session trade not found for "
+                      + "; ".join(f"{name} ({why})" for name, why in lookups.items())] if lookups else []
+            intraday.update(status="DEGRADED", reason="; ".join(notes))
     except SourceError as exc:
         intraday.update(status="UNAVAILABLE", reason=str(exc))
         observations = []

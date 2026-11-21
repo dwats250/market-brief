@@ -393,6 +393,10 @@ def run(args):
     # evidence, continuity and the analyst's context are unchanged; any failure is a quiet line, never a failed run.
     overseas = (glance.view(glance.resolve(target, packet["run"]["session"], checkpoint))
                 if mode == "LIVE" and not experiment else None)
+    if kind != "synthesis" and prior.get("market_state"):
+        # A deterministic page may need the session's last live market snapshot for "Since the analysis" when its
+        # own prints cannot be compared (the close's are all DELAYED). A synthesis's evidence never carries it.
+        packet["continuity"]["market_state"] = prior["market_state"]
     write_json(folder / "evidence.json", packet)
     evidence_hash = digest(packet)
     context, interpretation, interpretation_note = None, None, ""

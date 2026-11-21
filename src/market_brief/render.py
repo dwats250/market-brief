@@ -1051,14 +1051,14 @@ def state_notice(interpretation, packet, carried, refs, catalog):
         return None
     result = divergence(interpretation.get("market_state"), market_snapshot(packet))
     stopped = ""
-    if result["status"] == "insufficient" and result["reason"].startswith("now: "):
+    if result["status"] == "insufficient":
         # This page's own prints cannot be compared (at the close every print is the last regular-session trade,
         # DELAYED by collection). The session's last live snapshot, kept by an earlier refresh, still can: shown at
         # its own clock, with its own ledger rows (WP-MB-TRUTH-01). Live prints now always take precedence.
         kept = (packet.get("continuity") or {}).get("market_state")
         earlier = divergence(interpretation.get("market_state"), kept) if kept else result
         if earlier["status"] == "shown":
-            result, stopped = earlier, result["reason"].removeprefix("now: ")
+            result, stopped = earlier, result["reason"]
     if result["status"] != "shown":
         return None
     before, after, side = result["before"], result["after"], result["side"]
@@ -1083,7 +1083,7 @@ def state_notice(interpretation, packet, carried, refs, catalog):
         moved = f"reversed {word}" if result["kind"] == "reversal" else f"moved broadly {word}"
         why = ("This page's own prints, the last trades before the close, are not compared."
                if packet["run"]["checkpoint"] == "CLOSE_1M"
-               else f"This page's own prints are not compared ({stopped}).")
+               else "This page's own prints cannot be compared with the analysis.")
         sentence = (f"By {pacific_time(after['last'].isoformat())}, the last live prints, sector ETFs had {moved} "
                     f"since the analysis above was written. {why}")
     order = sorted(set(opening_rows) | set(current_rows), key=lambda t: (t != "SPY", t != "QQQ", t))

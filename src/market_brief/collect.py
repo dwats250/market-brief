@@ -820,8 +820,8 @@ def _regular_session_trades(snapshots, now, deadline, key_id, secret_key):
     for symbol, snapshot in snapshots.items():
         trade = (snapshot or {}).get("latestTrade") or {}
         try:
-            after_hours = timestamp(trade["t"]) > closing
-        except (KeyError, TypeError, ValueError):
+            after_hours = isinstance(trade.get("t"), str) and timestamp(trade["t"]) > closing
+        except ValueError:
             continue
         if not after_hours:
             continue
@@ -834,11 +834,12 @@ def _regular_session_trades(snapshots, now, deadline, key_id, secret_key):
         except SourceError as exc:
             failures[symbol] = str(exc)
             continue
-        found = answer.get("trades") if isinstance(answer, dict) else None
+        # The answer must name the symbol asked for: another instrument's price never meets this one's prior close.
+        found = answer.get("trades") if isinstance(answer, dict) and answer.get("symbol") == symbol else None
         last = found[0] if isinstance(found, list) and found and isinstance(found[0], dict) else {}
         try:
-            when = timestamp(last["t"])
-        except (KeyError, TypeError, ValueError):
+            when = timestamp(last["t"]) if isinstance(last.get("t"), str) else None
+        except ValueError:
             when = None
         if when is None or not opening <= when <= closing or not finite_number(last.get("p")):
             failures[symbol] = "no regular-session trade returned"

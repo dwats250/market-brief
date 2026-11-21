@@ -104,13 +104,24 @@ def _measures(state, cohort):
                 prior_close=next(iter(rows.values()))["prior_close"], first=clocks[0], last=clocks[-1])
 
 
-def live_snapshot(current, previous):
-    """The snapshot a refresh's edition state keeps (WP-MB-TRUTH-01): this run's own when it can be compared,
-    otherwise the last comparable one an earlier edition of the same session kept, so a close whose prints are all
-    DELAYED still holds the last live evidence, at its own clock. Never another session's."""
-    if not _snapshot_reason(current or {}) or not previous or previous.get("rule") != RULE:
+def _comparable(state, opening):
+    """Could this snapshot be compared with the analysis's (quiet or shown, not insufficient)? Without the analysis's
+    snapshot, on its own requirements: one prior close, SPY, a tight clock and the sector floor."""
+    if not state:
+        return False
+    if opening:
+        return divergence(opening, state)["status"] != "insufficient"
+    return not _snapshot_reason(state) and len(SECTOR_ETFS & set(state["rows"])) >= SECTOR_FLOOR
+
+
+def live_snapshot(current, previous, opening=None):
+    """The snapshot a refresh's edition state keeps (WP-MB-TRUTH-01): this run's own when it can be compared with the
+    analysis (`opening`), otherwise the last comparable one an earlier edition of the same session kept, so a close
+    whose prints are all DELAYED, or a sparse refresh, never discards the last live evidence. Never another
+    session's; a comparable quiet snapshot always supersedes an earlier divergence."""
+    if _comparable(current, opening) or not previous or previous.get("rule") != RULE:
         return current
-    if previous.get("session_date") != (current or {}).get("session_date") or _snapshot_reason(previous):
+    if previous.get("session_date") != (current or {}).get("session_date") or not _comparable(previous, opening):
         return current
     return previous
 

@@ -153,3 +153,23 @@ def test_interpretation_record_is_untouched_by_the_carried_notice():
     frozen = copy.deepcopy(record)
     render(with_carried(closing(), snapshot(hourly())), interpretation=record)
     assert record == frozen
+
+
+def test_a_sparse_refresh_never_discards_the_kept_divergence():
+    """Review P2: an afternoon refresh with SPY alone (too few sector ETFs to compare) keeps the earlier snapshot, and
+    the close still shows it."""
+    record = opening_record()
+    good = snapshot(hourly())
+    sparse = hourly({"SPY": -2.0}, clocks=None)
+    assert live_snapshot(snapshot(sparse), good, record["market_state"]) is good
+    prior = dict(status="available", reason="", anchors={}, snapshots={}, watches=[], relationships=[],
+                 market_state=good)
+    assert carried_state(sparse, prior, [], record)["observed"]["market_state"] == good
+    # The sparse refresh itself shows the kept divergence at its own clock.
+    shift = presentation(with_carried(sparse, good), interpretation=record)["shift"]
+    assert shift and shift["sentence"].endswith(
+        "This page's own prints cannot be compared with the analysis. The analysis is unchanged; these later "
+        "prints are not part of it.")
+    # A genuinely comparable, quiet refresh still supersedes an earlier divergence.
+    calm = snapshot(hourly({symbol: value - 0.1 for symbol, value in OPENING.items()}))
+    assert live_snapshot(calm, good, record["market_state"]) is calm

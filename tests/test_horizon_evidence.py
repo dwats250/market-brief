@@ -127,8 +127,8 @@ def test_a_verdict_on_an_expired_watch_cites_its_horizon_prints():
     context = continuity_context(premarket_prior(NOV19, [TECH]), COMPARISONS)
     shown = {"XLK-intraday", "SPY-intraday"}
     validate_state(narrative(update("weakened", ["previous_close:XLK-intraday"])), context, shown, set())
-    validate_state(narrative(update("weakened", ["previous_close:XLK-intraday", "XLK-intraday"])), context, shown,
-                   set())
+    validate_state(narrative(update("weakened", ["previous_close:XLK-intraday", "previous_close:SPY-intraday"])),
+                   context, shown, set())
     validate_state(narrative(update("unresolved", [])), context, shown, set())
     # This morning's premarket print is another session: it never stands for yesterday's close.
     with pytest.raises(ValueError, match="horizon"):
@@ -142,3 +142,28 @@ def test_a_watch_without_horizon_prints_still_needs_current_evidence():
     with pytest.raises(ValueError, match="must cite current evidence"):
         validate_state(narrative(update("weakened", ["previous_close:XLK-intraday"])), context, {"XLK-intraday"},
                        set())
+
+
+def test_partial_horizon_coverage_stays_unresolved():
+    """Review P1: with SPY's close print alone, XLK's close test is not decided at its horizon, and this morning's
+    XLK print (another session) can never fill the gap."""
+    partial = premarket_prior({"SPY-intraday": NOV19["SPY-intraday"]}, [TECH])
+    assert horizon_refs(TECH, partial) == []
+    assert evaluability(TECH, partial, COMPARISONS) == "not_comparable"
+
+
+def test_a_daily_background_ref_does_not_block_the_horizon():
+    """Only the watch's timestamped prints need a horizon print; a daily row it also cites is prior-day context."""
+    mixed = dict(TECH, evidence_refs=["XLK-intraday", "SPY-intraday", "XLK-dma50"])
+    prior = premarket_prior(dict(NOV19, **{"XLK-dma50": row("XLK-dma50", -3.0, "2026-11-18", frequency="daily")}),
+                            [mixed])
+    assert horizon_refs(mixed, prior) == ["previous_close:XLK-intraday", "previous_close:SPY-intraday"]
+
+
+def test_a_verdict_on_an_expired_watch_cites_only_its_horizon_prints():
+    """Review P1: a current ref (and so a placeholder quoting it) beside a horizon ref is still another session."""
+    context = continuity_context(premarket_prior(NOV19, [TECH]), COMPARISONS)
+    shown = {"XLK-intraday", "SPY-intraday"}
+    for cited in (["previous_close:SPY-intraday", "XLK-intraday"], ["previous_close:XLK-intraday", "SPY-intraday"]):
+        with pytest.raises(ValueError, match="horizon"):
+            validate_state(narrative(update("strengthened", cited)), context, shown, set())

@@ -448,7 +448,9 @@ def horizon_refs(watch, prior):
     (another session) or by their absence. An admitted earlier edition's snapshot of one of the watch's own
     evidence rows qualifies when it is a usable timestamped print of the session the horizon closed, taken by a
     later run than the watch's, after the watch was written, no later than the horizon (an after-hours trade never
-    stands for the session) and within `HORIZON_WINDOW` of it. The latest qualifying print per row is named.
+    stands for the session) and within `HORIZON_WINDOW` of it. The latest qualifying print per row is named. Every
+    timestamped print the watch cites needs one, or none are named: a partly covered horizon stays undecided, and a
+    later session's print never fills the gap. Daily rows it cites are prior-day background and need none.
     """
     if watch.get("lifecycle") != "expired":
         return []
@@ -457,8 +459,11 @@ def horizon_refs(watch, prior):
         written, ends = timestamp(watch["first_observed_at"]), timestamp(horizon["expires_at"])
     except (KeyError, TypeError, ValueError):
         return []
-    refs = []
+    refs, needed = [], 0
     for ref in watch.get("evidence_refs", []):
+        if any((rows or {}).get(ref, {}).get("frequency") == "daily" for rows in prior.get("snapshots", {}).values()):
+            continue
+        needed += 1
         best = None
         for anchor in ANCHORS:
             row = (prior.get("snapshots", {}).get(anchor) or {}).get(ref)
@@ -476,7 +481,7 @@ def horizon_refs(watch, prior):
                 best = (observed, f"{anchor}:{ref}")
         if best:
             refs.append(best[1])
-    return refs
+    return refs if refs and len(refs) == needed else []
 
 
 def evaluability(watch, prior, comparisons):
@@ -569,7 +574,7 @@ def continuity_context(prior, comparisons, profile=None):
     if deciding:
         prior_state["note"] += (
             " An expired watch with horizon_refs is judged on those snapshots, the last regular-session prints at "
-            "its horizon, not on later prints from another session; a verdict cites at least one of them.")
+            "its horizon, never on later prints from another session; a verdict cites only them.")
     if prior.get("reason"):
         prior_state["limitation"] = prior["reason"]
     if not bounded:
@@ -625,8 +630,9 @@ def validate_state(narrative, context, shown, topics):
         check_refs(update, True, f"watch_updates[{index}]")
         if watch.get("horizon_refs"):
             # Decided at its horizon: a verdict rests on those prints, never on another session's alone.
-            if update["assessment"] != "unresolved" and not set(update["evidence_ids"]) & set(watch["horizon_refs"]):
-                raise ValueError(f"a verdict on an expired watch must cite its horizon prints at "
+            cited = set(update["evidence_ids"])
+            if update["assessment"] != "unresolved" and (not cited or not cited <= set(watch["horizon_refs"])):
+                raise ValueError(f"a verdict on an expired watch must cite only its horizon prints at "
                                  f"watch_updates[{index}]: {', '.join(watch['horizon_refs'])}")
         elif not any(":" not in ref for ref in update["evidence_ids"]) and watch["evaluability"] == "assessable":
             raise ValueError("an assessed watch must cite current evidence")
@@ -989,7 +995,8 @@ def carried_state(packet, prior, comparisons, interpretation, app_version=""):
                       # The last live market snapshot of this session (`state.live_snapshot`): this run's own when
                       # comparable, else the one an earlier refresh kept. Display evidence only; never compared as
                       # continuity and never shown to the analyst.
-                      market_state=live_snapshot(market_snapshot(packet), prior.get("market_state"))),
+                      market_state=live_snapshot(market_snapshot(packet), prior.get("market_state"),
+                                                 (interpretation or {}).get("market_state"))),
         assessment={"class": "INTERPRETATION", "origin": "carried", "interpretation_run_id": interpreted_by,
                     "character": character, "relationships": relationships, "watches": watches,
                     "retired": [], "changes": []},

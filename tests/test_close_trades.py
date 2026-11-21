@@ -122,3 +122,23 @@ def test_no_lookup_during_the_session_or_for_a_regular_session_trade(monkeypatch
     assert not [path for path, _ in requests if path.endswith("/trades")]
     _, requests = run(monkeypatch, {"SPY": snapshot(CLOSE - timedelta(seconds=1))}, {})
     assert not [path for path, _ in requests if path.endswith("/trades")]
+
+
+@pytest.mark.parametrize("answer", [
+    {"symbol": "META", "trades": [{"t": iso(CLOSE - timedelta(seconds=1)), "p": 590.0}]},   # another instrument
+    {"trades": [{"t": iso(CLOSE - timedelta(seconds=1)), "p": 88.0}]},                       # identity missing
+    {"symbol": "NVDA", "trades": [{"t": None, "p": 88.0}]},
+    {"symbol": "NVDA", "trades": [{"t": 1763672399, "p": 88.0}]},
+    {"symbol": "NVDA", "trades": [{"t": "yesterday", "p": 88.0}]},
+    ["not", "an", "object"],
+])
+def test_a_malformed_or_foreign_answer_is_one_failed_lookup(monkeypatch, answer):
+    """Review P3/P4: the answer must name the requested symbol and carry a readable trade time; anything else fails that
+    one lookup and never stops collection."""
+    result, _ = run(monkeypatch, {"NVDA": snapshot(CLOSE + timedelta(seconds=20), 120.0),
+                                  "SPY": snapshot(CLOSE - timedelta(seconds=1), 96.49)}, {"NVDA": answer})
+    rows = {row["topic"]: row for row in result["observations"]}
+    assert rows["NVDA"]["observed_at"] == iso(CLOSE + timedelta(seconds=20))     # the refused after-hours trade
+    assert rows["SPY"]["reason"].startswith("feed=IEX; latest trade timestamp")
+    assert result["sources"][1]["reason"] == ("last regular-session trade not found for NVDA "
+                                              "(no regular-session trade returned)")

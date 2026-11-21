@@ -136,11 +136,12 @@ def test_a_tenor_the_latest_entry_lacks_has_no_horizon():
     assert horizon_change(series, "10Y", 5) is not None
 
 
-def test_daily_changes_skip_gaps_rather_than_fill_them():
+def test_daily_changes_mark_gaps_rather_than_fill_them():
     series = copy.deepcopy(FIXTURE["treasury"][-5:])
     del series[2]["values"]["2Y"]
-    dates = [d for d, _ in daily_changes(series, "2Y")]
-    assert dates == [series[1]["date"], series[3]["date"], series[4]["date"]]
+    changes = daily_changes(series, "2Y")
+    assert [d for d, _ in changes] == [e["date"] for e in series[1:]]
+    assert [c is None for _, c in changes] == [False, True, True, False]
 
 
 # --- The Nov 16–20 selloff, from official records ---------------------------------------------------------------
@@ -155,8 +156,9 @@ def test_nov_20_rows_match_treasury_and_the_new_york_fed():
     assert found["treasury-2y-change-5s"]["value"] == -25
     assert found["treasury-10y-change-5s"]["value"] == -23
     assert found["treasury-30y-change-5s"]["value"] == -16
-    assert found["treasury-10y-change-5s"]["baseline"] == "official observation 2026-11-13, 5 observations earlier"
-    assert found["treasury-10y-change-20s"]["baseline"].startswith("official observation 2026-10-22")
+    assert found["treasury-10y-change-5s"]["baseline"] == "official entry 5 entries earlier"
+    assert found["treasury-10y-change-5s"]["window_start"] == "2026-11-13"
+    assert found["treasury-10y-change-20s"]["window_start"] == "2026-10-22"
     # 2s30s 68 bp (+4 on the day), 3m10y 60 bp (−10).
     assert (found["treasury-2s30s"]["value"], found["treasury-2s30s-change"]["value"]) == (68, 4)
     assert (found["treasury-3m10y"]["value"], found["treasury-3m10y-change"]["value"]) == (60, -10)
@@ -341,6 +343,80 @@ def test_funding_older_than_a_week_shows_no_number():
     packet = normalize_packet(raw_input(now=later), later, "LIVE", "PREMARKET")
     packet = finalize_coverage(derive(packet, UNIVERSE))
     from test_pipeline import narrative
-    funding = presentation(packet, narrative())["macro"]["panel"]["funding"]
-    assert [row["level"] for row in funding["rows"]] == ["not shown", "not shown"]
-    assert funding["spread"] is None
+    # Admission rejected both rows as STALE, so the panel carries no funding number at all.
+    panel = presentation(packet, narrative())["macro"]["panel"]  # the curve is stale too, so no panel at all
+    assert panel is None or panel["funding"] is None
+    assert not [r for r in packet["derived"] if r["id"] == "nyfed-sofr-effr"]
+
+
+# --- Codex Astra review of e874e54 (findings 1–7) ---------------------------------------------------------------
+
+def test_review_1_funding_never_outlives_or_contradicts_its_admitted_rows():
+    later = datetime(2026, 12, 2, 14, 0, tzinfo=timezone.utc)  # Nov 19 funding rows are rejected as STALE
+    packet = finalize_coverage(derive(normalize_packet(raw_input(now=later), later, "LIVE", "PREMARKET"), UNIVERSE))
+    assert "nyfed-sofr-effr" not in rows(packet) and packet["rates"]["funding"]["sofr"] is None
+    raw = raw_input()
+    raw["rates_history"]["nyfed-sofr"]["series"] = copy.deepcopy(FIXTURE["sofr"])
+    raw["rates_history"]["nyfed-sofr"]["series"][-1]["rate"] = 9.91
+    packet = packet_for(raw)
+    assert "nyfed-sofr-effr" not in rows(packet)
+    assert any("SOFR history did not match" in note for note in packet["rates"]["notes"])
+
+
+def without(series, day, tenor):
+    result = copy.deepcopy(series)
+    del next(e for e in result if e["date"] == day)["values"][tenor]
+    return result
+
+
+def test_review_2_a_missing_latest_10y_publishes_no_older_result_under_the_latest_date():
+    nominal = without(FIXTURE["treasury"], "2026-11-20", "10Y")
+    real = without(FIXTURE["treasury_real"], "2026-11-20", "10Y")
+    raw = raw_input(nominal=nominal, real=real)
+    packet = packet_for(raw)
+    found = rows(packet)
+    assert "treasury-10y-vol20" not in found and "treasury-10y-change-5s" not in found
+    assert not any(r["id"].startswith("treasury-10y-inflation-comp-change") for r in packet["derived"])
+    assert packet["rates"]["compensation"]["10Y"]["level_bp"] is None
+
+
+def test_review_3_a_missing_tenor_is_a_gap_not_a_longer_day():
+    nominal = without(FIXTURE["treasury"], "2026-11-19", "2Y")
+    assert horizon_change(nominal, "2Y", 1) is None
+    assert horizon_change(nominal, "30Y", 1) == (-9, "2026-11-19")
+    lead = {i["horizon"]: i for i in packet_for(raw_input(nominal=nominal))["rates"]["leadership"]}
+    assert "1d" not in lead
+    gap = without(FIXTURE["treasury"], "2026-11-19", "10Y")
+    assert dict(daily_changes(gap, "10Y"))["2026-11-20"] is None
+    assert volatility(gap)["sd"] is None  # every window through Nov 20 contains the gap
+
+
+def test_review_4_a_lagging_real_curve_is_withheld_with_its_date():
+    real = [e for e in FIXTURE["treasury_real"] if e["date"] <= "2026-11-17"]
+    packet = packet_for(raw_input(real=real))
+    assert not packet["rates"]["real_ok"] and not packet["rates"]["real"]
+    assert any("dated 2026-11-17" in note for note in packet["rates"]["notes"])
+    assert not any(r["id"].startswith("treasury-real-10y-change-") for r in packet["derived"])
+
+
+def test_review_5_rolling_measures_keep_one_identity_across_days():
+    from market_brief.evidence import metric_identity
+    keys = []
+    for day in ("2026-11-19", "2026-11-20"):
+        nominal = upto(FIXTURE["treasury"], day)
+        real = upto(FIXTURE["treasury_real"], day)
+        found = rows(packet_for(raw_input(nominal=nominal, real=real)))
+        keys.append({i: metric_identity(found[i])["key"] for i in ("treasury-10y-change-5s", "treasury-10y-vol20")})
+    assert keys[0] == keys[1]
+
+
+def test_review_6_a_malformed_funding_payload_fails_only_its_source():
+    for text in ('{"refRates": 1}', '[]', '{"refRates": [1, "x"]}'):
+        with pytest.raises(SourceError):
+            funding_series(text, "sofr", NOW)
+
+
+def test_review_7_an_impossible_date_drops_the_series():
+    by_source = {"nyfed-sofr": dict(status="AVAILABLE", retention_allowed=True)}
+    bad = {"nyfed-sofr": dict(source_id="nyfed-sofr", series=[dict(date="2026-02-30", rate=3.9)])}
+    assert rates_history_record(bad, by_source, NOW) == {}

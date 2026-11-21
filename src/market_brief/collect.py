@@ -275,8 +275,11 @@ def funding_series(text, kind, now):
     Only entries of the requested type, dated before today (ET), with a finite percent rate; a revised rate is kept as
     published and flagged. EFFR carries the FOMC target range in force on its date."""
     payload = json.loads(text)
+    items = payload.get("refRates") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        raise SourceError(f"malformed {FUNDING_NAMES[kind]} response")
     found = {}
-    for item in (payload.get("refRates") or []) if isinstance(payload, dict) else []:
+    for item in items:
         day = item.get("effectiveDate") if isinstance(item, dict) else None
         rate = _rate(item.get("percentRate")) if isinstance(item, dict) else None
         if (not isinstance(day, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) or rate is None

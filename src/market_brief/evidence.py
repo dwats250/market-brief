@@ -431,6 +431,14 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
 RATES_HISTORY_KEYS = {"treasury", "treasury-real", "nyfed-sofr", "nyfed-effr"}
 
 
+def _real_date(text):
+    try:
+        date.fromisoformat(text)
+    except ValueError:
+        return False
+    return True
+
+
 def _finite(value):
     return (not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value))
 
@@ -452,7 +460,8 @@ def rates_history_record(raw, by_source, now):
         series, previous, ok = [], "", isinstance(record.get("series"), list)
         for entry in record.get("series") or [] if ok else []:
             day = entry.get("date") if isinstance(entry, dict) else None
-            if not (isinstance(day, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) and previous < day < today):
+            if not (isinstance(day, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) and _real_date(day)
+                    and previous < day < today):
                 ok = False
                 break
             previous = day

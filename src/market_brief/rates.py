@@ -83,18 +83,21 @@ def _row(ident, topic, metric, value, unit, baseline, source, day, retrieved, in
 
 
 def horizon_change(series, tenor, steps):
-    """`(change_bp, prior_date)` from the latest entry back `steps` official entries that report the tenor, or None."""
-    reported = [entry for entry in series if tenor in entry["values"]]
-    if not reported or reported[-1] is not series[-1] or len(reported) <= steps:
+    """`(change_bp, prior_date)` against the official entry exactly `steps` entries before the latest, or None.
+
+    Positions are official entries: when the latest entry or the entry at that position does not report the tenor,
+    there is no change (an unavailable tenor is not a holiday, so nothing is reached further back)."""
+    if len(series) <= steps or tenor not in series[-1]["values"] or tenor not in series[-1 - steps]["values"]:
         return None
-    prior = reported[-1 - steps]
+    prior = series[-1 - steps]
     return _bp(series[-1]["values"][tenor]) - _bp(prior["values"][tenor]), prior["date"]
 
 
 def daily_changes(series, tenor):
-    """`[(date, change_bp)]` between consecutive entries that both report the tenor (point in time, oldest first)."""
-    reported = [entry for entry in series if tenor in entry["values"]]
-    return [(b["date"], _bp(b["values"][tenor]) - _bp(a["values"][tenor])) for a, b in zip(reported, reported[1:])]
+    """`[(date, change_bp or None)]` between each pair of adjacent official entries, oldest first: None where either
+    entry lacks the tenor, so a gap is never folded into a one-day change."""
+    return [(b["date"], _bp(b["values"][tenor]) - _bp(a["values"][tenor])
+             if tenor in a["values"] and tenor in b["values"] else None) for a, b in zip(series, series[1:])]
 
 
 def volatility(series, tenor="10Y", window=VOL_WINDOW, baseline=VOL_BASELINE):
@@ -104,9 +107,14 @@ def volatility(series, tenor="10Y", window=VOL_WINDOW, baseline=VOL_BASELINE):
     Each historical value uses only changes up to its own date. Returns counts whatever the outcome; `sd` is None when
     fewer than `window` changes exist, `percentile` None when fewer than `baseline` values exist."""
     changes = daily_changes(series, tenor)
+    # A window counts only when all of its changes exist (no missing tenor inside it).
     values = [(changes[i][0], statistics.stdev([c for _, c in changes[i - window + 1:i + 1]]))
-              for i in range(window - 1, len(changes))]
-    result = dict(tenor=tenor, window=window, baseline=baseline, changes=len(changes), values=len(values),
+              for i in range(window - 1, len(changes))
+              if all(c is not None for _, c in changes[i - window + 1:i + 1])]
+    if values and values[-1][0] != (series[-1]["date"] if series else None):
+        values = []  # the latest entry has no usable change: never publish an older reading under its date
+    result = dict(tenor=tenor, window=window, baseline=baseline,
+                  changes=sum(c is not None for _, c in changes), values=len(values),
                   sd=None, percentile=None, date=None, first=None, median=None, low=None, high=None)
     if not values:
         return result
@@ -143,7 +151,23 @@ def leadership(changes, threshold):
 def _funding(packet, retrieved_by):
     """SOFR, EFFR and their spread when both report the same business day, plus a short trend for the chart."""
     sofr, effr = _series(packet, "nyfed-sofr"), _series(packet, "nyfed-effr")
-    record, rows = dict(sofr=None, effr=None, spread=None, explainer=FUNDING_EXPLAINER, trend=[]), []
+    notes = []
+    for key, name in (("sofr", "SOFR"), ("effr", "EFFR")):
+        series = sofr if key == "sofr" else effr
+        row = next((r for r in packet.get("observations", []) if r.get("id") == f"nyfed-{key}"), None)
+        usable = (row is not None and row.get("status") in ("BACKGROUND", "AVAILABLE")
+                  and isinstance(row.get("value"), (int, float)))
+        if series and not (usable and row["observed_at"] == series[-1]["date"]
+                           and _bp(row["value"]) == _bp(series[-1]["rate"])):
+            # Only a history whose latest entry is this run's admitted rate stands (a stale or mismatched row
+            # withholds it whole), so nothing here outlives evidence admission.
+            if key == "sofr":
+                sofr = []
+            else:
+                effr = []
+            if series and usable:
+                notes.append(f"The {name} history did not match this run's admitted rate, so it is not shown.")
+    record, rows = dict(sofr=None, effr=None, spread=None, explainer=FUNDING_EXPLAINER, trend=[], notes=notes), []
     for key, series in (("sofr", sofr), ("effr", effr)):
         if series:
             latest, prior = series[-1], (series[-2] if len(series) >= 2 else None)
@@ -204,8 +228,8 @@ def derive_rates(packet, threshold=3.0):
                 record["horizons"][tenor][window] = found and dict(bp=found[0], since=found[1])
                 if found:
                     rows.append(_row(f"treasury-{tenor.lower()}-change-{window}", f"US {tenor}", metric, found[0],
-                                     "bp", f"official observation {found[1]}, {steps} observations earlier",
-                                     "treasury", day, got))
+                                     "bp", f"official entry {steps} entries earlier", "treasury", day, got,
+                                     window_start=found[1]))
             one = horizon_change(nominal, tenor, 1)
             record["horizons"][tenor]["1d"] = one and dict(bp=one[0], since=one[1])
         for name, short, long in EXTRA_SPREADS:
@@ -229,8 +253,8 @@ def derive_rates(packet, threshold=3.0):
         record["volatility"] = vol
         if vol["sd"] is not None:
             rows.append(_row("treasury-10y-vol20", "US 10Y", VOL_METRIC, vol["sd"], "bp/day",
-                             f"sample SD of the 20 daily 10Y changes from {vol['first']} to {vol['date']}",
-                             "treasury", day, got, sample_count=VOL_WINDOW))
+                             "sample SD of the last 20 daily 10Y changes", "treasury", day, got,
+                             sample_count=VOL_WINDOW, window_start=vol["first"]))
         if vol["percentile"] is not None:
             rows.append(_row("treasury-10y-vol20-pct", "US 10Y", VOL_PCT_METRIC, vol["percentile"], "percentile",
                              "share of the trailing 252 twenty-session values at or below today's, today included",
@@ -238,6 +262,11 @@ def derive_rates(packet, threshold=3.0):
     real_ok = consistent(packet, real, lambda t: f"US {t} real", "daily real par yield")
     if real and not real_ok:
         notes.append("The real-yield history did not match this run's real curve, so its horizons are withheld.")
+    elif real_ok and not (nominal_ok and real[-1]["date"] == nominal[-1]["date"]):
+        # A real curve on another date would sit under the nominal curve's date; it is withheld, and says so.
+        real_ok = False
+        notes.append(f"The latest real (TIPS) curve is dated {real[-1]['date']}, not the nominal curve's date, so "
+                     "real yields and inflation compensation are not shown here.")
     if real_ok:
         latest, got = real[-1], retrieved_by.get("treasury-real")
         record["real_ok"] = True
@@ -248,34 +277,34 @@ def derive_rates(packet, threshold=3.0):
                 record["real"][tenor][window] = found and dict(bp=found[0], since=found[1])
                 if found:
                     rows.append(_row(f"treasury-real-{tenor.lower()}-change-{window}", f"US {tenor} real", metric,
-                                     found[0], "bp", f"official observation {found[1]}, {steps} observations earlier",
-                                     "treasury-real", latest["date"], got))
+                                     found[0], "bp", f"official entry {steps} entries earlier",
+                                     "treasury-real", latest["date"], got, window_start=found[1]))
             one = horizon_change(real, tenor, 1)
             record["real"][tenor]["1d"] = one and dict(bp=one[0], since=one[1])
         record["real_chart"] = [dict(date=e["date"], real=e["values"].get("10Y")) for e in real[-CHART_POINTS:]]
-    if nominal_ok and real_ok and nominal[-1]["date"] == real[-1]["date"]:
-        # Inflation compensation only where both curves report the same dates (never paired across dates).
+    if nominal_ok and real_ok:
+        # Inflation compensation at each official nominal entry whose date the real curve also reports, by position:
+        # a date either curve lacks is a gap, never closed up (so 5 entries back is the nominal entry 5 back).
         by_real = {e["date"]: e for e in real}
-        paired = [dict(date=e["date"],
-                       values={"10Y": _bp(e["values"]["10Y"]) - _bp(by_real[e["date"]]["values"]["10Y"])})
-                  for e in nominal if e["date"] in by_real and "10Y" in e["values"]
-                  and "10Y" in by_real[e["date"]]["values"]]
-        record["compensation"]["10Y"] = {"level_bp": paired[-1]["values"]["10Y"] if paired else None}
-        for steps, window, metric in IC_HORIZONS:
-            if len(paired) > steps and paired[-1]["date"] == nominal[-1]["date"]:
-                change = paired[-1]["values"]["10Y"] - paired[-1 - steps]["values"]["10Y"]
-                since = paired[-1 - steps]["date"]
-                record["compensation"]["10Y"][window] = dict(bp=change, since=since)
-                rows.append(_row(f"treasury-10y-inflation-comp-change-{window}", "US 10Y inflation compensation",
-                                 metric, change, "bp", f"official observation {since}, {steps} observations earlier",
-                                 "treasury-real", nominal[-1]["date"], retrieved_by.get("treasury-real")))
-            else:
+        paired = [(e["date"], _bp(e["values"]["10Y"]) - _bp(by_real[e["date"]]["values"]["10Y"])
+                   if "10Y" in e["values"] and "10Y" in by_real.get(e["date"], {"values": {}})["values"] else None)
+                  for e in nominal]
+        latest_ic = paired[-1][1]
+        record["compensation"]["10Y"] = {"level_bp": latest_ic}
+        for steps, window, metric in (*((1, "1d", None),), *IC_HORIZONS):
+            prior = paired[-1 - steps] if len(paired) > steps else (None, None)
+            if latest_ic is None or prior[1] is None:
                 record["compensation"]["10Y"][window] = None
-        one = ((paired[-1]["values"]["10Y"] - paired[-2]["values"]["10Y"], paired[-2]["date"])
-               if len(paired) > 1 else None)
-        record["compensation"]["10Y"]["1d"] = one and dict(bp=one[0], since=one[1])
+                continue
+            change, since = latest_ic - prior[1], prior[0]
+            record["compensation"]["10Y"][window] = dict(bp=change, since=since)
+            if metric:
+                rows.append(_row(f"treasury-10y-inflation-comp-change-{window}", "US 10Y inflation compensation",
+                                 metric, change, "bp", f"official entry {steps} entries earlier", "treasury-real",
+                                 nominal[-1]["date"], retrieved_by.get("treasury-real"), window_start=since))
     funding, funding_rows = _funding(packet, retrieved_by)
     record["funding"] = funding
+    notes.extend(funding.pop("notes"))
     rows.extend(funding_rows)
     for row in rows:
         if row["id"] not in MODEL_ROWS:

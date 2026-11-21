@@ -104,8 +104,14 @@ def stale_movement(packet, row):
     names no move), so it is not evidence of current movement for the analyst either: the authority filter and the
     deterministic comparisons leave it out. Levels stay, dated, and the row stays in the evidence record.
     """
-    return (row.get("metric") in (CHANGE, SPREAD_CHANGE, REAL_CHANGE, IC_CHANGE, *HISTORY_MOVES)
-            and (packet.get("curve") or {}).get("freshness") == "stale")
+    if row.get("metric") not in (CHANGE, SPREAD_CHANGE, REAL_CHANGE, IC_CHANGE, *HISTORY_MOVES):
+        return False
+    curve = packet.get("curve") or {}
+    if curve.get("freshness") == "stale":
+        return True
+    # A real-curve move dated before the nominal curve is older than the curve the page presents: not current either.
+    return (row.get("metric") in (REAL_CHANGE, IC_CHANGE) and bool(curve.get("observed_at"))
+            and row.get("observed_at") != curve["observed_at"])
 
 
 def classify(d2, d10, long_change=None, threshold=3.0):

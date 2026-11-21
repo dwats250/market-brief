@@ -420,3 +420,28 @@ def test_review_7_an_impossible_date_drops_the_series():
     by_source = {"nyfed-sofr": dict(status="AVAILABLE", retention_allowed=True)}
     bad = {"nyfed-sofr": dict(source_id="nyfed-sofr", series=[dict(date="2026-02-30", rate=3.9)])}
     assert rates_history_record(bad, by_source, NOW) == {}
+
+
+# --- Codex Astra re-review of 811d3ce -----------------------------------------------------------------------------
+
+def test_rereview_1_lagging_real_daily_changes_stay_out_of_synthesis():
+    real = [e for e in FIXTURE["treasury_real"] if e["date"] <= "2026-11-17"]
+    model = model_packet(packet_for(raw_input(real=real)))
+    assert not [r for r in model["observations"] + model["derived"]
+                if r["metric"] in ("daily real yield change", "daily inflation compensation change")]
+
+
+def test_rereview_2_an_earlier_funding_entry_that_contradicts_the_admitted_change_shows_no_movement():
+    raw = raw_input()
+    raw["rates_history"]["nyfed-sofr"]["series"] = copy.deepcopy(FIXTURE["sofr"])
+    raw["rates_history"]["nyfed-sofr"]["series"][-2]["rate"] = 9.91
+    funding = packet_for(raw)["rates"]["funding"]
+    assert funding["sofr"]["change_bp"] is None and funding["spread"]["change_bp"] is None
+    assert funding["sofr"]["rate"] == 3.91 and len(funding["trend"]) <= 1  # no range to state
+
+
+def test_rereview_3_window_dates_reach_the_analyst_and_continuity():
+    from market_brief.continuity import SNAPSHOT_FIELDS
+    context = analyst_context(packet_for())
+    fact = next(r for g in context["catalog"] for r in g["rows"] if r["id"] == "treasury-10y-change-5s")
+    assert fact["window_start"] == "2026-11-13" and "window_start" in SNAPSHOT_FIELDS

@@ -593,7 +593,7 @@ def evidence_catalog(packet):
 
 MODEL_RECORD_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at",
                        "source_id", "status", "reason", "frequency", "freshness",
-                       "expected_freshness", "magnitude", "identity", *RELEASE_FIELDS, *ISSUER_FIELDS)
+                       "expected_freshness", "magnitude", "identity", "window_start", *RELEASE_FIELDS, *ISSUER_FIELDS)
 
 
 # A scheduled release is not a measurement: the analyst needs what it is, when it is and where it falls in the

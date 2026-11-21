@@ -175,6 +175,18 @@ def _funding(packet, retrieved_by):
                                prior_date=prior["date"] if prior else None,
                                change_bp=_bp(latest["rate"]) - _bp(prior["rate"]) if prior else None,
                                target=latest.get("target"), id=f"nyfed-{key}")
+    for key in ("sofr", "effr"):
+        item = record[key]
+        change_row = next((r for r in packet.get("observations", []) if r.get("id") == f"nyfed-{key}-change"), None)
+        if item and item["change_bp"] is not None and not (
+                change_row and isinstance(change_row.get("value"), (int, float))
+                and change_row.get("baseline") == f"daily observation {item['prior_date']}"
+                and bp(change_row["value"]) == item["change_bp"]):
+            # The prior entry disagrees with the admitted change: no movement and no trend from this history.
+            item.update(change_bp=None, prior_date=None)
+            sofr, effr = (sofr[-1:], effr) if key == "sofr" else (sofr, effr[-1:])
+            notes.append(f"The {key.upper()} history's earlier entries did not match this run's admitted change, so "
+                         "its movement is not shown.")
     common = sorted({e["date"] for e in sofr} & {e["date"] for e in effr})
     by_sofr, by_effr = {e["date"]: e for e in sofr}, {e["date"]: e for e in effr}
     record["trend"] = [dict(date=day, sofr=by_sofr[day]["rate"], effr=by_effr[day]["rate"],

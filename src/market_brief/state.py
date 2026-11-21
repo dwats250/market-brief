@@ -104,6 +104,17 @@ def _measures(state, cohort):
                 prior_close=next(iter(rows.values()))["prior_close"], first=clocks[0], last=clocks[-1])
 
 
+def live_snapshot(current, previous):
+    """The snapshot a refresh's edition state keeps (WP-MB-TRUTH-01): this run's own when it can be compared,
+    otherwise the last comparable one an earlier edition of the same session kept, so a close whose prints are all
+    DELAYED still holds the last live evidence, at its own clock. Never another session's."""
+    if not _snapshot_reason(current or {}) or not previous or previous.get("rule") != RULE:
+        return current
+    if previous.get("session_date") != (current or {}).get("session_date") or _snapshot_reason(previous):
+        return current
+    return previous
+
+
 def divergence(opening, current):
     """`dict(status, reason, …)`. Status `shown` carries the direction, kind, the common cohort and both sides'
     measures; `quiet` and `insufficient` carry only why nothing is shown."""

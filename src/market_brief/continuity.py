@@ -27,6 +27,7 @@ from .evidence import (
     timestamp,
 )
 from .schedule import CHECKPOINT_TITLES, VANCOUVER, VANCOUVER_LABEL, next_session_date, next_synthesis
+from .state import live_snapshot
 from .state import snapshot as market_snapshot
 
 CONTINUITY_SCHEMA = "market-brief.continuity.v1"
@@ -319,6 +320,9 @@ def admit_prior_state(bundle, packet):
             result["anchors"][slot] = _anchor_summary(record)
             result["snapshots"][slot] = record["observed"]["snapshots"]
             carrier = record
+            if record["observed"].get("market_state"):
+                # The last live market snapshot a refresh kept (`state.live_snapshot`), for this session's pages.
+                result["market_state"] = record["observed"]["market_state"]
         if not result["anchors"]:
             result["reason"] = "same-session continuity unavailable: " + "; ".join(reasons)
             return result
@@ -981,7 +985,11 @@ def carried_state(packet, prior, comparisons, interpretation, app_version=""):
                      evidence_cutoff=run["target_time"]),
         observed=dict(data_status=data_status(packet), anchors=prior.get("anchors", {}),
                       continuity=prior["status"], continuity_reason=prior.get("reason", ""),
-                      comparisons=comparisons, snapshots=snapshots),
+                      comparisons=comparisons, snapshots=snapshots,
+                      # The last live market snapshot of this session (`state.live_snapshot`): this run's own when
+                      # comparable, else the one an earlier refresh kept. Display evidence only; never compared as
+                      # continuity and never shown to the analyst.
+                      market_state=live_snapshot(market_snapshot(packet), prior.get("market_state"))),
         assessment={"class": "INTERPRETATION", "origin": "carried", "interpretation_run_id": interpreted_by,
                     "character": character, "relationships": relationships, "watches": watches,
                     "retired": [], "changes": []},

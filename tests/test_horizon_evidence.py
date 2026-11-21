@@ -167,3 +167,51 @@ def test_a_verdict_on_an_expired_watch_cites_only_its_horizon_prints():
     for cited in (["previous_close:SPY-intraday", "XLK-intraday"], ["previous_close:XLK-intraday", "SPY-intraday"]):
         with pytest.raises(ValueError, match="horizon"):
             validate_state(narrative(update("strengthened", cited)), context, shown, set())
+
+
+DMA = row("SPY-dma50", -2.5, "2026-11-18", frequency="daily")
+CHANGED_DMA = dict(id="cmp-previous_close-SPY-dma50", anchor="previous_close", prior_ref="previous_close:SPY-dma50",
+                   status="changed", topic="SPY", metric="vs 50DMA", unit="%", current_ref="SPY-dma50",
+                   prior_value=-2.5, current_value=-3.1, delta=-0.6, prior_observed_at="2026-11-18",
+                   current_observed_at="2026-11-19")
+
+
+def test_a_changed_daily_background_never_makes_a_partly_covered_expired_watch_assessable():
+    """Re-review P1: XLK's close print is missing; SPY's 50DMA distance moved overnight. Still undecided."""
+    background = dict(TECH, evidence_refs=["XLK-intraday", "SPY-intraday", "SPY-dma50"])
+    prior = premarket_prior({"SPY-intraday": NOV19["SPY-intraday"], "SPY-dma50": DMA}, [background])
+    assert horizon_refs(background, prior) == []
+    assert evaluability(background, prior, [*COMPARISONS, CHANGED_DMA]) == "not_comparable"
+
+
+def test_a_same_session_expired_watch_is_still_judged_on_current_prints():
+    """A horizon that ends at this checkpoint (by the 8:00 AM update, judged at 8:00 AM) keeps the current rule."""
+    due = watch("w-due", ["XLK-intraday"], expires="2026-11-19T15:00:00+00:00", phrase="By the update",
+                declared="NEXT_BRIEF")
+    prior = premarket_prior({}, [due])
+    same_day = dict(unavailable("XLK-intraday"), status="changed", current_ref="XLK-intraday",
+                    current_observed_at="2026-11-19T15:02:30Z")
+    assert evaluability(due, prior, [same_day]) == "assessable"
+
+
+def test_a_verdict_may_add_dated_daily_background_but_never_another_sessions_print():
+    """Re-review P2: prior-day background beside the horizon print is allowed; a current print is not."""
+    background = dict(TECH, evidence_refs=["XLK-intraday", "SPY-intraday", "SPY-dma50"])
+    context = continuity_context(premarket_prior(dict(NOV19, **{"SPY-dma50": DMA}), [background]), COMPARISONS)
+    shown = {"XLK-intraday", "SPY-intraday", "SPY-dma50"}
+    validate_state(narrative(update("weakened", ["previous_close:XLK-intraday", "previous_close:SPY-dma50"])),
+                   context, shown, set())
+    with pytest.raises(ValueError, match="horizon"):
+        validate_state(narrative(update("weakened", ["previous_close:SPY-dma50"])), context, shown, set())
+    with pytest.raises(ValueError, match="horizon"):
+        validate_state(narrative(update("weakened", ["previous_close:XLK-intraday", "SPY-dma50"])), context,
+                       shown, set())
+
+
+def test_a_daily_ref_known_only_from_the_watchs_values_is_background():
+    """Re-review P3: no anchor kept XLK's 50DMA row, but the watch's own values say it is daily."""
+    mixed = dict(TECH, evidence_refs=["XLK-intraday", "SPY-intraday", "XLK-dma50"],
+                 values={"XLK-dma50": dict(topic="XLK", metric="vs 50DMA", frequency="daily", value=-3.0, unit="%",
+                                           observed_at="2026-11-18")})
+    assert horizon_refs(mixed, premarket_prior(NOV19, [mixed])) == ["previous_close:XLK-intraday",
+                                                                    "previous_close:SPY-intraday"]

@@ -441,6 +441,14 @@ def compare_all(prior, packet):
 HORIZON_WINDOW = NEAR_CLOSE_WINDOW  # how close to its horizon a print must be to stand for the horizon
 
 
+def _is_daily(ref, watch, prior):
+    """Is this evidence row a daily (prior-day background) measure? Read from any anchor's snapshot of it, or from the
+    watch's own creation-time values when no snapshot kept it. Unknown counts as timestamped (stricter)."""
+    rows = [(anchor_rows or {}).get(ref) for anchor_rows in prior.get("snapshots", {}).values()]
+    rows.append((watch.get("values") or {}).get(ref))
+    return any(row and row.get("frequency") == "daily" for row in rows)
+
+
 def horizon_refs(watch, prior):
     """The prints that decide an expired watch at its horizon, as namespaced prior refs (WP-MB-TRUTH-01).
 
@@ -461,7 +469,7 @@ def horizon_refs(watch, prior):
         return []
     refs, needed = [], 0
     for ref in watch.get("evidence_refs", []):
-        if any((rows or {}).get(ref, {}).get("frequency") == "daily" for rows in prior.get("snapshots", {}).values()):
+        if _is_daily(ref, watch, prior):
             continue
         needed += 1
         best = None
@@ -491,6 +499,17 @@ def evaluability(watch, prior, comparisons):
         return "assessable"
     refs = set(watch.get("evidence_refs", []))
     statuses = [c["status"] for c in comparisons if c["prior_ref"].split(":", 1)[1] in refs]
+    expired_session = (watch.get("horizon") or {}).get("expires_session") if watch.get("lifecycle") == "expired" \
+        else None
+    if expired_session:
+        # Judged after its horizon: only a timestamped move in the horizon's own session can decide it. A later
+        # session's print, or a daily measure that moved, never stands in for missing horizon prints.
+        statuses = ["not_comparable" if status == "changed" and (
+                        "T" not in str(c.get("current_observed_at") or "")
+                        or _observation_date(dict(observed_at=c["current_observed_at"])) != expired_session)
+                    else status
+                    for status, c in zip(statuses, [c for c in comparisons
+                                                    if c["prior_ref"].split(":", 1)[1] in refs])]
     if not statuses or all(status == "unavailable" for status in statuses):
         return "missing_evidence"
     if any(status == "changed" for status in statuses):
@@ -630,8 +649,12 @@ def validate_state(narrative, context, shown, topics):
         check_refs(update, True, f"watch_updates[{index}]")
         if watch.get("horizon_refs"):
             # Decided at its horizon: a verdict rests on those prints, never on another session's alone.
+            # Its horizon prints, plus only dated prior-day background (a daily snapshot); never a current print.
             cited = set(update["evidence_ids"])
-            if update["assessment"] != "unresolved" and (not cited or not cited <= set(watch["horizon_refs"])):
+            background = {ref for ref in cited if ":" in ref and "T" not in str(
+                (prior_values(context).get(ref) or {}).get("observed_at") or "T")}
+            if update["assessment"] != "unresolved" and (not cited & set(watch["horizon_refs"])
+                                                        or not cited <= set(watch["horizon_refs"]) | background):
                 raise ValueError(f"a verdict on an expired watch must cite only its horizon prints at "
                                  f"watch_updates[{index}]: {', '.join(watch['horizon_refs'])}")
         elif not any(":" not in ref for ref in update["evidence_ids"]) and watch["evaluability"] == "assessable":

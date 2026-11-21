@@ -15,7 +15,7 @@ its own record, so both clocks coincide; a deterministic refresh carries the rec
 import html
 import math
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -50,6 +50,7 @@ from .curve import (
     TENORS,
     UNAVAILABLE,
     bp,
+    curve_freshness,
     curve_record,
     prior_entry_date,
     rates,
@@ -949,6 +950,189 @@ def rates_module(packet, facts, catalog):
                            lead_part=next((p for p in parts if p["maturity"] == "10Y"), parts[0] if parts else None)))
 
 
+PANEL_TITLE = "Rates in context"
+PANEL_ROWS = (("3M", "US 3M", "treasury-3m"), ("2Y", "US 2Y", "treasury-2y"), ("5Y", "US 5Y", "treasury-5y"),
+              ("10Y", "US 10Y", "treasury-10y"), ("30Y", "US 30Y", "treasury-30y"))
+PANEL_CHART = dict(height=132, top=12, bottom=104, label_y=124)
+PANEL_CAVEAT = ("Horizons count Treasury's own daily entries, so a bond-market holiday is skipped, never filled. "
+                "Inflation compensation is nominal minus real (TIPS) at the same maturity and date; it is not "
+                "expected inflation.")
+VOL_EXPLAINER = ("How much the 10-year yield has typically moved per day over its last 20 entries (the sample standard "
+                 "deviation), placed among its own last 252 readings.")
+
+
+def _signed_bp(value):
+    return "—" if value is None else "0" if value == 0 else f"{MINUS if value < 0 else '+'}{abs(value)}"
+
+
+def _move(found):
+    return dict(display=_signed_bp(found["bp"]) if found else "—", absent=not found,
+                since=short_date(found["since"]) if found else "")
+
+
+def is_rates_history_row(row):
+    """A row the rates panel presents (`rates.py` or the New York Fed), so it is not repeated as a loose macro fact."""
+    return (row.get("formula_version") == "rates-history.v1" or str(row.get("source_id", "")).startswith("nyfed-"))
+
+
+def rates_chart(points):
+    """Server-side geometry for the 2Y and 10Y over the last 20 official entries: straight segments between consecutive
+    entries that both report the tenor (a gap breaks the line), first and last dates, and right-end values."""
+    series = {tenor: [(i, p[tenor]) for i, p in enumerate(points) if p.get(tenor) is not None]
+              for tenor in ("2Y", "10Y")}
+    values = [v for pts in series.values() for _, v in pts]
+    if len(points) < 2 or not values:
+        return None
+    low, high = min(values), max(values)
+    span = max((high - low) * 1.15, 0.2)
+    base = (low + high) / 2 - span / 2
+    top, bottom = PANEL_CHART["top"], PANEL_CHART["bottom"]
+    last = len(points) - 1
+
+    def x(i):
+        return f"{2 + 72 * i / last:.1f}%"
+
+    def y(v):
+        return round(bottom - (v - base) / span * (bottom - top), 1)
+
+    lines = []
+    for tenor, pts in series.items():
+        segments = [dict(x1=x(a), y1=y(va), x2=x(b), y2=y(vb)) for (a, va), (b, vb) in zip(pts, pts[1:]) if b == a + 1]
+        end = pts[-1] if pts else None
+        lines.append(dict(tenor=tenor, segments=segments,
+                          end=dict(x=x(end[0]), y=y(end[1]), label=f"{tenor} {end[1]:.2f}%") if end else None))
+    # Keep the two end labels apart when the lines finish close together.
+    ends = [line["end"] for line in lines if line["end"]]
+    if len(ends) == 2 and abs(ends[0]["y"] - ends[1]["y"]) < 14:
+        upper, lower = sorted(ends, key=lambda e: e["y"])
+        mid = (upper["y"] + lower["y"]) / 2
+        upper["label_y"], lower["label_y"] = round(mid - 8, 1), round(mid + 8, 1)
+    for end in ends:
+        end.setdefault("label_y", end["y"])
+        end["label_y"] = round(end["label_y"] + 4, 1)
+    return dict(height=PANEL_CHART["height"], label_y=PANEL_CHART["label_y"], lines=lines,
+                first=dict(x=x(0), text=short_date(points[0]["date"])),
+                last=dict(x=x(last), text=short_date(points[-1]["date"])), count=len(points),
+                summary=(f"2Y and 10Y par yields over the last {len(points)} Treasury days, "
+                         f"{short_date(points[0]['date'])} to {short_date(points[-1]['date'])}."))
+
+
+def funding_view(funding, run_date):
+    """SOFR, EFFR and their spread, each dated; a funding rate more than five days old shows its level only."""
+    if not funding or not (funding.get("sofr") or funding.get("effr")):
+        return None
+    rows = []
+    for key, name in (("sofr", "SOFR"), ("effr", "EFFR")):
+        item = funding.get(key)
+        if not item:
+            rows.append(dict(name=name, level="not collected", change="", date="", id=None))
+            continue
+        fresh = curve_freshness(date.fromisoformat(item["date"]), run_date)
+        if fresh["age_days"] > 7:
+            # Evidence admission rejects a daily row more than seven days old; the page shows no number either.
+            rows.append(dict(name=name, level="not shown", change=f"latest is {short_date(item['date'])}, over a "
+                             "week old", date="", id=None, stale=True))
+            continue
+        change = ("" if fresh["status"] == "stale" or item["change_bp"] is None else
+                  f"{rate_display(item['change_bp'], 'bp')} from {short_date(item['prior_date'])}")
+        rows.append(dict(name=name, level=f"{item['rate']:.2f}%", change=change, date=short_date(item["date"]),
+                         revised=item.get("revised", False), id=item["id"], stale=fresh["status"] == "stale"))
+    spread = funding.get("spread")
+    spread_line = None
+    if spread and (run_date - date.fromisoformat(spread["date"])).days <= 7:
+        detail = ("" if spread["change_bp"] is None else
+                  f" ({rate_display(spread['change_bp'], 'bp')} from {short_date(spread['prior_date'])})")
+        spread_line = dict(text=f"SOFR minus EFFR {rate_display(spread['bp'], SPREAD_UNIT)}{detail}", id=spread["id"],
+                           date=short_date(spread["date"]))
+    target = (funding.get("effr") or {}).get("target")
+    trend = funding.get("trend") or []
+    trend_text = ""
+    if len(trend) >= 2:
+        sofr = [t["sofr"] for t in trend]
+        trend_text = (f"Over the last {len(trend)} shared business days ({short_date(trend[0]['date'])} to "
+                      f"{short_date(trend[-1]['date'])}), SOFR ranged {min(sofr):.2f}–{max(sofr):.2f}% and "
+                      f"SOFR minus EFFR {min(t['spread_bp'] for t in trend)} to "
+                      f"{max(t['spread_bp'] for t in trend)} bp.")
+    return dict(rows=rows, spread=spread_line, trend=trend_text, explainer=funding["explainer"],
+                target=f"FOMC target range {target[0]:.2f}–{target[1]:.2f}%" if target else "")
+
+
+def rates_panel(packet, catalog):
+    """Rates in context: 1-, 5- and 20-entry moves across the curve, extra spreads, which end led, nominal versus real
+    10Y, a 20-entry chart, 10Y volatility with its sample counts, and overnight funding. From `packet["rates"]` and
+    the rows `rates.py` derived; nothing is computed here but display."""
+    record = packet.get("rates") or {}
+    if not record:
+        return None
+    run_date = timestamp(packet["run"]["target_time"]).astimezone(ET).date()
+    stale = (packet.get("curve") or {}).get("freshness") == "stale"
+    ids = []
+    rows, chart, spreads, leaders, parts, vol = [], None, [], [], [], None
+    if record.get("nominal_ok") and not stale:
+        for maturity, topic, ident in PANEL_ROWS:
+            horizons = record["horizons"].get(maturity) or {}
+            if horizons.get("level") is None:
+                continue
+            rows.append(dict(maturity=maturity, level=f"{horizons['level']:.2f}%",
+                             moves=[_move(horizons.get(w)) for w in ("1d", "5s", "20s")]))
+            ids += [i for i in (ident, f"{ident}-change-5s", f"{ident}-change-20s") if i in catalog]
+        real = (record.get("real") or {}).get("10Y")
+        if real and real.get("level") is not None:
+            rows.append(dict(maturity="10Y real", level=f"{real['level']:.2f}%",
+                             moves=[_move(real.get(w)) for w in ("1d", "5s", "20s")]))
+            ids += [i for i in ("treasury-real-10y-change-5s", "treasury-real-10y-change-20s") if i in catalog]
+        comp = (record.get("compensation") or {}).get("10Y")
+        if comp and comp.get("level_bp") is not None:
+            rows.append(dict(maturity="10Y inflation comp.", level=f"{comp['level_bp'] / 100:.2f}%",
+                             moves=[_move(comp.get(w)) for w in ("1d", "5s", "20s")]))
+            ids += [i for i in ("treasury-10y-inflation-comp-change-5s", "treasury-10y-inflation-comp-change-20s")
+                    if i in catalog]
+        for name, spread in (record.get("spreads") or {}).items():
+            move = spread["change_bp"]
+            detail = ("" if move is None else " (unchanged)" if move == 0 else
+                      f" ({abs(move)} bp {'steeper' if move > 0 else 'flatter'})")
+            spreads.append(f"{name} {rate_display(spread['bp'], SPREAD_UNIT)}{detail}")
+            ids += [i for i in (f"treasury-{name}", f"treasury-{name}-change") if i in catalog]
+        words = {"1d": "1 day", "5s": "5 days", "20s": "20 days"}
+        for item in record.get("leadership") or []:
+            leaders.append(dict(horizon=words[item["horizon"]], text=item["text"],
+                                detail=f"2Y {_signed_bp(item['front_bp'])}, 30Y {_signed_bp(item['long_bp'])} bp",
+                                lead=item["lead"]))
+        if real and comp:
+            for window, word in (("1d", "1 day"), ("5s", "5 days"), ("20s", "20 days")):
+                n = (record["horizons"].get("10Y") or {}).get(window)
+                r, c = real.get(window), comp.get(window)
+                if n and r and c and n["since"] == r["since"] == c["since"]:
+                    parts.append(dict(horizon=word, text=f"nominal {_signed_bp(n['bp'])} = real {_signed_bp(r['bp'])}"
+                                                         f" + inflation compensation {_signed_bp(c['bp'])} bp"))
+        chart = rates_chart(record.get("chart") or [])
+        v = record.get("volatility") or {}
+        if v.get("sd") is not None:
+            text = f"{v['sd']:.2f} bp a day over the 20 days {short_date(v['first'])} to {short_date(v['date'])}"
+            if v.get("percentile") is not None:
+                text += (f"; {v['percentile']:.1f}th percentile of its last {v['baseline']} readings "
+                         f"(median {v['median']:.2f}, range {v['low']:.2f}–{v['high']:.2f})")
+                ids += [i for i in ("treasury-10y-vol20", "treasury-10y-vol20-pct") if i in catalog]
+            else:
+                text += (f"; {v['values']} readings so far, fewer than the {v['baseline']} a percentile needs")
+                ids += [i for i in ("treasury-10y-vol20",) if i in catalog]
+            vol = dict(text=text, explainer=VOL_EXPLAINER)
+        elif v:
+            vol = dict(text=f"Not enough history: {v['changes']} daily changes, {v['window']} needed.",
+                       explainer=VOL_EXPLAINER)
+    funding = funding_view(record.get("funding"), run_date)
+    if funding:
+        ids += [i for i in ("nyfed-sofr", "nyfed-sofr-change", "nyfed-effr", "nyfed-effr-change", "nyfed-sofr-effr")
+                if i in catalog]
+    if not (rows or funding):
+        return None
+    observed = record.get("observed_at")
+    caption = f"Treasury entries to {short_date(observed)}" if observed and rows else "official daily data"
+    return dict(title=PANEL_TITLE, caption=caption, rows=rows, spreads=spreads, leaders=leaders, parts=parts,
+                chart=chart, volatility=vol, funding=funding, notes=list(record.get("notes") or []),
+                caveat=PANEL_CAVEAT if rows else "", proof_ids=ids)
+
+
 def release_cards(rows, events, sources=(), unpublished=()):
     """One card per admitted release, from this run's rows (the observed clock): its official time, family, reference
     month and values, and the IDs of the calendar events it has now happened for, which leave What matters next.
@@ -1251,7 +1435,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     unpublished = [r for r in packet["observations"]
                    if r["frequency"] == "release" and r["status"] == "UNAVAILABLE" and r.get("reference_period")]
     other_macro = [r for r in facts if r not in equity and r not in treasuries and r not in releases
-                   and r not in issuer]
+                   and r not in issuer and not is_rates_history_row(r)]
     # After a close whose daily bar is not yet published, the retained daily return is two
     # sessions old relative to the completed session and must not pose as today.
     daily_today = not packet.get("history_lag")
@@ -1267,6 +1451,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     sector_notes = table_notes(sector_rows, sector_change, packet, session)
     metal_notes = table_notes(metal_rows, metal_change, packet, session)
     module = rates_module(packet, treasuries, catalog)
+    panel = rates_panel(packet, catalog)
     metal_pairs = [f"{row['symbol']} vs {row['relative_label']}" for row in metal_rows if row["relative"]["id"]]
     yields = module["yields"]
     # The rates takeaway (readability pass): one small line after the take, only when the lead itself cites the
@@ -1635,7 +1820,8 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
                       lookback={s: v for s, v in packet.get("lookback", {}).items() if v["r20"] != "available"}),
         macro=dict(paragraphs=[paragraph(p) for p in narrative["sections"]["macro"]], releases=cards,
                    yields=yields, yields_asof=module["asof"], daily_change_label=module["daily_change_label"],
-                   curve=module["curve"], facts=other_macro,
+                   curve=module["curve"], facts=other_macro, panel=panel,
+                   panel_proof=refs(panel["proof_ids"], catalog) if panel else [],
                    yields_proof=refs(module["proof_ids"], catalog),
                    facts_proof=refs([row["id"] for row in other_macro], catalog)),
         sectors=dict(rows=sector_rows, change_label=sector_change, asof=sector_asof, proof=proof(sector_rows),
@@ -1763,7 +1949,7 @@ def markdown(view):
     lines.append("")
     mac = view["macro"]
     cross = view["cross_asset"]
-    if mac["paragraphs"] or mac["releases"] or mac["curve"] or mac["facts"] or cross["rows"]:
+    if mac["paragraphs"] or mac["releases"] or mac["curve"] or mac.get("panel") or mac["facts"] or cross["rows"]:
         lines += ["## Macro & rates", ""]
         for card in mac["releases"]:
             lines += [f"**ECONOMIC RELEASE** · {card['time']} · {esc(card['title'])} · {esc(card['period'])}", ""]
@@ -1803,6 +1989,32 @@ def markdown(view):
                 lines += ["", esc(curve["parts_caveat"])]
             for note in curve["notes"]:
                 lines += ["", esc(note)]
+            lines.append("")
+        panel = mac.get("panel")
+        if panel:
+            lines += [f"**{panel['title'].upper()}** · {esc(panel['caption'])}", ""]
+            if panel["rows"]:
+                lines += ["| Maturity | Yield | 1 day | 5 days | 20 days |", "|---|---:|---:|---:|---:|"]
+                lines += [f"| {row['maturity']} | {row['level']} | "
+                          + " | ".join(m["display"] for m in row["moves"]) + " |"
+                          for row in panel["rows"]]
+                lines.append("")
+            if panel["spreads"]:
+                lines.append("- Spreads · " + " · ".join(panel["spreads"]))
+            for item in panel["leaders"]:
+                lines.append(f"- Front vs long end, {item['horizon']} · {item['text']} ({item['detail']})")
+            for part in panel["parts"]:
+                lines.append(f"- 10Y, {part['horizon']} · {part['text']}")
+            if panel["volatility"]:
+                lines.append(f"- 10Y volatility · {esc(panel['volatility']['text'])}")
+            if panel["funding"]:
+                funding = panel["funding"]
+                for row in funding["rows"]:
+                    parts = (row["level"], row["date"] and f"on {row['date']}", row["change"])
+                    lines.append(f"- {row['name']} · " + " · ".join(filter(None, parts)))
+                if funding["spread"]:
+                    lines.append(f"- {funding['spread']['text']}")
+                lines.append(f"- {esc(funding['explainer'])}")
             lines.append("")
         for p in mac["paragraphs"]:
             lines += [para(p), ""]

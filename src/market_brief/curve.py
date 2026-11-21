@@ -29,6 +29,11 @@ REAL_LEVEL, REAL_CHANGE = "daily real par yield", "daily real yield change"
 IC_LEVEL, IC_CHANGE = "par inflation compensation", "daily inflation compensation change"
 IC_FORMULA = "par-ic.v1"
 IC_TENORS = ("5Y", "10Y", "30Y")
+# The history-derived moves (`rates.py`) follow the same stale rule as the daily changes.
+HISTORY_MOVES = ("five-session yield change", "twenty-session yield change", "five-session real yield change",
+                 "twenty-session real yield change", "five-session inflation compensation change",
+                 "twenty-session inflation compensation change", "twenty-session yield volatility",
+                 "volatility percentile, 252 sessions")
 # A spread level is a level, not a move: its own unit keeps it unsigned on the page and outside move magnitudes.
 SPREAD_UNIT = "bp spread"
 SPREAD_FORMULA = "curve-spread.v1"
@@ -99,8 +104,22 @@ def stale_movement(packet, row):
     names no move), so it is not evidence of current movement for the analyst either: the authority filter and the
     deterministic comparisons leave it out. Levels stay, dated, and the row stays in the evidence record.
     """
-    return (row.get("metric") in (CHANGE, SPREAD_CHANGE, REAL_CHANGE, IC_CHANGE)
-            and (packet.get("curve") or {}).get("freshness") == "stale")
+    if row.get("metric") not in (CHANGE, SPREAD_CHANGE, REAL_CHANGE, IC_CHANGE, *HISTORY_MOVES):
+        return False
+    curve = packet.get("curve") or {}
+    if curve.get("freshness") == "stale":
+        return True
+    # A real-curve move dated before the nominal curve is older than the curve the page presents: not current either.
+    if row.get("metric") not in (REAL_CHANGE, IC_CHANGE):
+        return False
+    if curve.get("observed_at"):
+        return row.get("observed_at") != curve["observed_at"]
+    # No nominal curve to date it against: the real move is judged on its own date, by the same five-day rule.
+    try:
+        run_date = timestamp(packet["run"]["target_time"]).astimezone(ET).date()
+        return curve_freshness(date.fromisoformat(row["observed_at"]), run_date)["status"] == "stale"
+    except (KeyError, TypeError, ValueError):
+        return True
 
 
 def classify(d2, d10, long_change=None, threshold=3.0):

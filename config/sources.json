@@ -5,6 +5,8 @@
   "wired": [
     "Treasury daily yield XML",
     "Treasury daily real (TIPS) yield XML",
+    "New York Fed Markets Data API: SOFR and EFFR, last 30 published business days (two exact routes)",
+    "Treasury nominal par curve history (current and previous year feeds) for 5- and 20-entry moves and 10Y volatility",
     "BLS release-calendar ICS, else the official monthly List View (current and next exchange session)",
     "BLS Employment Situation and CPI values from their current-edition release pages, once the calendar's release time passes",
     "BLS JOLTS and Productivity and Costs readers (disabled until explicitly enabled in config/economic_actuals.json)",

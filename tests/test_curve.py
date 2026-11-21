@@ -160,7 +160,10 @@ def test_second_session_measures_the_change_against_december():
 def test_third_session_needs_no_previous_year():
     now = utc("2026-01-06T14:00:00+00:00")
     raw, calls = collected(now, {2026: (FIXTURES / "treasury.2026-01.xml").read_text()})
-    assert [url.rsplit("=", 1)[1] for url in calls] == ["2026"]
+    # The level and its change need no previous year; the rates history asks for it once, and its failure (here a
+    # 404) costs only the history's depth, never the curve.
+    assert [url.rsplit("=", 1)[1] for url in calls] == ["2026", "2025"]
+    assert "history is shorter" in raw["rates_history"]["treasury"]["note"]
     rows = by_id(raw["observations"])
     assert rows["treasury-10y"]["observed_at"] == "2026-01-05"
     assert rows["treasury-10y-change"]["baseline"] == "daily observation 2026-01-02"
@@ -172,9 +175,10 @@ def test_year_boundary_merge_deduplicates_by_date():
                    ("2025-12-31", {"2Y": "3.47", "5Y": "3.73", "10Y": "4.18", "30Y": "4.84"}))
     december = feed(("2025-12-31", {"2Y": "3.47", "5Y": "3.73", "10Y": "4.18", "30Y": "4.84"}),
                     ("2025-12-30", {"2Y": "3.45", "5Y": "3.68", "10Y": "4.14", "30Y": "4.81"}))
-    # Two entries before today already: no second request.
+    # Two entries before today already: the previous year is asked for once, for the rates history only.
     raw, calls = collected(now, {2026: overlap, 2025: december})
-    assert len(calls) == 1
+    assert len(calls) == 2
+    assert [e["date"] for e in raw["rates_history"]["treasury"]["series"]] == ["2025-12-30", "2025-12-31", "2026-01-02"]
     rows = by_id(raw["observations"])
     assert rows["treasury-10y-change"]["baseline"] == "daily observation 2025-12-31"
     # One entry this year and an overlapping previous-year feed: the duplicate date counts once.

@@ -48,7 +48,8 @@ def edition_profile(checkpoint, config=None):
                 guidance=edition["guidance"], **profile)
 HISTORY_ERROR = re.compile(r"^(?P<symbol>[A-Z][\w.-]*): invalid/incomplete historical context \((?P<reason>.*)\)$")
 # A release value adds the month it measures (and a revision its month and estimates); no other row has those fields.
-FACT_FIELDS = ("id", "metric", "value", "unit", "magnitude", "status", "observed_at", *RELEASE_FIELDS, *ISSUER_FIELDS)
+FACT_FIELDS = ("id", "metric", "value", "unit", "magnitude", "status", "observed_at", "window_start",
+               *RELEASE_FIELDS, *ISSUER_FIELDS)
 # A dated context item reaches the analyst whole: identity, title, bounded summary, attribution, its publication instant
 # (or date alone), source and exact URL. Its status is always AVAILABLE once admitted, so it is not repeated.
 CONTEXT_ITEM_FIELDS = tuple(key for key in MODEL_CONTEXT_FIELDS if key != "status")

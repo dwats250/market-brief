@@ -122,6 +122,8 @@ def normalize_observation(raw, now, near_close=None, session_close=None):
     keys = ("id", "topic", "metric", "value", "unit", "baseline", "frequency",
             "observed_at", "retrieved_at", "source_id", "status", "reason")
     row = {key: raw.get(key) for key in keys}
+    if raw.get("page_only") is True:
+        row["page_only"] = True  # page and ledger evidence; never in the synthesis input (`model_packet`)
     row["reason"] = row["reason"] or ""
     row["freshness"] = "UNAVAILABLE"
 
@@ -370,6 +372,7 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
         packet["history"].append({key: h.get(key) for key in (
             "id", "symbol", "dates", "closes", "adjustment", "session",
             "source_id", "retrieved_at")})
+    packet["rates_history"] = rates_history_record(raw.get("rates_history"), by_source, now)
     for field in ("events", "context_items"):
         for item in raw.get(field, []):
             source = by_source.get(item.get("source_id"))
@@ -425,10 +428,70 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
     return packet
 
 
+RATES_HISTORY_KEYS = {"treasury", "treasury-real", "nyfed-sofr", "nyfed-effr"}
+
+
+def _real_date(text):
+    try:
+        date.fromisoformat(text)
+    except ValueError:
+        return False
+    return True
+
+
+def _finite(value):
+    return (not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value))
+
+
+def rates_history_record(raw, by_source, now):
+    """The dated official rates history (`collect.treasury_series`, `collect.funding_series`), admitted fail-closed.
+
+    Each series must come from its own AVAILABLE or DEGRADED source with retention allowed; every entry is a strictly
+    increasing ISO date before today (ET) with finite values. A malformed series is dropped whole, never repaired, and
+    its absence is the rates module's to state. The record is not evidence: the rows `rates.py` derives from it are."""
+    result = {}
+    today = now.astimezone(ET).date().isoformat()
+    for key, record in (raw or {}).items() if isinstance(raw, dict) else ():
+        source = by_source.get(key)
+        if (key not in RATES_HISTORY_KEYS or not isinstance(record, dict) or record.get("source_id") != key
+                or not source or source["retention_allowed"] is not True
+                or source["status"] not in ("AVAILABLE", "DEGRADED")):
+            continue
+        series, previous, ok = [], "", isinstance(record.get("series"), list)
+        for entry in record.get("series") or [] if ok else []:
+            day = entry.get("date") if isinstance(entry, dict) else None
+            if not (isinstance(day, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) and _real_date(day)
+                    and previous < day < today):
+                ok = False
+                break
+            previous = day
+            if key.startswith("treasury"):
+                values = entry.get("values")
+                if not (isinstance(values, dict) and values and all(
+                        isinstance(k, str) and _finite(v) for k, v in values.items())):
+                    ok = False
+                    break
+                series.append(dict(date=day, values=dict(values)))
+            else:
+                if not _finite(entry.get("rate")):
+                    ok = False
+                    break
+                series.append({k: entry[k] for k in ("date", "rate", "revised", "volume_bn", "target") if k in entry})
+        if ok and series:
+            result[key] = dict(source_id=key, retrieved_at=record.get("retrieved_at"), series=series,
+                               note=str(record.get("note") or ""))
+    return result
+
+
 WINDOWS = {"daily return": "1s", "twenty-session return": "20s", "fifty-session average": "50s",
            "distance from 50DMA": "50s", "regular close": "1s", "daily par yield": "1d",
            "daily yield change": "1d", "curve spread": "1d", "daily spread change": "1d",
-           "premarket return": "intraday", "intraday return": "intraday"}
+           "premarket return": "intraday", "intraday return": "intraday",
+           "five-session yield change": "5s", "twenty-session yield change": "20s",
+           "five-session real yield change": "5s", "twenty-session real yield change": "20s",
+           "five-session inflation compensation change": "5s", "twenty-session inflation compensation change": "20s",
+           "twenty-session yield volatility": "20s", "volatility percentile, 252 sessions": "252s",
+           "overnight reference rate": "1d", "daily rate change": "1d", "funding spread": "1d"}
 
 
 def metric_identity(row):
@@ -530,7 +593,7 @@ def evidence_catalog(packet):
 
 MODEL_RECORD_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at",
                        "source_id", "status", "reason", "frequency", "freshness",
-                       "expected_freshness", "magnitude", "identity", *RELEASE_FIELDS, *ISSUER_FIELDS)
+                       "expected_freshness", "magnitude", "identity", "window_start", *RELEASE_FIELDS, *ISSUER_FIELDS)
 
 
 # A scheduled release is not a measurement: the analyst needs what it is, when it is and where it falls in the
@@ -562,12 +625,14 @@ def model_packet(packet):
     result = copy.deepcopy(packet)
     allowed = {s["id"] for s in packet["sources"] if s["llm_allowed"] is True}
     result.pop("history", None)
+    result.pop("rates_history", None)
+    result.pop("rates", None)
     for field in ("observations", "derived", "events", "context_items"):
         compact = (compact_model_event if field == "events" else
                    compact_model_context if field == "context_items" else compact_model_record)
         result[field] = [compact(r) for r in result[field]
                          if r.get("source_id") in allowed and r.get("status") in EVENT_STATES
-                         and not stale_movement(packet, r)]
+                         and not stale_movement(packet, r) and not r.get("page_only")]
     result["sector_leadership"] = dict(
         top=[compact_model_record(r) for r in result.get("sector_leadership", {}).get("top", [])
              if r.get("source_id") in allowed and r.get("status") in EVENT_STATES],

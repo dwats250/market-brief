@@ -36,7 +36,8 @@ ANCHORS = ("previous_close", "premarket", "latest")
 # Bundle slots: the previous session's close handoff, this session's premarket and latest accepted
 # edition states, and the last accepted synthesis frozen for deterministic refreshes to render.
 SLOTS = ("close", "premarket", "latest", "interpretation")
-INTERPRETATION_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at", "frequency",
+INTERPRETATION_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at", "window_start",
+                         "frequency",
                          "source_id", "status", "magnitude", "title", "published_at", "scheduled_at",
                          "session_relation", "summary", "attribution", "published_on", "url", "fiscal_period", "basis",
                          "release_id")
@@ -50,7 +51,7 @@ ANCHOR_INSTRUMENTS = ("SPY", "QQQ", "GLD", "US 2Y", "US 10Y")
 CARRY_LIMIT = 3
 CURVE_METRICS = {SPREAD_LEVEL, SPREAD_CHANGE}
 SNAPSHOT_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at", "frequency",
-                   "status", "magnitude", "identity")
+                   "status", "magnitude", "identity", "window_start")
 HORIZON_PHRASES = {"OPENING_HOUR": "Through the opening hour", "SESSION": "Into the close",
                    "NEXT_CLOSE": "Into the next close", "NEXT_BRIEF": "By the next interpretation"}
 

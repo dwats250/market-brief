@@ -8,6 +8,7 @@ import exchange_calendars as xcals
 
 from .curve import derive_curve
 from .evidence import finite, timestamp
+from .rates import derive_rates
 
 DEFAULT_MAGNITUDE_THRESHOLDS = {
     "%": {"SMALL": 0.25, "NOTABLE": 1.0},
@@ -170,6 +171,7 @@ def derive(packet, universe, thresholds=None):
     sector_rows.sort(key=lambda row: row["value"], reverse=True)
     packet["sector_leadership"] = dict(top=sector_rows[:3], bottom=list(reversed(sector_rows[-3:])))
     derive_curve(packet, thresholds)
+    derive_rates(packet, (thresholds or DEFAULT_MAGNITUDE_THRESHOLDS)["bp"]["SMALL"])
     for row in packet["derived"]:
         if "magnitude" not in row:
             row["magnitude"] = magnitude(row.get("value"), row.get("unit"), thresholds)

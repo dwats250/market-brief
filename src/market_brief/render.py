@@ -1028,13 +1028,18 @@ def funding_view(funding, run_date):
             rows.append(dict(name=name, level="not collected", change="", date="", id=None))
             continue
         fresh = curve_freshness(date.fromisoformat(item["date"]), run_date)
+        if fresh["age_days"] > 7:
+            # Evidence admission rejects a daily row more than seven days old; the page shows no number either.
+            rows.append(dict(name=name, level="not shown", change=f"latest is {short_date(item['date'])}, over a "
+                             "week old", date="", id=None, stale=True))
+            continue
         change = ("" if fresh["status"] == "stale" or item["change_bp"] is None else
                   f"{rate_display(item['change_bp'], 'bp')} from {short_date(item['prior_date'])}")
         rows.append(dict(name=name, level=f"{item['rate']:.2f}%", change=change, date=short_date(item["date"]),
                          revised=item.get("revised", False), id=item["id"], stale=fresh["status"] == "stale"))
     spread = funding.get("spread")
     spread_line = None
-    if spread:
+    if spread and (run_date - date.fromisoformat(spread["date"])).days <= 7:
         detail = ("" if spread["change_bp"] is None else
                   f" ({rate_display(spread['change_bp'], 'bp')} from {short_date(spread['prior_date'])})")
         spread_line = dict(text=f"SOFR minus EFFR {rate_display(spread['bp'], SPREAD_UNIT)}{detail}", id=spread["id"],

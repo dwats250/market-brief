@@ -334,3 +334,13 @@ def test_rates_panel_fits_phone_and_desktop_widths(tmp_path):
     _, html = page()
     for width in (320, 390, 1280):
         assert phone_layout_width(html, tmp_path, width) <= width
+
+
+def test_funding_older_than_a_week_shows_no_number():
+    later = datetime(2026, 11, 30, 14, 0, tzinfo=timezone.utc)  # Nov 19 funding is 11 days old; the curve 10
+    packet = normalize_packet(raw_input(now=later), later, "LIVE", "PREMARKET")
+    packet = finalize_coverage(derive(packet, UNIVERSE))
+    from test_pipeline import narrative
+    funding = presentation(packet, narrative())["macro"]["panel"]["funding"]
+    assert [row["level"] for row in funding["rows"]] == ["not shown", "not shown"]
+    assert funding["spread"] is None

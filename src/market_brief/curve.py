@@ -29,6 +29,11 @@ REAL_LEVEL, REAL_CHANGE = "daily real par yield", "daily real yield change"
 IC_LEVEL, IC_CHANGE = "par inflation compensation", "daily inflation compensation change"
 IC_FORMULA = "par-ic.v1"
 IC_TENORS = ("5Y", "10Y", "30Y")
+# The history-derived moves (`rates.py`) follow the same stale rule as the daily changes.
+HISTORY_MOVES = ("five-session yield change", "twenty-session yield change", "five-session real yield change",
+                 "twenty-session real yield change", "five-session inflation compensation change",
+                 "twenty-session inflation compensation change", "twenty-session yield volatility",
+                 "volatility percentile, 252 sessions")
 # A spread level is a level, not a move: its own unit keeps it unsigned on the page and outside move magnitudes.
 SPREAD_UNIT = "bp spread"
 SPREAD_FORMULA = "curve-spread.v1"
@@ -99,7 +104,7 @@ def stale_movement(packet, row):
     names no move), so it is not evidence of current movement for the analyst either: the authority filter and the
     deterministic comparisons leave it out. Levels stay, dated, and the row stays in the evidence record.
     """
-    return (row.get("metric") in (CHANGE, SPREAD_CHANGE, REAL_CHANGE, IC_CHANGE)
+    return (row.get("metric") in (CHANGE, SPREAD_CHANGE, REAL_CHANGE, IC_CHANGE, *HISTORY_MOVES)
             and (packet.get("curve") or {}).get("freshness") == "stale")
 
 

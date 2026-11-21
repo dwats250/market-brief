@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import math
 import os
 import re
 import time
@@ -43,7 +44,10 @@ CB = "https://dwats250.github.io/cuttingboard/contract.json"
 ALPACA_DATA = "https://data.alpaca.markets"
 ALPACA_BARS = f"{ALPACA_DATA}/v2/stocks/bars"
 ALPACA_SNAPSHOTS = f"{ALPACA_DATA}/v2/stocks/snapshots"
-HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA, STATCAN_SCHEDULE, NVIDIA_IR)}
+# The New York Fed's documented Markets Data API: only these two exact requests (the last 30 published rates).
+NYFED = "https://markets.newyorkfed.org/api/rates"
+FUNDING = {"sofr": f"{NYFED}/secured/sofr/last/30.json", "effr": f"{NYFED}/unsecured/effr/last/30.json"}
+HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA, STATCAN_SCHEDULE, NVIDIA_IR, NYFED)}
 ALPACA_UNIVERSE = (
     "SPY", "QQQ", "XLK", "XLF", "XLE", "XLI", "XLY", "XLP", "XLV", "XLU",
     "XLB", "XLRE", "XLC", "GLD", "SLV", "GDX", "AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG",
@@ -67,6 +71,8 @@ def allowed(url):
         return False
     if parts.hostname == urlsplit(NVIDIA_IR).hostname:
         return url == NVIDIA_IR
+    if parts.hostname == urlsplit(NYFED).hostname:
+        return url in FUNDING.values()
     if parts.hostname == urlsplit(BLS).hostname:
         return url == BLS or url in RELEASE_PAGES or bool(BLS_LIST.fullmatch(url))
     return (parts.hostname != urlsplit(STATCAN_SCHEDULE).hostname or url == STATCAN_SCHEDULE
@@ -221,6 +227,89 @@ def real_yield_rows(entries, retrieved):
                 retrieved_at=retrieved.isoformat(), source_id="treasury-real", status="BACKGROUND",
                 reason=""))
     return result
+
+
+# The dated history the rates module reads (`rates.py`): every official entry, as published, oldest first. Enough
+# nominal entries for a 20-session volatility placed in its trailing 252 values (Market Review H2), a short real
+# history for the 20-observation chart. Values are the feed's two-decimal yields; nothing is filled or interpolated.
+NOMINAL_FIELDS = {"3M": "BC_3MONTH", "2Y": "BC_2YEAR", "5Y": "BC_5YEAR", "10Y": "BC_10YEAR", "30Y": "BC_30YEAR"}
+REAL_FIELDS = {"5Y": "TC_5YEAR", "10Y": "TC_10YEAR", "30Y": "TC_30YEAR"}
+NOMINAL_KEEP, REAL_KEEP = 300, 30
+
+
+def treasury_series(entries, fields, keep):
+    """`[{"date", "values": {tenor: yield}}]` oldest first, a later list winning a duplicate date (as `yield_rows`). A
+    tenor the entry does not report, or reports unreadably, is left out of that entry: unavailable, never filled."""
+    series = []
+    for day, raw in sorted(dict(entries).items())[-keep:]:
+        values = {}
+        for tenor, field in fields.items():
+            try:
+                value = float(raw.get(field) or "nan")
+            except ValueError:
+                continue
+            if math.isfinite(value):
+                values[tenor] = value
+        if values:
+            series.append(dict(date=day, values=values))
+    return series
+
+
+def _rate(value):
+    """A finite JSON number as a float, else None (a bool, string or NaN is not a rate)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+FUNDING_NAMES = {"sofr": "SOFR", "effr": "EFFR"}
+# One shared wording, so the analyst's legend states it once; the row's topic names the series.
+FUNDING_BASELINE = ("New York Fed published rate for the business day, released the next business day; not an "
+                    "intraday market rate")
+FUNDING_PAGE_ONLY = True  # the level rows reach the analyst; their one-day changes are page and ledger evidence
+
+
+def funding_series(text, kind, now):
+    """The New York Fed's published rates for one series, oldest first: `[{date, rate, revised, ...}]`.
+
+    Only entries of the requested type, dated before today (ET), with a finite percent rate; a revised rate is kept as
+    published and flagged. EFFR carries the FOMC target range in force on its date."""
+    payload = json.loads(text)
+    found = {}
+    for item in (payload.get("refRates") or []) if isinstance(payload, dict) else []:
+        day = item.get("effectiveDate") if isinstance(item, dict) else None
+        rate = _rate(item.get("percentRate")) if isinstance(item, dict) else None
+        if (not isinstance(day, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) or rate is None
+                or str(item.get("type", "")).upper() != FUNDING_NAMES[kind]
+                or day >= now.astimezone(EASTERN).date().isoformat()):
+            continue
+        entry = dict(date=day, rate=rate, revised=bool(str(item.get("revisionIndicator") or "").strip()))
+        volume = _rate(item.get("volumeInBillions"))
+        if volume is not None:
+            entry["volume_bn"] = volume
+        low, high = _rate(item.get("targetRateFrom")), _rate(item.get("targetRateTo"))
+        if low is not None and high is not None:
+            entry["target"] = [low, high]
+        found[day] = entry
+    series = [found[day] for day in sorted(found)]
+    if not series:
+        raise SourceError(f"no published {FUNDING_NAMES[kind]} observation")
+    return series
+
+
+def funding_rows(series, kind, retrieved):
+    """The latest published rate and its change from the previous published observation, in whole bp."""
+    name, latest = FUNDING_NAMES[kind], series[-1]
+    common = dict(topic=name, frequency="daily", observed_at=latest["date"], retrieved_at=retrieved.isoformat(),
+                  source_id=f"nyfed-{kind}", status="BACKGROUND", reason="")
+    rows = [dict(common, id=f"nyfed-{kind}", metric="overnight reference rate", value=latest["rate"],
+                 unit="% rate", baseline=FUNDING_BASELINE)]
+    if len(series) >= 2:
+        prior = series[-2]
+        rows.append(dict(common, id=f"nyfed-{kind}-change", metric="daily rate change",
+                         value=round((latest["rate"] - prior["rate"]) * 100), unit="bp",
+                         baseline=f"daily observation {prior['date']}", page_only=FUNDING_PAGE_ONLY))
+    return rows
 
 
 def treasury_rows(text, now, retrieved):
@@ -885,8 +974,9 @@ def alpaca_collect(now, symbols=ALPACA_UNIVERSE, key_id=None, secret_key=None):
 
 
 def collect_live(now, include_cuttingboard=False, fetcher=fetch):
-    raw = dict(mode="LIVE", sources=[], observations=[], history=[], events=[], context_items=[])
+    raw = dict(mode="LIVE", sources=[], observations=[], history=[], events=[], context_items=[], rates_history={})
     deadline = time.monotonic() + 120
+    history_note = ""
     year = now.astimezone(EASTERN).year
     jobs = [
         ("treasury", "US Treasury", "economic_series", TREASURY, treasury_url(year)),
@@ -901,7 +991,7 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
                                      "UNAVAILABLE", "switched off in config/sources.json"))
     for ident, name, kind, url, request_url in jobs:
         record = source(ident, name, kind, url, now)
-        fallback = ""
+        fallback, merged = "", False
         try:
             if ident == "bls":
                 sources, events, rows = bls_collection(now, deadline, fetcher)
@@ -920,24 +1010,50 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
                     # Early January: this year's feed holds fewer than two entries before today, so the previous
                     # year's feed supplies the level or its prior entry. This year's entries win a duplicate date.
                     previous = treasury_url if ident == "treasury" else treasury_real_url
+                    merged = True
                     try:
                         entries = [*treasury_entries(fetcher(previous(year - 1), deadline), now), *entries]
                     except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:
                         fallback = f"previous year's feed failed ({failure(exc)})"
+            if ident == "treasury" and not merged:
+                # The rates history needs the previous year's entries too (a 20-session volatility placed in its
+                # trailing 252 values). Its failure costs only the history's depth, which the record states.
+                try:
+                    entries = [*treasury_entries(fetcher(treasury_url(year - 1), deadline), now), *entries]
+                except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:
+                    history_note = f"previous year's feed failed ({failure(exc)}), so the history is shorter"
             retrieved = datetime.now(timezone.utc)
             record["retrieved_at"] = retrieved.isoformat()
             if ident == "treasury":
                 raw["observations"].extend(yield_rows(entries, retrieved))
+                raw["rates_history"]["treasury"] = dict(source_id="treasury", retrieved_at=retrieved.isoformat(),
+                    series=treasury_series(entries, NOMINAL_FIELDS, NOMINAL_KEEP), note=history_note)
             elif ident == "treasury-real":
                 if fallback and not entries:
                     raise SourceError(f"no prior daily real yield observation; {fallback}")
                 raw["observations"].extend(real_yield_rows(entries, retrieved))
+                raw["rates_history"]["treasury-real"] = dict(
+                    source_id="treasury-real", retrieved_at=retrieved.isoformat(),
+                    series=treasury_series(entries, REAL_FIELDS, REAL_KEEP), note="")
                 if fallback:
                     # The level stands; the missing change is reported, never silently dropped.
                     record.update(status="DEGRADED", reason=f"{fallback}, so no daily real yield change")
             else:
                 raw["context_items"].extend(fed_context(body, now))
         except (SourceError, ValueError, ET.ParseError, UnicodeError, OverflowError) as exc:
+            record.update(status="UNAVAILABLE", reason=failure(exc))
+        raw["sources"].append(record)
+    for kind, url in FUNDING.items():
+        # Overnight funding: the New York Fed's own published reference rates, after the Treasury feeds.
+        record = source(f"nyfed-{kind}", f"New York Fed {FUNDING_NAMES[kind]}", "economic_series", url, now)
+        try:
+            series = funding_series(fetcher(url, deadline), kind, now)
+            retrieved = datetime.now(timezone.utc)
+            record["retrieved_at"] = retrieved.isoformat()
+            raw["observations"].extend(funding_rows(series, kind, retrieved))
+            raw["rates_history"][f"nyfed-{kind}"] = dict(source_id=f"nyfed-{kind}",
+                                                          retrieved_at=retrieved.isoformat(), series=series, note="")
+        except (SourceError, ValueError, UnicodeError, OverflowError) as exc:
             record.update(status="UNAVAILABLE", reason=failure(exc))
         raw["sources"].append(record)
     for ident, name, url in (

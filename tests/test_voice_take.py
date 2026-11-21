@@ -69,7 +69,8 @@ MISMATCH = "take text and evidence must be both present or both empty"
 # WP-RATES-02 approves neutral direction arrows, stacked direction labels and stronger bp typography.
 # Keep the whole stylesheet fingerprint so unrelated CSS changes still require explicit review.
 # WP-MB-STATE-01 adds the .shift rules for the "Since the analysis" check (inset surface, rates-lead metrics).
-STYLE_SHA256 = "5da00a068cd3695d5e59d96296759f0af832b55303641585b7dbacd998dc7b16"
+# WP-MB-RATES-INTELLIGENCE-01 adds the .rates-panel, .rates-chart and dl.rates-facts rules (existing tokens only).
+STYLE_SHA256 = "9086b0b48ac5abec7117cca60d86f323c7724f5898ca0267245925e7aa8acfe3"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):

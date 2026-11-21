@@ -110,8 +110,16 @@ def stale_movement(packet, row):
     if curve.get("freshness") == "stale":
         return True
     # A real-curve move dated before the nominal curve is older than the curve the page presents: not current either.
-    return (row.get("metric") in (REAL_CHANGE, IC_CHANGE) and bool(curve.get("observed_at"))
-            and row.get("observed_at") != curve["observed_at"])
+    if row.get("metric") not in (REAL_CHANGE, IC_CHANGE):
+        return False
+    if curve.get("observed_at"):
+        return row.get("observed_at") != curve["observed_at"]
+    # No nominal curve to date it against: the real move is judged on its own date, by the same five-day rule.
+    try:
+        run_date = timestamp(packet["run"]["target_time"]).astimezone(ET).date()
+        return curve_freshness(date.fromisoformat(row["observed_at"]), run_date)["status"] == "stale"
+    except (KeyError, TypeError, ValueError):
+        return True
 
 
 def classify(d2, d10, long_change=None, threshold=3.0):

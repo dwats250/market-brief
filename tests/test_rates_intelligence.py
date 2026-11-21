@@ -445,3 +445,18 @@ def test_rereview_3_window_dates_reach_the_analyst_and_continuity():
     context = analyst_context(packet_for())
     fact = next(r for g in context["catalog"] for r in g["rows"] if r["id"] == "treasury-10y-change-5s")
     assert fact["window_start"] == "2026-11-13" and "window_start" in SNAPSHOT_FIELDS
+
+
+def test_final_review_a_stale_real_move_without_a_nominal_curve_stays_out_of_synthesis():
+    real = [e for e in FIXTURE["treasury_real"] if e["date"] <= "2026-11-17"]
+    raw = raw_input(real=real)
+    raw["observations"] = [r for r in raw["observations"] if r["source_id"] != "treasury"]
+    raw["sources"][0].update(status="UNAVAILABLE", reason="HTTP 503")
+    del raw["rates_history"]["treasury"]
+    model = model_packet(packet_for(raw))
+    assert not [r for r in model["observations"] if r["metric"] == "daily real yield change"]
+    fresh = raw_input()
+    fresh["observations"] = [r for r in fresh["observations"] if r["source_id"] != "treasury"]
+    fresh["sources"][0].update(status="UNAVAILABLE", reason="HTTP 503")
+    model = model_packet(packet_for(fresh))
+    assert [r for r in model["observations"] if r["metric"] == "daily real yield change"]

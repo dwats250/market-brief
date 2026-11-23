@@ -658,3 +658,59 @@ Values below are real, from the 09-25 20:01 close (pre-#36 code, so its curve fi
     - cleanup on any interruption;
     - this note;
     - a committed `.venv` symlink, removed (`.gitignore` now ignores `.venv` as a file too).
+
+### B1–B4 · Week Ahead (WP-MB-WEEK-AHEAD-01, branch `feat/wp-mb-week-ahead-b`, on A1)
+
+- [x] **B1 scheduler.**
+  - `WEEK_AHEAD` is a synthesis checkpoint (`schedule.week_ahead_session`): the ET Sunday at 16:00 ET, applicable only
+    that day, keyed by the Sunday's date.
+  - `SESSION_CHECKPOINTS` keeps the daily logic apart.
+  - `next_checkpoint` adds the week ahead only when `kinds is None`, so Friday's close reads "week ahead" and
+    `next_synthesis` still points at Monday.
+  - `completed_week`, `week_calendar` (closures and early closes from XNYS) and `week_event_dates`.
+  - `cli.scheduled` keeps its weekday gate. Production runs only on an ET Sunday; experiments on a Saturday or
+    Sunday.
+  - The Cloudflare cron `"1 20-21 * * SUN"`: exactly 52 due wakes in 2026 (tested), including both DST changes.
+  - The workflow skips continuity restore and upload for WEEK_AHEAD and adds a `memory-restore` step.
+- [x] **B2 evidence.**
+  - `memory-restore`, plus `memory.accept/load_week/archived_rows/admit_archived/week_note/reconstruct`.
+  - `metrics.week_returns`, and the collector's `window` for next week's events (relation `NEXT WEEK`).
+  - Archived rows carry their original `source_id`, clocks, formula and inputs, with a `lineage` block. They are
+    exempt from `stale_movement` (dated past observations by design).
+  - A row without its original source is withheld and named (a real W47 case).
+  - **Discrepancy:** archived rows are admitted after `derive`, not before it, so the curve, rates and table
+    derivations, which look rows up by topic, never see them.
+- [x] **B3 acceptance.** This is the standard synthesis path. `metadata.week` holds the sessions, record hashes,
+  workflow run ids, missing sessions, ignored records and gaps. There is no bundle advance or handoff.
+- [x] **B4 page.** `weekpage.py` + `templates/week.html.j2` + `templates/week.css`, using the daily stylesheet and
+  theme script verbatim. The sections:
+  - the week in markets: week-return bars, sectors up, and a day-by-day strip from the records;
+  - what the week tested: new relationships, the dailies' relationship trails and the watch tally;
+  - the week's earlier reads;
+  - rates and cross-asset: the week's path plus the Rates in context panel;
+  - next week: the XNYS calendar, admitted events, and watches captioned as not carried;
+  - sources and coverage: the "Session records · N of M" source line and a ledger naming each row's session record.
+  - Checked at 320, 390 and 1280 px in light and dark themes, with no horizontal overflow.
+- [x] **Context size (measured, real W47).**
+  - The first build was 80,293 B, over the 64,000 B limit, and was refused fail-closed.
+  - After tightening the selection and compacting archived rows and the note: 45,154 B. That is W47's five
+    reconstructed records plus a live Sunday collection, without equity prices (no credentials locally).
+  - Adding the current equity rows, estimated at about 8.5 KB from a real weekday packet, gives about 54–57 KB.
+- [x] Archived ids carry each row's own observation date or time (`{original-id}-YYYYMMDD[THHMM]`; session returns
+  `{SYM}-session-YYYYMMDD`). The original status is kept in `lineage.original_status`. Archived rows never count
+  toward current coverage. Week dates are read in New York time.
+- [x] **Restore.** Per session, it takes the earliest artifacts of this repository's own schedule runs until 2 accepted production closes are in hand (at most 6 downloads), so an earlier experiment dispatch can never use up a slot and
+  later dispatches can never crowd out the contemporaneous close. Placeholders the analyst may not cite are plain text in its copy of the hypotheses.
+- [x] **Replay.** A WEEK_AHEAD replay needs `--memory`.
+- [x] **Context size:** the final W47 measurement is 45,722 B.
+- [x] Tests: `tests/test_week_ahead.py` (58). The main scenario drives a real production week through the CLI and
+  then runs Sunday. Full suite: 1,792 passed.
+- [x] **Review.** An independent fresh-context review (Codex Astra had hit its usage limit) found no extra-call or
+  continuity defect, and 7 issues, all fixed with regression tests:
+  - archived id collisions;
+  - raw placeholders on the page;
+  - the UTC event window;
+  - coverage anchors;
+  - the restore cap;
+  - lost status;
+  - the missing replay fixture.

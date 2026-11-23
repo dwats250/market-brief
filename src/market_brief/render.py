@@ -114,7 +114,8 @@ SOURCE_STATUS_LABELS = {"AVAILABLE": "Available", "UNAVAILABLE": "Unavailable", 
                         "STALE": "Stale", "DELAYED": "Delayed"}
 # Rates rows (yield and spread levels and their daily changes) are never coloured: the sign carries direction and
 # the curve move label carries meaning, and rising yields are neither good nor bad.
-SIGNED_METRICS = {"daily return", "premarket return", "intraday return", "distance from 50DMA"}
+SIGNED_METRICS = {"daily return", "premarket return", "intraday return", "distance from 50DMA", "week return",
+                  "session return"}
 MINUS = "\u2212"
 RATE_UNITS = {"% yield", "bp", SPREAD_UNIT}
 CANADIAN_PERSONS = "persons"
@@ -1198,7 +1199,8 @@ def next_update(info, session_date):
     """The scheduler's next checkpoint in reader words, its Vancouver display time, and its absolute scheduled time."""
     clock = pacific_time(info["scheduled_at"])
     if info["session_date"] != session_date:
-        when, kind = f"{short_date(info['session_date'])} · {clock}", "premarket analysis"
+        when = f"{short_date(info['session_date'])} · {clock}"
+        kind = "week ahead" if info.get("checkpoint") == "WEEK_AHEAD" else "premarket analysis"
     else:
         when, kind = clock, NEXT_WORDS.get(info["kind"], "price refresh")
     return dict(text=f"{when} · {kind}", when=when, at=info["scheduled_at"])

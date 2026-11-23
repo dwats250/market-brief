@@ -321,12 +321,17 @@ def treasury_rows(text, now, retrieved):
     return yield_rows(treasury_entries(text, now), retrieved)
 
 
-def calendar_events(text, now, retrieved):
+def event_window(now, window=None):
+    """The dates scheduled events are admitted for: today and the next session, or the week ahead's given window."""
+    return set(window) if window else {now.astimezone(EASTERN).date().isoformat(), next_session_date(now)}
+
+
+def calendar_events(text, now, retrieved, window=None):
     if "BEGIN:VCALENDAR" not in text or "END:VCALENDAR" not in text:
         raise SourceError("malformed calendar")
     text = re.sub(r"\r?\n[ \t]", "", text)
     releases, dates = [], []
-    admitted_dates = {now.astimezone(EASTERN).date().isoformat(), next_session_date(now)}
+    admitted_dates = event_window(now, window)
     for block in text.split("BEGIN:VEVENT")[1:]:
         if "END:VEVENT" not in block or "RRULE:" in block:
             raise SourceError("incomplete or recurring calendar unsupported")
@@ -549,7 +554,7 @@ def failure(exc):
             else f"malformed {type(exc).__name__}")
 
 
-def bls_calendar(now, deadline, fetcher):
+def bls_calendar(now, deadline, fetcher, window=None):
     """BLS releases scheduled today and at the next session: from the calendar file, else from the official monthly
     List View pages covering both dates. Returns `(events, url, reason, retrieved)`, the URL being the one actually
     read and the reason, on the fallback, why the file was not. When both fail, one SourceError names both."""
@@ -557,10 +562,10 @@ def bls_calendar(now, deadline, fetcher):
     try:
         body = fetcher(BLS, deadline)
         retrieved = datetime.now(timezone.utc)
-        return calendar_events(body, now, retrieved), BLS, "", retrieved
+        return calendar_events(body, now, retrieved, window), BLS, "", retrieved
     except (SourceError, ValueError, LookupError, UnicodeError, OverflowError) as exc:
         file_failure = failure(exc)
-    days = (now.astimezone(EASTERN).date(), date.fromisoformat(next_session_date(now)))
+    days = tuple(sorted(date.fromisoformat(day) for day in event_window(now, window)))
     months = list(dict.fromkeys((day.year, day.month) for day in days))
     try:
         listed = []
@@ -611,13 +616,13 @@ def release_actuals(events, now, deadline, fetcher, enabled=None):
     return rows, records
 
 
-def bls_collection(now, deadline, fetcher, enabled=None):
+def bls_collection(now, deadline, fetcher, enabled=None, window=None):
     """BLS for one run: the calendar (the file, else its official fallback pages; one source record either way), then
     the official values of today's releases whose time has passed. The admitted calendar is the only trigger for a
     release page: no calendar, no release read. Returns `(sources, events, observations)`."""
     record = source("bls", "BLS calendar", "calendar", BLS, now)
     try:
-        events, record["url"], record["reason"], retrieved = bls_calendar(now, deadline, fetcher)
+        events, record["url"], record["reason"], retrieved = bls_calendar(now, deadline, fetcher, window)
     except (SourceError, ValueError, LookupError, UnicodeError, OverflowError) as exc:
         record.update(status="UNAVAILABLE", reason=failure(exc))
         return [record], [], []
@@ -632,7 +637,7 @@ def bls_collection(now, deadline, fetcher, enabled=None):
     return [record, *records], events, rows
 
 
-def stats_can_collection(now, deadline, fetcher):
+def stats_can_collection(now, deadline, fetcher, window=None):
     """Read the dated LFS event and archived Daily headline after explicit source enablement."""
     try:
         enabled = read_json(SOURCES_CONFIG).get("statcan_lfs", False)
@@ -655,7 +660,7 @@ def stats_can_collection(now, deadline, fetcher):
         return [calendar], [], []
     period, url = event.pop("period"), event.pop("url")
     scheduled = datetime.fromisoformat(event["scheduled_at"].replace("Z", "+00:00"))
-    target_dates = {now.astimezone(EASTERN).date().isoformat(), next_session_date(now)}
+    target_dates = event_window(now, window)
     if scheduled.astimezone(EASTERN).date().isoformat() not in target_dates:
         return [calendar], [], []
     events = [event]
@@ -1036,7 +1041,9 @@ def alpaca_collect(now, symbols=ALPACA_UNIVERSE, key_id=None, secret_key=None):
     return dict(sources=[daily, intraday], observations=observations, history=histories)
 
 
-def collect_live(now, include_cuttingboard=False, fetcher=fetch):
+def collect_live(now, include_cuttingboard=False, fetcher=fetch, window=None):
+    """One standard collection. `window` (WEEK_AHEAD only) admits next week's scheduled events instead of today's and
+    the next session's; nothing else about the collection changes."""
     raw = dict(mode="LIVE", sources=[], observations=[], history=[], events=[], context_items=[], rates_history={})
     deadline = time.monotonic() + 120
     history_note = ""
@@ -1057,11 +1064,11 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
         fallback, merged = "", False
         try:
             if ident == "bls":
-                sources, events, rows = bls_collection(now, deadline, fetcher)
+                sources, events, rows = bls_collection(now, deadline, fetcher, window=window)
                 raw["sources"].extend(sources)
                 raw["events"].extend(events)
                 raw["observations"].extend(rows)
-                sources, events, rows = stats_can_collection(now, deadline, fetcher)
+                sources, events, rows = stats_can_collection(now, deadline, fetcher, window)
                 raw["sources"].extend(sources)
                 raw["events"].extend(events)
                 raw["observations"].extend(rows)

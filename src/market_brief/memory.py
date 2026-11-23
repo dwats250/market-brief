@@ -427,3 +427,295 @@ def verify(record):
 def eligible(kind, production, handoff):
     """A record is written only by an accepted production close that handed the session off."""
     return kind == "close" and production and handoff is not None
+
+
+# --- B2: restore, acceptance and admission for the Sunday edition ---------------------------------
+
+RUN_ARTIFACT_PREFIX = "market-brief-run-CLOSE_1M-"
+CONTINUITY_ARTIFACT = "market-brief-continuity"
+RESTORE_PAGES = 5
+CANDIDATES_PER_SESSION = 2  # accepted production closes kept per session
+DOWNLOADS_PER_SESSION = 6  # artifacts examined per session at most
+WEEK_DIR = ("runs", "week")
+RESTORED_INDEX = "restored.json"
+ARCHIVED_STATUS = "BACKGROUND"
+SESSION_METRIC = "session return"
+# Rows a week context keeps from the archived rates: the levels and daily changes a reader can follow through the
+# week. The rest (horizons, volatility, real yields, funding) stay in the evidence record and the ledger.
+WEEK_RATE_TOPICS = ("US 2Y", "US 10Y", "US 30Y", "US 2s10s")
+WEEK_RATE_METRICS = ("daily par yield", "daily yield change", "curve spread")
+
+
+def compact_day(day):
+    return str(day).replace("-", "")
+
+
+def accept(record, metadata, week, allow_reconstructed=False):
+    """Why a restored record is not accepted for this week, or None.
+
+    The record must verify (schema, kind, hash), come from a production close (LIVE, neither experiment nor
+    commissioning, CLOSE_1M), belong to a session of the completed week, and agree with its sibling metadata: the same
+    run and evidence, validation PASS and continuity advanced. A reconstructed record is accepted only when asked
+    (an isolated experiment), never by the production edition."""
+    if not verify(record):
+        return "record does not verify (schema, kind or content hash)"
+    source = record["source"]
+    if source.get("mode") != "LIVE" or source.get("experiment") or source.get("commissioning"):
+        return "not a production record"
+    if source.get("checkpoint") != "CLOSE_1M":
+        return "not a close record"
+    if source.get("written_by") != "close" and not (allow_reconstructed and source.get("written_by")
+                                                     == "reconstruction"):
+        return f"written by {source.get('written_by')}, not by the close"
+    if record["session"]["date"] not in week:
+        return f"session {record['session']['date']} is outside the completed week"
+    if not isinstance(metadata, dict):
+        return "sibling metadata missing"
+    if (metadata.get("validation") != "PASS" or not (metadata.get("continuity") or {}).get("advanced")
+            or metadata.get("checkpoint") != "CLOSE_1M" or metadata.get("mode") != "LIVE"
+            or metadata.get("experiment") or metadata.get("commissioning")):
+        return "sibling metadata is not an accepted production close (PASS and advanced)"
+    if metadata.get("run_id") != source.get("run_id") or metadata.get("evidence_hash") != source.get("evidence_hash"):
+        return "sibling metadata names another run or evidence"
+    return None
+
+
+def load_week(root, week, allow_reconstructed=False, base=None):
+    """Every accepted record for the week found under `runs/week/` (or `base`), one per session, the earliest.
+
+    Returns (records, report). `report` names the sessions, the records used with their hashes and where they were
+    restored from, the missing sessions and every ignored record with its reason."""
+    from pathlib import Path
+    base = Path(base) if base else Path(root).joinpath(*WEEK_DIR)
+    index = {}
+    if (base / RESTORED_INDEX).is_file():
+        try:
+            index = json.loads((base / RESTORED_INDEX).read_text()).get("restored_from", {})
+        except (OSError, ValueError, AttributeError):
+            index = {}
+    candidates, ignored = {}, []
+    for path in sorted(base.rglob(MEMORY_FILE)) if base.is_dir() else []:
+        if path.is_symlink():
+            ignored.append(dict(path=str(path.relative_to(base)), reason="symlink"))
+            continue
+        try:
+            record = json.loads(path.read_text())
+            metadata = json.loads((path.parent / "metadata.json").read_text()) \
+                if (path.parent / "metadata.json").is_file() else None
+        except (OSError, ValueError):
+            ignored.append(dict(path=str(path.relative_to(base)), reason="unreadable"))
+            continue
+        reason = accept(record, metadata, week, allow_reconstructed)
+        if reason:
+            ignored.append(dict(path=str(path.relative_to(base)), reason=reason))
+            continue
+        record = dict(record)
+        candidates.setdefault(record["session"]["date"], []).append((record["source"]["target_time"], record, path))
+    records = []
+    for day in week:
+        found = sorted(candidates.get(day, []), key=lambda item: item[0])
+        if not found:
+            continue
+        _, record, path = found[0]
+        origin = index.get(record["source"]["run_id"]) or {}
+        records.append(dict(record=record, restored_from=dict(artifact_id=origin.get("artifact_id"),
+                                                              workflow_run_id=origin.get("workflow_run_id"))))
+        for _, other, other_path in found[1:]:
+            ignored.append(dict(path=str(other_path.relative_to(base)), reason=f"a later record for {day}"))
+    used = {item["record"]["session"]["date"] for item in records}
+    report = dict(sessions=list(week), missing=[day for day in week if day not in used], ignored=ignored,
+                  records={item["record"]["session"]["date"]: dict(
+                      run_id=item["record"]["source"]["run_id"], content_hash=item["record"]["content_hash"],
+                      written_by=item["record"]["source"]["written_by"], **item["restored_from"])
+                      for item in records})
+    return records, report
+
+
+def _archived_row(row, ident, metric, record, restored_from, **extra):
+    kept = {key: row[key] for key in LINEAGE_FIELDS if key in row and key != "id"}
+    kept.update(id=ident, metric=metric, status=ARCHIVED_STATUS, archived=True, **extra)
+    kept["lineage"] = dict(original_id=row["id"], original_status=row.get("status"),
+                           session_date=record["session"]["date"],
+                           run_id=record["source"]["run_id"], record_hash=record["content_hash"],
+                           restored_from=restored_from)
+    return kept
+
+
+def _fact_suffix(row):
+    observed = str(row.get("observed_at") or "")
+    if "T" in observed:
+        when = timestamp(observed).astimezone(ET)
+        return when.strftime("%Y%m%dT%H%M")
+    return compact_day(observed)
+
+
+def archived_rows(records):
+    """Each record's observations as dated rows that keep their original source, clocks and formula lineage.
+
+    Returns (rows, sources, gaps): `sources` are the records' archived descriptors, by id; identical frozen facts
+    from two sessions are one row, and a conflicting one is a named gap."""
+    rows, sources, gaps, seen = [], {}, [], {}
+
+    def add(row):
+        prior = seen.get(row["id"])
+        if prior is None:
+            seen[row["id"]] = row
+            rows.append(row)
+        elif (prior.get("value"), prior.get("observed_at")) == (row.get("value"), row.get("observed_at")):
+            # The same fact twice: keep the copy that still names its original source.
+            if not prior.get("source_id") and row.get("source_id"):
+                rows[rows.index(prior)] = seen[row["id"]] = row
+        elif (prior.get("value"), prior.get("observed_at")) != (row.get("value"), row.get("observed_at")):
+            gaps.append(f"archived {row['id']}: two records disagree; the first is kept")
+    for item in records:
+        record, origin = item["record"], item["restored_from"]
+        day = compact_day(record["session"]["date"])
+        for source_id, descriptor in record.get("sources", {}).items():
+            sources.setdefault(source_id, descriptor)
+        observed = record["observed"]
+        for symbol, row in observed["returns"].items():
+            if row:
+                add(_archived_row(row, f"{symbol}-session-{day}", SESSION_METRIC, record, origin,
+                                  basis_note=row.get("basis"), original_metric=row.get("metric")))
+        lead = observed["leadership"]
+        for row in [*lead.get("top", []), *lead.get("bottom", []), *([lead["QQQ_vs_SPY"]] if lead.get(
+                "QQQ_vs_SPY") else [])]:
+            add(_archived_row(row, f"{row['id']}-{_fact_suffix(row)}", row["metric"], record, origin))
+        for row in observed["rates"]["rows"]:
+            add(_archived_row(row, f"{row['id']}-{_fact_suffix(row)}", row["metric"], record, origin))
+        for _, ident, row in retained_facts(record["retained"]):
+            if row.get("value") is None or not row.get("metric"):
+                continue
+            add(_archived_row(dict(row, id=ident), f"{ident}-{_fact_suffix(row)}", row["metric"], record, origin,
+                              frozen=True, frozen_by=row.get("frozen_by")))
+    return rows, sources, gaps
+
+
+# Why an archived row is kept out of a week edition. Provenance incomplete: the row never recorded its original source
+# (records frozen before sources were kept), or its source's archived descriptor or retrieval time is missing. A
+# collision is an archived row whose identity a current row already holds.
+WITHHELD_REASONS = ("no_source", "no_descriptor", "collision")
+
+
+def admit_archived(packet, records):
+    """Append the archived rows to the packet as citable, dated BACKGROUND rows, and admit each referenced source the
+    current collection lacks from its archived descriptor. No row is attributed to the restore channel.
+
+    Returns (packet, gaps, withheld): `withheld` counts the archived rows kept out of the edition by reason
+    (WITHHELD_REASONS), so the page can say how many and why without showing any of them."""
+    from .evidence import metric_identity
+    rows, descriptors, gaps = archived_rows(records)
+    withheld = dict.fromkeys(WITHHELD_REASONS, 0)
+    unattributed = [row for row in rows if not row.get("source_id")]
+    withheld["no_source"] = len(unattributed)
+    if unattributed:
+        # A row without its original source cannot be cited with its attribution: withheld, and named.
+        gaps.append("archived rows without an original source, withheld: "
+                    + ", ".join(sorted(row["id"] for row in unattributed)))
+        rows = [row for row in rows if row.get("source_id")]
+    present = {s["id"] for s in packet["sources"]}
+    current = {r["id"] for key in ("observations", "derived") for r in packet[key]}
+    for source_id in sorted({row["source_id"] for row in rows} - present):
+        descriptor = descriptors.get(source_id)
+        retrieved = [row["retrieved_at"] for row in rows if row["source_id"] == source_id and row.get("retrieved_at")]
+        if not descriptor or not descriptor.get("url") or not retrieved:
+            gaps.append(f"source {source_id}: no archived descriptor or retrieval time; its rows are withheld")
+            withheld["no_descriptor"] += sum(1 for row in rows if row["source_id"] == source_id)
+            rows = [row for row in rows if row["source_id"] != source_id]
+            continue
+        packet["sources"].append(dict(
+            {key: descriptor.get(key) for key in SOURCE_FIELDS}, retrieved_at=min(retrieved),
+            status="AVAILABLE", reason="archived descriptor from the week's session records", llm_allowed=True,
+            retention_allowed=True, coverage_date=None, coverage_symbols=None, archived=True))
+    for row in rows:
+        if row["id"] in current:
+            gaps.append(f"archived {row['id']}: collides with a current row; withheld")
+            withheld["collision"] += 1
+            continue
+        row["identity"] = metric_identity(row)
+        packet["derived"].append(row)
+    return packet, gaps, withheld
+
+
+def rewrite_placeholders(text, facts, suffixes):
+    from .evidence import PLACEHOLDER
+
+    def replace(match):
+        ident = match.group(1)
+        return "{{" + suffixes[ident] + "}}" if ident in suffixes else "(value unavailable)"
+    return PLACEHOLDER.sub(replace, text or "")
+
+
+def _suffixes(facts):
+    return {ident: f"{ident}-{_fact_suffix(row)}" for ident, row in (facts or {}).items()
+            if row.get("value") is not None and row.get("metric")}
+
+
+def week_note(records):
+    """The week's earlier hypotheses and their verdicts: INTERPRETATION, not evidence.
+
+    Each watch and relationship appears once, from the session that first recorded it, with its same-session verdict
+    trail across the week and how it ended. Placeholders in old text are rewritten to the archived ids of the facts
+    that watch froze (or "(value unavailable)"). Per session only the accepted read's label and character; no
+    headline or take."""
+    sessions, watches, relationships = [], {}, {}
+    for item in records:
+        record = item["record"]
+        retained = record["retained"]
+        day = record["session"]["date"]
+        read = retained.get("read")
+        sessions.append(dict(date=day, closing_data=record["source"]["closing_data"],
+                             read=dict(checkpoint=read["checkpoint"], label=read["label"],
+                                       character=read["character"]) if read else None,
+                             gaps=len(record.get("gaps", []))))
+        for w in retained.get("watches", []):
+            suffixes = _suffixes(w.get("facts"))
+            entry = watches.setdefault(w["id"], dict(
+                id=w["id"], first=day, **{"from": w.get("from")},
+                hypothesis=rewrite_placeholders(w.get("hypothesis"), None, suffixes), facts=set(), verdicts=[],
+                end=None))
+            entry["facts"] |= set(suffixes.values())
+            entry["verdicts"] += [dict(v, day=day) for v in w.get("verdicts", [])]
+            entry["end"] = w.get("end")
+        for r in retained.get("relationships", []):
+            suffixes = _suffixes(r.get("facts"))
+            entry = relationships.setdefault(r["id"], dict(
+                id=r["id"], first=day, statement=rewrite_placeholders(r.get("statement"), None, suffixes),
+                facts=set(), statuses=[]))
+            entry["facts"] |= set(suffixes.values())
+            entry["statuses"] += [dict(s, day=day) if isinstance(s, dict) else dict(status=s, day=day)
+                                  for s in r.get("statuses", [])]
+    for entry in [*watches.values(), *relationships.values()]:
+        entry["facts"] = sorted(entry["facts"])
+    return {"class": "INTERPRETATION",
+            "note": ("Earlier analyst hypotheses and their same-session verdicts, as written at the time. They are "
+                     "not evidence: describe the week from the dated rows and cite those."),
+            "sessions": sessions, "watches": list(watches.values()), "relationships": list(relationships.values())}
+
+
+def reconstruct(folder, bundle, universe, restored_from):
+    """Rebuild a close's session record offline from its archived run folder and the continuity bundle that same run
+    uploaded, for an isolated experiment only. Every input is verified first: the evidence against its metadata hash,
+    the handoff's own hash and evidence, the bundle's record hashes (by the loader) and its close slot naming this run.
+    The result says `written_by: reconstruction`; a production week ahead never accepts it."""
+    from pathlib import Path
+
+    from .continuity import _hash_ok
+    folder = Path(folder)
+    metadata = json.loads((folder / "metadata.json").read_text())
+    packet = json.loads((folder / "evidence.json").read_text())
+    handoff = json.loads((folder / "session_handoff.json").read_text())
+    if digest(packet) != metadata.get("evidence_hash"):
+        raise ValueError("archived evidence does not match its metadata hash")
+    if not _hash_ok(handoff) or handoff["origin"].get("evidence_hash") != metadata["evidence_hash"]:
+        raise ValueError("archived handoff does not verify against its evidence")
+    close = bundle.get("close") or {}
+    if (close.get("origin") or {}).get("run_id") != metadata.get("run_id"):
+        raise ValueError("the continuity bundle was not uploaded by this close")
+    run = dict(run_id=metadata["run_id"], target_time=metadata["target_time"],
+               code_revision=metadata.get("code_revision", "unknown"), evidence_hash=metadata["evidence_hash"],
+               written_by="reconstruction")
+    record = session_memory(packet, handoff, bundle, universe, run)
+    body = {key: value for key, value in record.items() if key != "content_hash"}
+    body["source"] = dict(body["source"], reconstructed_from=restored_from)
+    return dict(body, content_hash=digest(body))

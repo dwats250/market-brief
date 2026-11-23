@@ -81,7 +81,7 @@ class Day:
         if collect:
             # A part of the real collector, run at this run's clock, replaces the fixture's matching records.
             collect(raw, utc(now))
-        self.monkeypatch.setattr(cli, "collect_live", lambda target, include_cuttingboard=False: raw)
+        self.monkeypatch.setattr(cli, "collect_live", lambda target, include_cuttingboard=False, window=None: raw)
 
         def synthesize(packet, full=False, context=None, **kwargs):
             """The analyst stand-in: counts the call and returns a narrative that production would accept
@@ -155,12 +155,13 @@ def day(monkeypatch, tmp_path):
 
 # --- the scheduler and the configuration agree on what synthesizes --------------------------------
 
-def test_only_the_two_synthesis_checkpoints_carry_an_edition_profile():
-    assert SYNTHESIS_CHECKPOINTS == ("PREMARKET", "OPEN_30M")
+def test_only_the_synthesis_checkpoints_carry_an_edition_profile():
+    # Two per trading day, plus the one weekly edition (WP-MB-WEEK-AHEAD-01).
+    assert SYNTHESIS_CHECKPOINTS == ("PREMARKET", "OPEN_30M", "WEEK_AHEAD")
     assert set(editions_config()["editions"]) == set(SYNTHESIS_CHECKPOINTS)
     for checkpoint in CHECKPOINTS:
         if CHECKPOINT_KINDS[checkpoint] == "synthesis":
-            assert edition_profile(checkpoint)["profile"] in {"rich", "opening"}
+            assert edition_profile(checkpoint)["profile"] in {"rich", "opening", "weekly"}
         else:
             with pytest.raises(ValueError, match="deterministic checkpoint"):
                 edition_profile(checkpoint)
@@ -176,8 +177,10 @@ def test_next_update_label_follows_the_scheduler():
     assert label(f"{TUE}T14:01:00+00:00", "OPEN_30M") == "8:00 AM Vancouver time · price refresh"
     assert label(f"{TUE}T19:00:00+00:00", "HOURLY_1500") == "1:01 PM Vancouver time · close snapshot"
     assert label(f"{TUE}T20:03:00+00:00", "CLOSE_1M") == "Wed, Sep 9 · 6:00 AM Vancouver time · premarket analysis"
-    # Friday's close points at Tuesday: Labor Day is skipped.
+    # Friday's close points at the Sunday week ahead; the Sunday page then points at Tuesday (Labor Day skipped).
     assert next_update_label(next_checkpoint(utc("2026-09-04T20:03:00+00:00"), "CLOSE_1M"), "2026-09-04") \
+        == "Sun, Sep 6 · 1:00 PM Vancouver time · week ahead"
+    assert next_update_label(next_checkpoint(utc("2026-09-06T20:05:00+00:00"), "WEEK_AHEAD"), "2026-09-06") \
         == "Tue, Sep 8 · 6:00 AM Vancouver time · premarket analysis"
 
 

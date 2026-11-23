@@ -1,0 +1,50 @@
+name: Receipt audit
+# Independent missed-wake detection. Every checkpoint run writes a receipt artifact; a wake that never started writes
+# none and fails nothing, so no failure email is sent. This job runs on GitHub's own schedule (not Cloudflare's)
+# after the session's close and fails when a checkpoint the NYSE calendar expected left no receipt, so GitHub's
+# existing failure email reports it. Read-only: no collection, model call, publication, replay or recovery.
+
+on:
+  schedule:
+    # 23:30 UTC is 18:30 ET in winter and 19:30 ET in summer: hours after a regular close (16:01 ET checkpoint) and
+    # after an early close (13:01 ET). Holidays and weekends audit nothing and pass.
+    - cron: "30 23 * * MON-FRI"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: Session to audit (YYYY-MM-DD); empty audits the session that just closed
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: receipt-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Market Brief
+        run: python -m pip install -e .
+      - name: Audit today's checkpoint receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_DATE: ${{ inputs.date }}
+        run: |
+          if [ -n "$AUDIT_DATE" ]; then
+            python -m market_brief receipt-audit --date "$AUDIT_DATE"
+          else
+            python -m market_brief receipt-audit
+          fi

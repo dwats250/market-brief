@@ -8,10 +8,11 @@ import subprocess
 import sys
 import uuid
 import webbrowser
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from . import __version__, glance
+from . import audit as receipt_audit
 from .collect import ALPACA_UNIVERSE, alpaca_probe, collect_live, cuttingboard_record
 from .context import analyst_context, edition_profile
 from .continuity import (
@@ -611,6 +612,23 @@ def _gh_json(args, runner=subprocess.run):
     return json.loads(result.stdout)
 
 
+def audit_receipts(args, runner=subprocess.run):
+    """Fail (exit 1) when a checkpoint the calendar expected left no receipt; read-only. See audit.py."""
+    repository = args.repository or os.environ.get("GITHUB_REPOSITORY")
+    if not repository:
+        raise ValueError("repository not configured")
+    try:
+        session = None if args.date is None else date.fromisoformat(args.date).isoformat()
+        code, lines = receipt_audit.audit(receipt_audit.utc_now(), lambda request: _gh_json(request, runner),
+                                          repository, session, args.branch)
+    except (ValueError, OSError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired) as exc:
+        # Not a missed wake: the audit itself could not verify. Exit 2 still fails the job, so it still emails.
+        print(f"AUDIT ERROR / receipts could not be verified ({type(exc).__name__})")
+        return 2
+    print("\n".join(lines))
+    return code
+
+
 def restore_continuity(args, runner=subprocess.run):
     """Install the newest accepted production bundle from a prior runner, or cold start explicitly.
 
@@ -738,7 +756,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="One local pre-market briefing, grounded in evidence")
     parser.add_argument("command", choices=["premarket", "schedule", "resolve-scheduled",
                                              "alpaca-probe", "open", "publish", "continuity-restore",
-                                             "glance-baseline", "receipt"])
+                                             "glance-baseline", "receipt", "receipt-audit"])
     parser.add_argument("--replay", action="store_true", help="offline fictional evidence + narrative")
     parser.add_argument("--input", type=Path, help="sourced input JSON; SAMPLE for replay, LIVE otherwise")
     parser.add_argument("--synthesize", action="store_true", help="call Claude even for SAMPLE evidence")
@@ -759,6 +777,7 @@ def main(argv=None):
     parser.add_argument("--from-file", type=Path, help="continuity-restore: install this bundle file")
     parser.add_argument("--repository", help="continuity-restore: owner/repo (default GITHUB_REPOSITORY)")
     parser.add_argument("--branch", default="main", help="continuity-restore: expected artifact branch")
+    parser.add_argument("--date", help="receipt-audit: the session to audit (default: the session that just closed)")
     args = parser.parse_args(argv)
     try:
         if args.command == "alpaca-probe":
@@ -788,6 +807,8 @@ def main(argv=None):
             return 0
         if args.command == "schedule":
             return scheduled(args)
+        if args.command == "receipt-audit":
+            return audit_receipts(args)
         if args.command == "receipt":
             # Accounting only, after everything else: it reads the step outcomes and this run's metadata.
             receipt = build_receipt(os.environ, RUN_ROOT, datetime.now(timezone.utc))

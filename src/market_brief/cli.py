@@ -39,6 +39,7 @@ from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_js
 from .memory import (
     CANDIDATES_PER_SESSION,
     CONTINUITY_ARTIFACT,
+    DOWNLOADS_PER_SESSION,
     MEMORY_FILE,
     RESTORE_PAGES,
     RESTORED_INDEX,
@@ -786,21 +787,21 @@ def restore_memory(args, runner=subprocess.run):
                 listed.append((created, artifact))
             if done:
                 break
-        # Per session, the earliest artifacts of this repository's own schedule runs: the contemporaneous close comes
-        # first, and a later dispatch or a foreign workflow's artifact can never crowd it out.
-        candidates, per_session = [], {}
+        # Per session, the earliest artifacts of this repository's own schedule runs, until CANDIDATES_PER_SESSION
+        # accepted production closes are in hand (an experiment or a failed close dispatched earlier the same day
+        # never uses up a slot), bounded by DOWNLOADS_PER_SESSION downloads.
+        accepted, downloads = {}, {}
         for created, artifact in sorted(listed, key=lambda item: item[1]["created_at"]):
-            if per_session.get(created, 0) >= CANDIDATES_PER_SESSION:
+            if (accepted.get(created, 0) >= CANDIDATES_PER_SESSION
+                    or downloads.get(created, 0) >= DOWNLOADS_PER_SESSION):
                 continue
-            details = _gh_json([f"repos/{repository}/actions/runs/{artifact['workflow_run']['id']}"], runner)
+            run_id = artifact["workflow_run"]["id"]
+            details = _gh_json([f"repos/{repository}/actions/runs/{run_id}"], runner)
             if not (isinstance(details, dict) and details.get("path") == WORKFLOW_PATH
                     and own_repository_run(details)):
                 print(f"Memory: ignored artifact {artifact.get('id')}: not this repository's own schedule run")
                 continue
-            per_session[created] = per_session.get(created, 0) + 1
-            candidates.append(artifact)
-        for artifact in candidates:
-            run_id = artifact["workflow_run"]["id"]
+            downloads[created] = downloads.get(created, 0) + 1
             target = base / str(run_id)
             result = runner(["gh", "run", "download", str(run_id), "-n", artifact["name"], "-D", str(target),
                              "-R", repository], capture_output=True, text=True, check=False, timeout=120)
@@ -815,6 +816,9 @@ def restore_memory(args, runner=subprocess.run):
                     continue
                 if metadata.get("checkpoint") != "CLOSE_1M":
                     continue
+                if (metadata.get("mode") == "LIVE" and not metadata.get("experiment")
+                        and not metadata.get("commissioning") and metadata.get("validation") == "PASS"):
+                    accepted[created] = accepted.get(created, 0) + 1
                 origin = dict(artifact_id=artifact.get("id"), workflow_run_id=run_id)
                 restored_from[metadata.get("run_id")] = origin
                 if (folder / MEMORY_FILE).is_file() or not getattr(args, "reconstruct", False):

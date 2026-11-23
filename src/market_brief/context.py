@@ -11,6 +11,7 @@ from .evidence import (
     ISSUER_FIELDS,
     MODEL_CONTEXT_FIELDS,
     MODEL_EVENT_FIELDS,
+    PLACEHOLDER,
     RELEASE_FIELDS,
     ROOT,
     digest,
@@ -145,19 +146,25 @@ def _week_ids(packet, catalog, note=None):
     return keep
 
 
-def compact_note(note):
+def compact_note(note, citable=()):
     """The week's hypotheses as the analyst reads them: each watch once, with its verdict trail as `date checkpoint
     status`, how it ended, and (only when judged) the archived facts it cited; relationships likewise. Record ids are
     left out: nothing here is citable."""
     def trail(items):
         return [f"{item['day']} {item.get('by') or ''} {item['status']}".replace("  ", " ") for item in items]
+
+    def plain(text):
+        # A placeholder the analyst may not cite becomes plain words, never an id it could copy and be rejected for.
+        return PLACEHOLDER.sub(lambda m: m.group(0) if m.group(1) in citable else "(value not supplied)",
+                               text or "")
     return {"class": note["class"], "note": note["note"],
             "sessions": [dict(date=s["date"], read=s["read"]) for s in note.get("sessions", [])],
-            "watches": [dict(first=w["first"], hypothesis=w["hypothesis"], verdicts=trail(w.get("verdicts", [])),
+            "watches": [dict(first=w["first"], hypothesis=plain(w["hypothesis"]), verdicts=trail(w.get("verdicts", [])),
                              end=w.get("end"), **({"facts": w["facts"]} if w.get("verdicts") else {}))
                         for w in note.get("watches", [])],
-            "relationships": [dict(first=r["first"], statement=r["statement"], statuses=trail(r.get("statuses", [])),
-                                   facts=r.get("facts", [])) for r in note.get("relationships", [])]}
+            "relationships": [dict(first=r["first"], statement=plain(r["statement"]),
+                                   statuses=trail(r.get("statuses", [])), facts=r.get("facts", []))
+                              for r in note.get("relationships", [])]}
 
 
 def archived_fact(row):
@@ -271,7 +278,7 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
         # hypotheses, labeled interpretation. Nothing here is citable; the archived rows above are.
         result["week"] = dict(completed_sessions=week["sessions"], sessions_with_records=sorted(week["records"]),
                               missing_sessions=week["missing"], next_week=week["calendar"],
-                              hypotheses=compact_note(week["note"]))
+                              hypotheses=compact_note(week["note"], set(valued)))
     if packet.get("history_lag"):
         result["history_lag"] = packet["history_lag"]
     if packet.get("history_errors"):

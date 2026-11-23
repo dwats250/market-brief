@@ -699,12 +699,12 @@ Values below are real, from the 09-25 20:01 close (pre-#36 code, so its curve fi
 - [x] Archived ids carry each row's own observation date or time (`{original-id}-YYYYMMDD[THHMM]`; session returns
   `{SYM}-session-YYYYMMDD`). The original status is kept in `lineage.original_status`. Archived rows never count
   toward current coverage. Week dates are read in New York time.
-- [x] **Restore.** Per session, it takes the earliest artifacts of this repository's own schedule runs (at most 2),
-  so later dispatches can never crowd out the contemporaneous close.
+- [x] **Restore.** Per session, it takes the earliest artifacts of this repository's own schedule runs until 2 accepted production closes are in hand (at most 6 downloads), so an earlier experiment dispatch can never use up a slot and
+  later dispatches can never crowd out the contemporaneous close. Placeholders the analyst may not cite are plain text in its copy of the hypotheses.
 - [x] **Replay.** A WEEK_AHEAD replay needs `--memory`.
 - [x] **Context size:** the final W47 measurement is 45,722 B.
-- [x] Tests: `tests/test_week_ahead.py` (56). The main scenario drives a real production week through the CLI and
-  then runs Sunday. Full suite: 1,790 passed.
+- [x] Tests: `tests/test_week_ahead.py` (58). The main scenario drives a real production week through the CLI and
+  then runs Sunday. Full suite: 1,792 passed.
 - [x] **Review.** An independent fresh-context review (Codex Astra had hit its usage limit) found no extra-call or
   continuity defect, and 7 issues, all fixed with regression tests:
   - archived id collisions;

@@ -434,7 +434,8 @@ def eligible(kind, production, handoff):
 RUN_ARTIFACT_PREFIX = "market-brief-run-CLOSE_1M-"
 CONTINUITY_ARTIFACT = "market-brief-continuity"
 RESTORE_PAGES = 5
-CANDIDATES_PER_SESSION = 2
+CANDIDATES_PER_SESSION = 2  # accepted production closes kept per session
+DOWNLOADS_PER_SESSION = 6  # artifacts examined per session at most
 WEEK_DIR = ("runs", "week")
 RESTORED_INDEX = "restored.json"
 ARCHIVED_STATUS = "BACKGROUND"

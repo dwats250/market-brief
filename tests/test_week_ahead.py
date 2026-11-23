@@ -598,3 +598,48 @@ def test_later_artifacts_of_a_session_never_crowd_out_its_contemporaneous_close(
     args = argparse.Namespace(week=SUNDAY, repository="owner/repo", branch="main", reconstruct=False)
     assert cli.restore_memory(args, runner) == 0
     assert downloads == [701, 702]
+
+
+def test_earlier_experiment_dispatches_never_use_up_a_sessions_restore_slots(lived, monkeypatch):
+    import argparse
+    import subprocess
+    monkeypatch.setattr(cli, "RUN_ROOT", lived.root)
+    shutil.rmtree(lived.root / "runs" / "week")
+    own = dict(path=".github/workflows/schedule.yml", repository=dict(id=1), head_repository=dict(id=1))
+    day = WEEK[-1]
+    listing = [dict(id=3, name="market-brief-run-CLOSE_1M-803", created_at=f"{day}T20:05:00Z",
+                    workflow_run=dict(id=803, head_branch="main")),
+               dict(id=2, name="market-brief-run-CLOSE_1M-802", created_at=f"{day}T17:00:00Z",
+                    workflow_run=dict(id=802, head_branch="main")),
+               dict(id=1, name="market-brief-run-CLOSE_1M-801", created_at=f"{day}T15:00:00Z",
+                    workflow_run=dict(id=801, head_branch="main")),
+               dict(id=0, name="x", created_at="2026-09-01T00:00:00Z", workflow_run=dict(id=1, head_branch="main"))]
+
+    def runner(command, **kwargs):
+        if command[:2] == ["gh", "api"]:
+            body = dict(artifacts=listing) if "artifacts?" in command[2] and command[2].endswith("page=1") else (
+                dict(artifacts=[]) if "artifacts?" in command[2] else own)
+            return subprocess.CompletedProcess(command, 0, json.dumps(body), "")
+        run_id = int(command[3])
+        close = lived.folder("CLOSE_1M", day)
+        target = f"{command[command.index('-D') + 1]}/{day}/{close.name}"
+        shutil.copytree(close, target)
+        if run_id != 803:  # two earlier experiment dispatches of CLOSE_1M
+            meta = json.loads((Path(target) / "metadata.json").read_text())
+            (Path(target) / "metadata.json").write_text(json.dumps(dict(meta, experiment=True, run_id=f"x{run_id}")))
+            (Path(target) / MEMORY_FILE).unlink()
+        return subprocess.CompletedProcess(command, 0, "", "")
+    from pathlib import Path
+    args = argparse.Namespace(week=SUNDAY, repository="owner/repo", branch="main", reconstruct=False)
+    assert cli.restore_memory(args, runner) == 0
+    records, report = load_week(lived.root, list(WEEK))
+    assert day in report["records"]
+
+
+def test_the_analyst_never_sees_a_placeholder_it_cannot_cite():
+    from market_brief.context import compact_note
+    note = {"class": "INTERPRETATION", "note": "", "sessions": [], "relationships": [],
+            "watches": [dict(first="2026-09-14", hypothesis="NVDA lags at {{NVDA-spread20-20260914}}", verdicts=[],
+                             end="expired")]}
+    assert "{{" not in json.dumps(compact_note(note, set()))
+    assert "{{NVDA-spread20-20260914}}" in json.dumps(compact_note(note, {"NVDA-spread20-20260914"}))

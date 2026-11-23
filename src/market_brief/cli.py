@@ -26,6 +26,7 @@ from .continuity import (
     compare_all,
     continuity_context,
     edition_state,
+    empty_bundle,
     interpretation_record,
     load_bundle,
     own_repository_run,
@@ -35,8 +36,22 @@ from .continuity import (
     write_bundle,
 )
 from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_json, timestamp
-from .memory import MEMORY_FILE, eligible, session_memory
-from .metrics import annotate_magnitude, derive
+from .memory import (
+    CANDIDATES_PER_SESSION,
+    CONTINUITY_ARTIFACT,
+    MEMORY_FILE,
+    RESTORE_PAGES,
+    RESTORED_INDEX,
+    RUN_ARTIFACT_PREFIX,
+    WEEK_DIR,
+    admit_archived,
+    eligible,
+    load_week,
+    reconstruct,
+    session_memory,
+    week_note,
+)
+from .metrics import annotate_magnitude, derive, week_returns
 from .receipts import build_receipt, write_receipt
 from .render import render
 from .schedule import (
@@ -46,9 +61,12 @@ from .schedule import (
     VANCOUVER_LABEL,
     checkpoint_kind,
     checkpoint_session,
+    completed_week,
     current_phase,
     due,
     scheduled_checkpoint,
+    week_calendar,
+    week_event_dates,
 )
 from .synthesize import (
     NARRATIVE_SCHEMA,
@@ -62,10 +80,12 @@ from .synthesize import (
     synthesize,
     validate_narrative,
 )
+from .weekpage import render_week
 
 # Assets (prompt, config, templates) come from ROOT; generated state lives under RUN_ROOT.
 RUN_ROOT = ROOT
 SAMPLE_CONTINUITY = ROOT / "tests/fixtures/continuity.sample.json"
+WEEK_ISOLATION = "week ahead is isolated from session continuity"
 CLOSING_DATA_FOR_HANDOFF = {"COMPLETED_SESSION", "PROVISIONAL_NEAR_CLOSE"}
 # Attempt accounting, not continuity: one record per synthesis checkpoint per exchange session, written before a
 # production provider request is sent and uploaded by the workflow as `market-brief-attempt-<session>-<checkpoint>`.
@@ -331,6 +351,35 @@ def sample_interpretation(packet, prior, comparisons):
     return interpretation_record(packet, narrative, context, __version__, digest(context), origin)
 
 
+def admit_week(args, packet, thresholds, allow_reconstructed):
+    """The completed week's evidence: the settled week returns from this collection, and the session records restored
+    for the week, admitted as dated rows with their original lineage. Returns the accepted records.
+
+    A live run reads what `memory-restore` installed under runs/week/; a replay reads the fixture records. An
+    experiment (or replay) may use records reconstructed offline from archived closes; production never does."""
+    day = packet["run"]["session"]["date"]
+    week = completed_week(day)
+    base = getattr(args, "memory", None) if args.replay else None
+    records, report = load_week(RUN_ROOT, week, allow_reconstructed=allow_reconstructed, base=base)
+    gaps = week_returns(packet, week, thresholds)
+    if records:
+        packet, admission_gaps = admit_archived(packet, records)
+        gaps += admission_gaps
+    packet["week"] = dict(sessions=week, records=report["records"], missing=report["missing"],
+                          report=report, calendar=week_calendar(day), note=week_note(records), gaps=gaps)
+    return records
+
+
+def week_ahead_allowed(now, experiment):
+    """Production WEEK_AHEAD runs only on an ET Sunday; an experiment on an ET Saturday or Sunday; never on a trading
+    day or a weekday holiday (a week is not complete then, and a weekday belongs to session continuity)."""
+    weekday = now.astimezone(ET).weekday()
+    if weekday == 6 or (experiment and weekday == 5):
+        return
+    raise ValueError("WEEK_AHEAD runs only on a Sunday (an experiment also on a Saturday), New York time; "
+                     "nothing was collected")
+
+
 def run(args):
     started = datetime.now(timezone.utc)
     mode = "SAMPLE" if args.replay else "LIVE"
@@ -338,6 +387,11 @@ def run(args):
     experiment = bool(getattr(args, "experiment", False))
     production = mode == "LIVE" and not experiment and not commissioning
     full = bool(getattr(args, "full_packet", False))
+    week_ahead = args.checkpoint == "WEEK_AHEAD" and not commissioning
+    if week_ahead and not args.replay:
+        week_ahead_allowed(started, experiment)
+    if week_ahead and args.replay and not getattr(args, "memory", None):
+        raise ValueError("a WEEK_AHEAD replay needs --memory, a directory of session records")
     if args.replay:
         raw = read_json(args.input or ROOT / "tests/fixtures/evidence.sample.json")
         target = timestamp(raw["target_time"])
@@ -345,7 +399,9 @@ def run(args):
         if raw.get("cuttingboard"):
             raw["cuttingboard"] = cuttingboard_record(raw["cuttingboard"], target, target)
     else:
-        raw = collect_live(started, include_cuttingboard=args.cuttingboard)
+        # A week ahead admits next week's scheduled events; every other checkpoint keeps today and the next session.
+        raw = (collect_live(started, include_cuttingboard=args.cuttingboard, window=week_event_dates(started))
+               if week_ahead else collect_live(started, include_cuttingboard=args.cuttingboard))
         if args.input:
             raw = merge_input(raw, read_json(args.input))
         # The evidence cutoff is when collection finished. At the run's start, every print reported during
@@ -363,11 +419,17 @@ def run(args):
     universe = read_json(ROOT / "config/universe.json")
     thresholds = read_json(ROOT / "config/magnitude.json")
     derive(packet, universe, thresholds)
+    week_records = []
+    if week_ahead:
+        week_records = admit_week(args, packet, thresholds, experiment or args.replay)
     annotate_magnitude(packet, thresholds)
     finalize_coverage(packet)
     # Make unavailable, unimplemented categories explicit in every packet/report.
     config = read_json(ROOT / "config/sources.json")
     packet["coverage"]["limitations"].append("Not automated: " + ", ".join(config["deferred"]))
+    if week_ahead:
+        packet["coverage"]["limitations"] += [f"No accepted session record for {day}" for day in
+                                              packet["week"]["missing"]]
     checkpoint_data = checkpoint_session(target, checkpoint)
     packet["run"].update(collection_started_at=started.isoformat(), actual_started_at=started.isoformat(),
                          collection_completed_at=datetime.now(timezone.utc).isoformat(),
@@ -380,8 +442,14 @@ def run(args):
     # Structured prior state: admitted by exchange session, compared deterministically.
     continuity_source = (getattr(args, "continuity", None) or SAMPLE_CONTINUITY) if args.replay \
         else bundle_path(RUN_ROOT)
-    bundle, bundle_note = load_bundle(continuity_source)
-    prior = admit_prior_state(bundle, packet)
+    if week_ahead:
+        # Isolated: no bundle is loaded or admitted, and nothing here advances one.
+        bundle, bundle_note = empty_bundle(), ""
+        prior = dict(status="cold_start", reason=WEEK_ISOLATION, anchors={}, snapshots={}, watches=[],
+                     relationships=[], closing_character=None, next_events=[])
+    else:
+        bundle, bundle_note = load_bundle(continuity_source)
+        prior = admit_prior_state(bundle, packet)
     if bundle_note and prior["status"] != "available":
         prior["reason"] = f"{prior['reason']}; {bundle_note}" if prior["reason"] else bundle_note
     comparisons = compare_all(prior, packet)
@@ -393,7 +461,7 @@ def run(args):
     # Optional Global Equity Proxies line (five US-listed country ETFs): display only, never in the packet, so
     # evidence, continuity and the analyst's context are unchanged; any failure is a quiet line, never a failed run.
     overseas = (glance.view(glance.resolve(target, packet["run"]["session"], checkpoint))
-                if mode == "LIVE" and not experiment else None)
+                if mode == "LIVE" and not experiment and not week_ahead else None)
     if kind != "synthesis" and prior.get("market_state"):
         # A deterministic page may need the session's last live market snapshot for "Since the analysis" when its
         # own prints cannot be compared (the close's are all DELAYED). A synthesis's evidence never carries it.
@@ -427,9 +495,15 @@ def run(args):
                     continuity=dict(status=prior["status"], reason=prior["reason"],
                                     anchors={k: v["run_id"] for k, v in prior["anchors"].items()},
                                     comparisons=len(comparisons), advanced=False))
+    if week_ahead:
+        metadata["week"] = dict(packet["week"]["report"], gaps=packet["week"]["gaps"])
     try:
         if packet["coverage"]["status"] == "INSUFFICIENT":
             raise ValueError("no usable observations/events/context; evidence diagnostic only")
+        if week_ahead and not week_records:
+            # Fail closed before any request: the week's facts come from its session records, never from today alone.
+            raise ValueError("no accepted session record for the completed week "
+                             f"({', '.join(packet['week']['sessions']) or 'no sessions'}); no paid call was made")
         narrative = None
         degraded = None
         if kind == "synthesis":
@@ -536,9 +610,13 @@ def run(args):
         if interpretation is not None:
             try:
                 repairs = None if degraded else (metadata.get("model") or {}).get("repairs")
-                markdown, page = render(packet, narrative, None if degraded else context,
-                                        interpretation=interpretation, glance=overseas, repairs=repairs,
-                                        degraded=degraded)
+                if week_ahead:
+                    markdown, page = render_week(packet, narrative, context, interpretation=interpretation,
+                                                 repairs=repairs)
+                else:
+                    markdown, page = render(packet, narrative, None if degraded else context,
+                                            interpretation=interpretation, glance=overseas, repairs=repairs,
+                                            degraded=degraded)
             except Exception as exc:  # noqa: BLE001 - any rendering defect is diagnosed like a rejection
                 # The accepted narrative is already on disk; nothing has been published.
                 stage = "the degraded refresh" if degraded else "acceptance"
@@ -564,7 +642,7 @@ def run(args):
         metadata["continuity"].update(data_status=state["observed"]["data_status"],
                                       handoff="written" if handoff else handoff_reason,
                                       watches=[w["id"] for w in state["assessment"]["watches"]])
-        if production and packet["coverage"]["status"] in {"READY", "PARTIAL"}:
+        if production and not week_ahead and packet["coverage"]["status"] in {"READY", "PARTIAL"}:
             pointer = RUN_ROOT / "runs/latest-success.json"
             if pointer.is_symlink():
                 raise ValueError("latest-success pointer cannot be a symlink")
@@ -660,6 +738,113 @@ def restore_continuity(args, runner=subprocess.run):
     return 0
 
 
+def _et_date(value):
+    return timestamp(value).astimezone(ET).date().isoformat()
+
+
+def restore_memory(args, runner=subprocess.run):
+    """Install the completed week's session records from this repository's own close-run artifacts (WEEK_AHEAD only).
+
+    Lists artifacts newest first and stops at the week's first session (at most RESTORE_PAGES pages); keeps unexpired
+    `market-brief-run-CLOSE_1M-*` artifacts from `branch` whose run is this repository's own schedule.yml run, at most
+    CANDIDATES_PER_SESSION per session; downloads each under runs/week/<workflow run>/. Acceptance (hash, production
+    origin, sibling PASS-and-advanced metadata) happens when the edition loads them. `--reconstruct` (an isolated
+    experiment only) rebuilds a record from a close artifact that predates the session record, with the continuity
+    bundle that same run uploaded. It never fails the job: an edition without records fails closed on its own."""
+    day = args.week or datetime.now(timezone.utc).astimezone(ET).date().isoformat()
+    week = completed_week(day)
+    base = Path(RUN_ROOT).joinpath(*WEEK_DIR)
+    restored_from = {}
+    try:
+        if base.is_symlink():
+            raise ValueError("week directory cannot be a symlink")
+        base.mkdir(parents=True, exist_ok=True)
+        repository = args.repository or os.environ.get("GITHUB_REPOSITORY")
+        if not repository:
+            raise ValueError("repository not configured")
+        if not week:
+            raise ValueError(f"no exchange session in the week before {day}")
+        listed = []
+        for page in range(1, RESTORE_PAGES + 1):
+            listing = _gh_json([f"repos/{repository}/actions/artifacts?per_page=100&page={page}"], runner)
+            artifacts = listing.get("artifacts") if isinstance(listing, dict) else None
+            if not isinstance(artifacts, list) or not artifacts:
+                break
+            done = False
+            for artifact in artifacts:
+                if not isinstance(artifact, dict) or not artifact.get("created_at"):
+                    continue
+                created = _et_date(artifact["created_at"])
+                if created < week[0]:
+                    done = True  # newest first: everything after this predates the week
+                    continue
+                run_ = artifact.get("workflow_run")
+                if (not str(artifact.get("name", "")).startswith(RUN_ARTIFACT_PREFIX) or artifact.get("expired")
+                        or not isinstance(run_, dict) or run_.get("head_branch") != args.branch
+                        or created not in week):
+                    continue
+                listed.append((created, artifact))
+            if done:
+                break
+        # Per session, the earliest artifacts of this repository's own schedule runs: the contemporaneous close comes
+        # first, and a later dispatch or a foreign workflow's artifact can never crowd it out.
+        candidates, per_session = [], {}
+        for created, artifact in sorted(listed, key=lambda item: item[1]["created_at"]):
+            if per_session.get(created, 0) >= CANDIDATES_PER_SESSION:
+                continue
+            details = _gh_json([f"repos/{repository}/actions/runs/{artifact['workflow_run']['id']}"], runner)
+            if not (isinstance(details, dict) and details.get("path") == WORKFLOW_PATH
+                    and own_repository_run(details)):
+                print(f"Memory: ignored artifact {artifact.get('id')}: not this repository's own schedule run")
+                continue
+            per_session[created] = per_session.get(created, 0) + 1
+            candidates.append(artifact)
+        for artifact in candidates:
+            run_id = artifact["workflow_run"]["id"]
+            target = base / str(run_id)
+            result = runner(["gh", "run", "download", str(run_id), "-n", artifact["name"], "-D", str(target),
+                             "-R", repository], capture_output=True, text=True, check=False, timeout=120)
+            if result.returncode != 0:
+                print(f"Memory: artifact {artifact.get('id')} could not be downloaded")
+                continue
+            for metadata_path in target.rglob("metadata.json"):
+                folder = metadata_path.parent
+                try:
+                    metadata = json.loads(metadata_path.read_text())
+                except (OSError, ValueError):
+                    continue
+                if metadata.get("checkpoint") != "CLOSE_1M":
+                    continue
+                origin = dict(artifact_id=artifact.get("id"), workflow_run_id=run_id)
+                restored_from[metadata.get("run_id")] = origin
+                if (folder / MEMORY_FILE).is_file() or not getattr(args, "reconstruct", False):
+                    continue
+                bundle_dir = target / "continuity"
+                fetched = runner(["gh", "run", "download", str(run_id), "-n", CONTINUITY_ARTIFACT, "-D",
+                                  str(bundle_dir), "-R", repository],
+                                 capture_output=True, text=True, check=False, timeout=120)
+                bundle, note = load_bundle(bundle_dir / "bundle.json")
+                if fetched.returncode != 0 or note:
+                    print(f"Memory: {metadata.get('run_id')} not reconstructed (continuity bundle unavailable)")
+                    continue
+                try:
+                    universe = read_json(ROOT / "config/universe.json")
+                    record = reconstruct(folder, bundle, universe,
+                                         dict(origin, continuity_artifact=CONTINUITY_ARTIFACT))
+                except (ValueError, OSError, KeyError, TypeError) as exc:
+                    print(f"Memory: {metadata.get('run_id')} not reconstructed ({exc})")
+                    continue
+                write_json(folder / MEMORY_FILE, record)
+        write_json(base / RESTORED_INDEX, dict(week=week, restored_from=restored_from))
+        records, report = load_week(RUN_ROOT, week, allow_reconstructed=bool(getattr(args, "reconstruct", False)))
+        print(f"Memory: {len(records)} of {len(week)} sessions restored for the week of {week[0]}"
+              + (f"; missing {', '.join(report['missing'])}" if report["missing"] else "")
+              + (f"; ignored {len(report['ignored'])}" if report["ignored"] else ""))
+    except (ValueError, OSError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired) as exc:
+        print(f"Memory: restore incomplete ({type(exc).__name__}); the edition names what is missing.")
+    return 0
+
+
 EVIDENCE_CUTOFF_ATTRIBUTE = re.compile(r'<html[^>]*\sdata-evidence-cutoff="([^"]+)"')
 
 
@@ -699,7 +884,7 @@ def completed_in_bundle(root, session_date, checkpoint):
 def scheduled(args):
     now = datetime.now(timezone.utc)
     ready, info = due(now, args.checkpoint)
-    if not info["trading_day"]:
+    if not info["trading_day"] and args.checkpoint != "WEEK_AHEAD":
         print(f"SKIP / {args.checkpoint} / non-trading session {info['session_date']}")
         return 0
     if not ready:
@@ -738,7 +923,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="One local pre-market briefing, grounded in evidence")
     parser.add_argument("command", choices=["premarket", "schedule", "resolve-scheduled",
                                              "alpaca-probe", "open", "publish", "continuity-restore",
-                                             "glance-baseline", "receipt"])
+                                             "memory-restore", "glance-baseline", "receipt"])
     parser.add_argument("--replay", action="store_true", help="offline fictional evidence + narrative")
     parser.add_argument("--input", type=Path, help="sourced input JSON; SAMPLE for replay, LIVE otherwise")
     parser.add_argument("--synthesize", action="store_true", help="call Claude even for SAMPLE evidence")
@@ -759,6 +944,10 @@ def main(argv=None):
     parser.add_argument("--from-file", type=Path, help="continuity-restore: install this bundle file")
     parser.add_argument("--repository", help="continuity-restore: owner/repo (default GITHUB_REPOSITORY)")
     parser.add_argument("--branch", default="main", help="continuity-restore: expected artifact branch")
+    parser.add_argument("--week", help="memory-restore: the week ahead's date (default: today, New York time)")
+    parser.add_argument("--reconstruct", action="store_true",
+                        help="memory-restore, experiments only: rebuild records for closes that predate them")
+    parser.add_argument("--memory", type=Path, help="replay only: directory of session records for WEEK_AHEAD")
     args = parser.parse_args(argv)
     try:
         if args.command == "alpaca-probe":
@@ -772,6 +961,8 @@ def main(argv=None):
             return 0
         if args.command == "continuity-restore":
             return restore_continuity(args)
+        if args.command == "memory-restore":
+            return restore_memory(args)
         if args.command == "glance-baseline":
             # Manual, once: --from-file closes.csv (market,date,close; about three years per index).
             if not args.from_file:

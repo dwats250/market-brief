@@ -106,6 +106,9 @@ def stale_movement(packet, row):
     """
     if row.get("metric") not in (CHANGE, SPREAD_CHANGE, REAL_CHANGE, IC_CHANGE, *HISTORY_MOVES):
         return False
+    if row.get("archived"):
+        # A week ahead's archived row is a dated past observation by design, never presented as the current move.
+        return False
     curve = packet.get("curve") or {}
     if curve.get("freshness") == "stale":
         return True

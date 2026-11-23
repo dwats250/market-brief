@@ -176,3 +176,36 @@ def derive(packet, universe, thresholds=None):
         if "magnitude" not in row:
             row["magnitude"] = magnitude(row.get("value"), row.get("unit"), thresholds)
     return packet
+
+
+WEEK_METRIC = "week return"
+
+
+def week_returns(packet, week, thresholds=None):
+    """`{SYM}-week`: the completed week's settled price return, from the same admitted daily history as `-daily`.
+
+    Last settled close of the week over the last regular close before the week's first session. Only symbols whose
+    history the derivation admitted (a `-daily` row exists) and whose history runs through the week's last session.
+    Returns the named gaps."""
+    gaps = []
+    admitted = {row["topic"] for row in packet["derived"] if row["metric"] == "daily return"}
+    if not week:
+        return ["week return: the completed week holds no exchange session"]
+    for h in packet["history"]:
+        sym = h["symbol"]
+        if sym not in admitted:
+            continue
+        dates, closes = h["dates"], h["closes"]
+        if dates[-1] != week[-1] or week[0] not in dates or dates.index(week[0]) == 0:
+            gaps.append(f"{sym} week return: daily history does not span {week[0]} to {week[-1]}")
+            continue
+        base = dates.index(week[0]) - 1
+        value = return_pct(closes[-1], closes[base])
+        packet["derived"].append(dict(
+            id=f"{sym}-week", topic=sym, metric=WEEK_METRIC, value=round(value, 6), unit="%",
+            baseline="regular close before the week's first session / price return", observed_at=dates[-1],
+            window_start=dates[base], retrieved_at=h["retrieved_at"], source_id=h["source_id"], frequency="daily",
+            status="BACKGROUND", reason="", formula_version="week-return.v1", input_ids=[h["id"]],
+            adjustment=h["adjustment"], freshness="PRIOR_CLOSE", expected_freshness="PRIOR_CLOSE",
+            magnitude=magnitude(value, "%", thresholds)))
+    return gaps

@@ -100,6 +100,76 @@ def _selected_ids(packet, catalog, profile, comparisons, prior):
     return keep
 
 
+# The week edition (WEEK_AHEAD): the completed week's archived session rows and this collection's settled supplement.
+WEEK_CURRENT_METRICS = {"week return", "relative to SPY", "relative to QQQ", "relative to GLD"}
+WEEK_RATE_SOURCES = ("treasury", "treasury-real")
+WEEK_SESSION_SYMBOLS = ("SPY", "QQQ", "GLD", "SLV", "XLK", "XLF", "XLE", "XLI", "XLY", "XLP", "XLV", "XLU", "XLB",
+                        "XLRE", "XLC")
+WEEK_ARCHIVED_RATE_TOPICS = ("US 2Y", "US 10Y", "US 2s10s")
+WEEK_ARCHIVED_RATE_METRICS = ("daily par yield", "curve spread")
+ARCHIVED_FACT_FIELDS = ("id", "metric", "value", "unit", "observed_at", "source_id")
+
+
+def _week_ids(packet, catalog, note=None):
+    """A week edition keeps, from the archive: each session's return for the anchors, metals and sectors; the 2Y/10Y
+    level and 2s10s path; the leadership extremes of the week's first and last records; the frozen facts the week's
+    relationships and judged watches cite. From this collection: the week returns, 20-session relative strength, the
+    anchors, the rates context (levels, daily and five/twenty-entry moves, volatility, real yields, inflation
+    compensation, funding), trigger evidence and official releases. The rest is named as omitted."""
+    rows = {r["id"]: r for r in packet["derived"] + packet["observations"]}
+    days = sorted({r["lineage"]["session_date"] for r in rows.values() if r.get("archived")})
+    ends = {days[0], days[-1]} if days else set()
+    cited = set()
+    for watch in (note or {}).get("watches", []):
+        if watch.get("verdicts"):
+            cited |= set(watch.get("facts", []))
+    for relationship in (note or {}).get("relationships", []):
+        cited |= set(relationship.get("facts", []))
+    keep = set()
+    for ident, row in catalog.items():
+        raw = rows.get(ident, {})
+        if raw.get("archived"):
+            day = raw["lineage"]["session_date"]
+            if ((row["metric"] == "session return" and row.get("topic") in WEEK_SESSION_SYMBOLS)
+                    or ident in cited
+                    or (row.get("topic") in WEEK_ARCHIVED_RATE_TOPICS and row["metric"] in WEEK_ARCHIVED_RATE_METRICS)
+                    or (row["metric"].startswith("relative to") and day in ends)):
+                keep.add(ident)
+            continue
+        if (row.get("topic") in ANCHOR_TOPICS or row["metric"] in WEEK_CURRENT_METRICS
+                or row.get("source_id") in WEEK_RATE_SOURCES or str(row.get("source_id", "")).startswith("nyfed-")
+                or row.get("frequency") == "release"):
+            keep.add(ident)
+    for trigger in packet.get("attention", []):
+        keep |= set(trigger.get("evidence_ids", []))
+    return keep
+
+
+def compact_note(note):
+    """The week's hypotheses as the analyst reads them: each watch once, with its verdict trail as `date checkpoint
+    status`, how it ended, and (only when judged) the archived facts it cited; relationships likewise. Record ids are
+    left out: nothing here is citable."""
+    def trail(items):
+        return [f"{item['day']} {item.get('by') or ''} {item['status']}".replace("  ", " ") for item in items]
+    return {"class": note["class"], "note": note["note"],
+            "sessions": [dict(date=s["date"], read=s["read"]) for s in note.get("sessions", [])],
+            "watches": [dict(first=w["first"], hypothesis=w["hypothesis"], verdicts=trail(w.get("verdicts", [])),
+                             end=w.get("end"), **({"facts": w["facts"]} if w.get("verdicts") else {}))
+                        for w in note.get("watches", [])],
+            "relationships": [dict(first=r["first"], statement=r["statement"], statuses=trail(r.get("statuses", [])),
+                                   facts=r.get("facts", [])) for r in note.get("relationships", [])]}
+
+
+def archived_fact(row):
+    """An archived row as the analyst reads it: what, how much, when (to the second) and its original source. Its full
+    lineage stays in the evidence record."""
+    fact = {key: row[key] for key in ARCHIVED_FACT_FIELDS if key in row}
+    observed = str(fact.get("observed_at") or "")
+    if "T" in observed and "." in observed:
+        fact["observed_at"] = observed.split(".", 1)[0] + "Z"
+    return fact
+
+
 def catalog_group(topic, rows):
     """One topic's rows. An official release states its publication time and reference month once, for the group."""
     shared = {(row.get("observed_at"), row.get("reference_period")) for row in rows}
@@ -122,7 +192,16 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
     catalog = evidence_catalog(projected)
     valued = {ident: row for ident, row in catalog.items() if "value" in row}
     selection = None
-    if profile and profile.get("context") == "changed":
+    if profile and profile.get("context") == "week":
+        keep = _week_ids(packet, valued, (packet.get("week") or {}).get("note"))
+        omitted = sorted(ident for ident in valued if ident not in keep)
+        selection = dict(profile=profile["profile"], mode="week", omitted_count=len(omitted),
+                         omitted_topics=sorted({valued[i]["topic"] for i in omitted}),
+                         note="Omitted rows are this collection's other background (twenty-session returns, fifty-day "
+                              "averages, daily returns of non-anchor symbols) and the archived rows outside the "
+                              "week path; they remain in the evidence record but cannot be cited here.")
+        valued = {ident: row for ident, row in valued.items() if ident in keep}
+    elif profile and profile.get("context") == "changed":
         keep = _selected_ids(packet, valued, profile, comparisons, prior)
         omitted = sorted(ident for ident in valued if ident not in keep)
         selection = dict(profile=profile["profile"], mode="changed", omitted_count=len(omitted),
@@ -134,8 +213,10 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
     events, context_items = [], []
     for row in valued.values():
         baselines.setdefault(row["metric"], set()).add(row.get("baseline"))
+    archived = {r["id"] for r in packet["derived"] if r.get("archived")}
     for row in valued.values():
-        fact = compact_fact(row)
+        # An archived row keeps its original attribution in front of the analyst too.
+        fact = archived_fact(row) if row["id"] in archived else compact_fact(row)
         if len(baselines[row["metric"]]) > 1:
             # One legend entry would misstate some of these rows (2s10s is 10Y minus 2Y, 5s30s is 30Y minus 5Y).
             fact["baseline"] = row.get("baseline")
@@ -184,6 +265,13 @@ def analyst_context(packet, profile=None, comparisons=None, prior=None):
         releases_permitted = {item["id"] for item in curve.get("releases", [])} <= permitted
         result["curve"] = {key: curve[key] for key in CURVE_FIELDS if curve.get(key) not in (None, "", [])
                            and (key != "release_note" or releases_permitted)}
+    if packet.get("week"):
+        week = packet["week"]
+        # The week's frame: which sessions it covers and lacks, the next week's exchange calendar, and the earlier
+        # hypotheses, labeled interpretation. Nothing here is citable; the archived rows above are.
+        result["week"] = dict(completed_sessions=week["sessions"], sessions_with_records=sorted(week["records"]),
+                              missing_sessions=week["missing"], next_week=week["calendar"],
+                              hypotheses=compact_note(week["note"]))
     if packet.get("history_lag"):
         result["history_lag"] = packet["history_lag"]
     if packet.get("history_errors"):

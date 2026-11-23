@@ -12,7 +12,14 @@ from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
 
-from .schedule import CHECKPOINT_TITLES, CHECKPOINTS, checkpoint_session, next_session_date, session_relation
+from .schedule import (
+    CHECKPOINT_TITLES,
+    CHECKPOINTS,
+    checkpoint_session,
+    next_session_date,
+    session_relation,
+    week_event_dates,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 ET = ZoneInfo("America/New_York")
@@ -403,6 +410,9 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
                 session = packet["run"]["session"]
                 event_date = when.astimezone(ET).date().isoformat()
                 days = {now.astimezone(ET).date().isoformat(), session["next_session"]}
+                if checkpoint == "WEEK_AHEAD":
+                    # The week ahead admits the following week's sessions, the same bounded path widened.
+                    days = week_event_dates(now)
                 if record.get("stated_time"):
                     # An issuer-announced event (a results call) is also upcoming during today's session when it falls
                     # in the exchange session after today: Nov 16's opening page lists Nov 17's call. Calendar events
@@ -415,7 +425,8 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
                 record["scheduled_at_et"] = when.astimezone(ET).isoformat()
                 record["session_date"] = event_date
                 # Next-session items are carried for continuity; they are never "today".
-                record["session_relation"] = ("NEXT SESSION" if event_date != now.astimezone(ET).date().isoformat()
+                record["session_relation"] = ("NEXT WEEK" if checkpoint == "WEEK_AHEAD" else
+                                              "NEXT SESSION" if event_date != now.astimezone(ET).date().isoformat()
                                               else session_relation(when, timestamp(session["open"]),
                                                                     timestamp(session["close"])))
             packet[field].append(record)
@@ -491,7 +502,8 @@ WINDOWS = {"daily return": "1s", "twenty-session return": "20s", "fifty-session 
            "five-session real yield change": "5s", "twenty-session real yield change": "20s",
            "five-session inflation compensation change": "5s", "twenty-session inflation compensation change": "20s",
            "twenty-session yield volatility": "20s", "volatility percentile, 252 sessions": "252s",
-           "overnight reference rate": "1d", "daily rate change": "1d", "funding spread": "1d"}
+           "overnight reference rate": "1d", "daily rate change": "1d", "funding spread": "1d",
+           "week return": "1w", "session return": "1s"}
 
 
 def metric_identity(row):
@@ -523,7 +535,8 @@ def annotate_identity(packet):
 
 def finalize_coverage(packet):
     annotate_identity(packet)
-    anchors = {r["topic"] for r in packet["derived"] if r["metric"] == "daily return"}
+    # Archived session rows (a week ahead's) are past observations, never this run's coverage.
+    anchors = {r["topic"] for r in packet["derived"] if r["metric"] == "daily return" and not r.get("archived")}
     calendars = [s for s in packet["sources"] if s["kind"] == "calendar"]
     missing = [f"{s} prior-close history unavailable" for s in ("SPY", "QQQ") if s not in anchors]
     missing += [f"{s['name']}: {s['reason'] or s['status']}" for s in packet["sources"]

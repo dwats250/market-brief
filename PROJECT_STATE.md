@@ -340,7 +340,8 @@ and signal amplification over feature growth.
   interpretive update of the day. Everything later is a deterministic refresh under that interpretation.
 - Prompt refinement should strengthen dominant supported drivers, relationships, contradictions, and
   changes from prior state, not manufacture more signals.
-- Weekly continuity, later: Friday post-close weekly handoff → Sunday Week Ahead → Monday premarket.
+- Weekly edition (WP-MB-WEEK-AHEAD-01, candidate): Sunday Week Ahead reads the week's session records and is
+  isolated from session continuity; Monday premarket still admits Friday's close handoff, unchanged.
 - Compute experiment, later: intermediate editions may use deterministic delta artifacts and lightweight
   polishing, escalating to the frontier analyst only when warranted.
 

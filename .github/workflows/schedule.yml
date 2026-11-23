@@ -23,6 +23,7 @@ on:
           - HOURLY_1400
           - HOURLY_1500
           - CLOSE_1M
+          - WEEK_AHEAD
       commissioning:
         description: Run a current-time live commissioning brief
         required: false
@@ -166,10 +167,24 @@ jobs:
         # disqualify the bundle; a cancelled run does. No eligible bundle is an explicit cold start; a restore
         # that cannot finish fails this step, so the run stops before collection and uploads no cold bundle.
         id: restore
-        if: steps.checkpoint.outputs.run == 'true'
+        if: steps.checkpoint.outputs.run == 'true' && steps.checkpoint.outputs.checkpoint != 'WEEK_AHEAD'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python -m market_brief continuity-restore --repository "$GITHUB_REPOSITORY" --branch main
+      - name: Restore the completed week's session records
+        # WEEK_AHEAD only: the week's close-run artifacts from this repository's own main-branch schedule runs. It
+        # never fails the job; an edition with no accepted record fails closed before any paid call. An experiment
+        # may rebuild records for closes that predate them (reconstruct); production never accepts those.
+        if: steps.checkpoint.outputs.run == 'true' && steps.checkpoint.outputs.checkpoint == 'WEEK_AHEAD'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPERIMENT: ${{ inputs.experiment }}
+        run: |
+          if [ "$EXPERIMENT" = "true" ]; then
+            python -m market_brief memory-restore --repository "$GITHUB_REPOSITORY" --branch main --reconstruct
+          else
+            python -m market_brief memory-restore --repository "$GITHUB_REPOSITORY" --branch main
+          fi
       - name: Alpaca commissioning probe
         if: github.event_name == 'workflow_dispatch' && inputs.cloudflare_wakeup != true && steps.checkpoint.outputs.run == 'true'
         run: python -m market_brief alpaca-probe
@@ -219,7 +234,10 @@ jobs:
         # non-commissioning runs. This step inherits success() (no status function here, no
         # continue-on-error before it), so it runs only when the pipeline succeeded, and it precedes the
         # push and Pages: its artifact proves acceptance whatever publication does next.
-        if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true && inputs.commissioning != true
+        # WEEK_AHEAD is isolated from session continuity: it neither restores nor uploads a bundle.
+        if: >-
+          steps.checkpoint.outputs.run == 'true' && inputs.experiment != true && inputs.commissioning != true
+          && steps.checkpoint.outputs.checkpoint != 'WEEK_AHEAD'
         uses: actions/upload-artifact@v4
         with:
           name: market-brief-continuity

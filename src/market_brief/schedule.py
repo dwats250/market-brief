@@ -11,7 +11,7 @@ session close. The exchange calendar is the only authority for sessions, holiday
 Pacific time appears only when a time is displayed to the reader.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
@@ -21,18 +21,25 @@ VANCOUVER = ZoneInfo("America/Vancouver")
 # issuer's own stated clock (`2 p.m. PT`, US Pacific) keeps the source's words.
 VANCOUVER_LABEL = "Vancouver time"
 ET = ZoneInfo("America/New_York")
-CHECKPOINTS = ("PREMARKET", "OPEN_1M", "OPEN_30M", "HOURLY_1100", "HOURLY_1200", "HOURLY_1300",
-               "HOURLY_1400", "HOURLY_1500", "CLOSE_1M")
+# The checkpoints of one exchange session, in order.
+SESSION_CHECKPOINTS = ("PREMARKET", "OPEN_1M", "OPEN_30M", "HOURLY_1100", "HOURLY_1200", "HOURLY_1300",
+                       "HOURLY_1400", "HOURLY_1500", "CLOSE_1M")
+# WEEK_AHEAD is the one weekly synthesis, on the ET Sunday after the completed week. It belongs to no exchange session,
+# is isolated from session continuity (no restore, admission, advance or handoff) and reads the week's session records.
+CHECKPOINTS = (*SESSION_CHECKPOINTS, "WEEK_AHEAD")
 # synthesis: one model call under the edition's budget profile; refresh: no model call, fresh
 # observed rows under the carried interpretation; close: a refresh that also hands the session off.
 CHECKPOINT_KINDS = {"PREMARKET": "synthesis", "OPEN_1M": "refresh", "OPEN_30M": "synthesis",
                     "HOURLY_1100": "refresh", "HOURLY_1200": "refresh", "HOURLY_1300": "refresh",
-                    "HOURLY_1400": "refresh", "HOURLY_1500": "refresh", "CLOSE_1M": "close"}
+                    "HOURLY_1400": "refresh", "HOURLY_1500": "refresh", "CLOSE_1M": "close",
+                    "WEEK_AHEAD": "synthesis"}
 SYNTHESIS_CHECKPOINTS = tuple(c for c in CHECKPOINTS if CHECKPOINT_KINDS[c] == "synthesis")
 CHECKPOINT_TITLES = {"PREMARKET": "Premarket", "OPEN_1M": "Open +1M", "OPEN_30M": "Opening structure",
                      "HOURLY_1100": "11:00 ET refresh", "HOURLY_1200": "12:00 ET refresh",
                      "HOURLY_1300": "1:00 PM ET refresh", "HOURLY_1400": "2:00 PM ET refresh",
-                     "HOURLY_1500": "3:00 PM ET refresh", "CLOSE_1M": "Close +1M"}
+                     "HOURLY_1500": "3:00 PM ET refresh", "CLOSE_1M": "Close +1M", "WEEK_AHEAD": "Week ahead"}
+# Sunday 16:00 ET: CME Globex reopens at 18:00 ET, so a failed edition can be re-dispatched before futures trade.
+WEEK_AHEAD_AT = (16, 0)
 # Offsets from the session open, and exchange-clock hours on the session date, for the timed checkpoints;
 # CLOSE_1M is the session close plus one minute.
 OPEN_OFFSETS = {"PREMARKET": timedelta(minutes=-30), "OPEN_1M": timedelta(minutes=1),
@@ -59,10 +66,28 @@ def tolerance_minutes(checkpoint, override=None):
     return own if override is None else min(own, override)
 
 
+def week_ahead_session(now):
+    """The WEEK_AHEAD checkpoint: the ET Sunday on or after `now`, at WEEK_AHEAD_AT, applicable only on that Sunday."""
+    cal = xcals.get_calendar("XNYS")
+    local = now.astimezone(ET).date()
+    sunday = local + timedelta(days=(6 - local.weekday()) % 7)
+    hour, minute = WEEK_AHEAD_AT
+    scheduled = datetime(sunday.year, sunday.month, sunday.day, hour, minute, tzinfo=ET).astimezone(timezone.utc)
+    following = cal.date_to_session(sunday.isoformat(), direction="next")
+    return dict(checkpoint="WEEK_AHEAD", kind="synthesis", title=CHECKPOINT_TITLES["WEEK_AHEAD"],
+                session_date=sunday.isoformat(), trading_day=False, applicable=local == sunday,
+                scheduled_at=scheduled.isoformat(),
+                exchange_open=cal.session_open(following).to_pydatetime().isoformat(),
+                exchange_close=cal.session_close(following).to_pydatetime().isoformat(),
+                scheduled_local=scheduled.astimezone(VANCOUVER).isoformat())
+
+
 def checkpoint_session(now, checkpoint="PREMARKET"):
     """The exchange session `now` belongs to and the checkpoint's scheduled time inside it."""
     if checkpoint not in CHECKPOINTS:
         raise ValueError("unsupported checkpoint")
+    if checkpoint == "WEEK_AHEAD":
+        return week_ahead_session(now)
     cal = xcals.get_calendar("XNYS")
     local = now.astimezone(ET)
     session = cal.date_to_session(local.date().isoformat(), direction="next")
@@ -127,7 +152,7 @@ def current_phase(now):
     if now >= closing:
         return "CLOSE_1M"
     phase = "PREMARKET"
-    for checkpoint in CHECKPOINTS:
+    for checkpoint in SESSION_CHECKPOINTS:
         if checkpoint == "CLOSE_1M":
             continue
         info = checkpoint_session(now, checkpoint)
@@ -168,9 +193,21 @@ def next_checkpoint(now, current=None, kinds=None):
     """The next scheduled checkpoint after `now`: later today, or the next session's premarket.
 
     `current` is the checkpoint of the running edition, which is never its own next update; `kinds`
-    restricts the candidates (for example to synthesis checkpoints, the ones an analyst can judge at).
+    restricts the candidates (for example to synthesis checkpoints, the ones an analyst can judge at). The weekly
+    edition is a candidate only when `kinds` is None: it is the next page a reader sees (Friday's close reads "week
+    ahead"), never the next time an analyst judges a session watch, so `next_synthesis` still points at the premarket.
     """
-    later = [checkpoint_session(now, checkpoint) for checkpoint in CHECKPOINTS
+    upcoming = _next_session_checkpoint(now, current, kinds)
+    if kinds is None and current != "WEEK_AHEAD":
+        week = week_ahead_session(now)
+        if (datetime.fromisoformat(week["scheduled_at"]) > now
+                and datetime.fromisoformat(week["scheduled_at"]) < datetime.fromisoformat(upcoming["scheduled_at"])):
+            return week
+    return upcoming
+
+
+def _next_session_checkpoint(now, current=None, kinds=None):
+    later = [checkpoint_session(now, checkpoint) for checkpoint in SESSION_CHECKPOINTS
              if checkpoint != current and (kinds is None or CHECKPOINT_KINDS[checkpoint] in kinds)]
     later = [info for info in later if info["applicable"] and datetime.fromisoformat(info["scheduled_at"]) > now]
     if later:
@@ -188,3 +225,54 @@ def next_checkpoint(now, current=None, kinds=None):
 def next_synthesis(now, current=None):
     """The next checkpoint at which an analyst can judge a watch: the next synthesis, or the next premarket."""
     return next_checkpoint(now, current, kinds={"synthesis"})
+
+
+# --- the week -----------------------------------------------------------------------------------
+
+def _et_day(day):
+    """An ISO date, a date, or an instant (read in New York time, never UTC)."""
+    if isinstance(day, datetime):
+        return day.astimezone(ET).date()
+    return date.fromisoformat(str(day)[:10])
+
+
+def week_bounds(day):
+    """The Monday of `day`'s ISO week and the Monday after it."""
+    day = _et_day(day)
+    monday = day - timedelta(days=day.weekday())
+    return monday, monday + timedelta(days=7)
+
+
+def completed_week(day):
+    """XNYS sessions of `day`'s week strictly before `day` (Mon–Fri; a holiday week ends where the calendar says)."""
+    cal = xcals.get_calendar("XNYS")
+    monday, _ = week_bounds(day)
+    last = _et_day(day) - timedelta(days=1)
+    if last < monday:
+        return []
+    return [s.date().isoformat() for s in cal.sessions_in_range(monday.isoformat(), last.isoformat())]
+
+
+def week_calendar(day):
+    """The following week's weekdays from XNYS: each session's open and close (early closes flagged), and the
+    weekdays it does not trade. Exchange holidays only; nothing here is a release or an earnings date."""
+    cal = xcals.get_calendar("XNYS")
+    _, monday = week_bounds(day)
+    days = []
+    for offset in range(5):
+        weekday = monday + timedelta(days=offset)
+        text = weekday.isoformat()
+        if cal.is_session(text):
+            opening = cal.session_open(text).to_pydatetime()
+            closing = cal.session_close(text).to_pydatetime()
+            early = closing.astimezone(ET).hour < 16
+            days.append(dict(date=text, open=True, opens_at=opening.isoformat(), closes_at=closing.isoformat(),
+                             early_close=early))
+        else:
+            days.append(dict(date=text, open=False))
+    return days
+
+
+def week_event_dates(day):
+    """The dates a week-ahead edition admits scheduled events for: the following week's XNYS sessions."""
+    return {d["date"] for d in week_calendar(day) if d["open"]}

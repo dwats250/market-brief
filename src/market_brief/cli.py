@@ -35,6 +35,7 @@ from .continuity import (
     write_bundle,
 )
 from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_json, timestamp
+from .memory import MEMORY_FILE, eligible, session_memory
 from .metrics import annotate_magnitude, derive
 from .receipts import build_receipt, write_receipt
 from .render import render
@@ -524,6 +525,13 @@ def run(args):
         handoff, handoff_reason = session_handoff(state)
         if handoff is not None:
             write_json(folder / "session_handoff.json", handoff)
+        memory = None
+        if eligible(kind, production, handoff):
+            # The session record (A1): a pure projection of what this accepted close already holds, no model call. A
+            # projection defect is a ValueError here, so the close fails closed before PASS or any advance.
+            memory = session_memory(packet, handoff, bundle, universe,
+                                    dict(run_id=folder.name, target_time=packet["run"]["target_time"],
+                                         code_revision=metadata["code_revision"], evidence_hash=evidence_hash))
         published = False
         if interpretation is not None:
             try:
@@ -545,6 +553,11 @@ def run(args):
         else:
             # Only a close reaches here: the session hands off even when no synthesis was accepted today.
             print(f"Close snapshot recorded without a page ({interpretation_note}).", flush=True)
+        if memory is not None:
+            # In the run folder, which the always-run archive step uploads: a later push or Pages failure cannot
+            # lose it. Removed again below if this close is not accepted after all.
+            write_json(folder / MEMORY_FILE, memory)
+            metadata["memory"] = dict(file=MEMORY_FILE, content_hash=memory["content_hash"], gaps=len(memory["gaps"]))
         metadata.update(validation="DEGRADED" if degraded else "PASS", published=published)
         if degraded:
             metadata["degraded_from"] = degraded
@@ -564,13 +577,27 @@ def run(args):
                          advance_bundle(bundle, state, handoff, datetime.now(timezone.utc),
                                         interpretation if kind == "synthesis" and not degraded else None))
             metadata["continuity"]["advanced"] = True
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
+        # A session record exists only beside an accepted close (PASS and continuity advanced). A filesystem failure
+        # (the latest-success pointer, the bundle) is a rejection too, recorded truthfully rather than left at PASS.
+        (folder / MEMORY_FILE).unlink(missing_ok=True)
+        metadata.pop("memory", None)
         record_rejection(folder, metadata, exc)
         print(f"Brief not accepted: {exc}. Diagnostic: {folder}", file=sys.stderr)
         return 2
     finally:
+        if not metadata["continuity"]["advanced"]:
+            # Any other interruption after the record was written (a defect, a cancelled job): no record survives
+            # beside a close whose continuity did not advance.
+            (folder / MEMORY_FILE).unlink(missing_ok=True)
+            metadata.pop("memory", None)
         metadata["completed_at"] = datetime.now(timezone.utc).isoformat()
-        write_json(folder / "metadata.json", metadata)
+        try:
+            write_json(folder / "metadata.json", metadata)
+        except OSError:
+            # Without its acceptance metadata a session record would stand alone in the archived run folder.
+            (folder / MEMORY_FILE).unlink(missing_ok=True)
+            raise
     outcome = ("degraded to refresh" if degraded else "validated" if kind == "synthesis"
                else "refreshed" if published else "recorded")
     print(f"{mode} / {packet['coverage']['status']} / {outcome}: {folder / 'brief.html'}")

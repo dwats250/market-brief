@@ -36,8 +36,9 @@ ANCHORS = ("previous_close", "premarket", "latest")
 # Bundle slots: the previous session's close handoff, this session's premarket and latest accepted
 # edition states, and the last accepted synthesis frozen for deterministic refreshes to render.
 SLOTS = ("close", "premarket", "latest", "interpretation")
+# A frozen row keeps its original lineage (retrieval clock, formula and inputs) so a session record can cite it later.
 INTERPRETATION_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at", "window_start",
-                         "frequency",
+                         "frequency", "retrieved_at", "formula_version", "input_ids",
                          "source_id", "status", "magnitude", "title", "published_at", "scheduled_at",
                          "session_relation", "summary", "attribution", "published_on", "url", "fiscal_period", "basis",
                          "release_id")
@@ -51,7 +52,9 @@ ANCHOR_INSTRUMENTS = ("SPY", "QQQ", "GLD", "US 2Y", "US 10Y")
 CARRY_LIMIT = 3
 CURVE_METRICS = {SPREAD_LEVEL, SPREAD_CHANGE}
 SNAPSHOT_FIELDS = ("id", "topic", "metric", "value", "unit", "baseline", "observed_at", "frequency",
-                   "status", "magnitude", "identity", "window_start")
+                   "status", "magnitude", "identity", "window_start",
+                   # Lineage, so a session record can cite a snapshot with its original source and clocks.
+                   "source_id", "retrieved_at", "formula_version", "input_ids")
 HORIZON_PHRASES = {"OPENING_HOUR": "Through the opening hour", "SESSION": "Into the close",
                    "NEXT_CLOSE": "Into the next close", "NEXT_BRIEF": "By the next interpretation"}
 
@@ -719,6 +722,14 @@ def data_status(packet):
     return dict(status="PRIOR_CLOSE_ONLY", reason="dated prior-close context only")
 
 
+def admitted_rows(packet):
+    """The analyst-legal valued rows (`model_packet` decides which), as originally recorded, so frozen values and
+    snapshots keep their lineage (retrieval clock, formula, inputs) that the model projection drops."""
+    full = evidence_catalog(packet)
+    return {ident: full[ident] for ident, row in evidence_catalog(model_packet(packet)).items()
+            if "value" in row and ident in full}
+
+
 def _snapshot(row, run_id):
     return dict({key: row[key] for key in SNAPSHOT_FIELDS if key in row}, run_id=run_id)
 
@@ -753,8 +764,7 @@ def edition_state(packet, narrative, prior, comparisons, context_hash, narrative
     run = packet["run"]
     run_id = run["run_id"]
     now = timestamp(run["target_time"])
-    catalog = evidence_catalog(model_packet(packet))
-    catalog = {ident: row for ident, row in catalog.items() if "value" in row}
+    catalog = admitted_rows(packet)
     # Carried watches: append this edition's assessment, refresh lifecycle/evaluability.
     updates = {u["carried_id"]: u for u in narrative["watch_updates"]}
     carried, retired = [], []
@@ -970,7 +980,7 @@ def carried_state(packet, prior, comparisons, interpretation, app_version=""):
     """
     run = packet["run"]
     run_id = run["run_id"]
-    catalog = {ident: row for ident, row in evidence_catalog(model_packet(packet)).items() if "value" in row}
+    catalog = admitted_rows(packet)
     watches = []
     for watch in prior.get("watches", []):
         record = json.loads(json.dumps(watch))

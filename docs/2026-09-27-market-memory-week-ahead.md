@@ -617,3 +617,44 @@ Values below are real, from the 09-25 20:01 close (pre-#36 code, so its curve fi
     - The light gate's context was smaller than a weekday OPEN_30M (cold start, no prints). The byte budget is
       model-independent, and the first live OPEN_30M is the real-size check (09-24 worst: 37,908 / 40,000 B).
 - [x] Light-profile evidence: owner chose the second (OPEN_30M) experiment above.
+
+### A1 · Session record at CLOSE_1M (WP-MB-WEEK-AHEAD-01, branch `feat/wp-mb-week-ahead-a1`, base 07aff24)
+
+- [x] `src/market_brief/memory.py`: `session_memory()` (a pure projection), `verify()`, `eligible()`, `retained_facts()`.
+  One hook in `cli.run`, after the handoff and before PASS. `metadata.memory` names the file, its hash and the gap
+  count. The record is removed if the close is not accepted (any exception, or continuity not advanced).
+- [x] Reconciled with current code. Discrepancies from §3/§4:
+  - **Rates.** `observed.rates` keeps every admitted rates row as originally recorded, plus the curve move. The rows
+    come from `treasury`, `treasury-real` and `nyfed-*`, which covers RATES-INTELLIGENCE. This replaces the fixed
+    `yields/change_bp` shape.
+  - **Returns.** The basis is `daily_bar` or `last_trade`; the feed comes from each row's own `source_id`.
+  - **Retained interpretation.** It is read through the close's own admission rules (`admit_interpretation`,
+    `_origin_reason`).
+    - **Watches:** the close's carried watches; those the premarket retired; and those the later synthesis no longer
+      carried, which end `expired`, `reversed` or `dropped` according to their frozen lifecycle.
+    - **Verdicts:** only this session's analyst assessments count.
+    - **Relationships:** statuses are this session's own.
+  - **Frozen facts.** This replaces §4's single `values` → `interpretation.evidence` → premarket snapshots order.
+    - Facts are kept **per watch and per relationship**.
+    - Each fact is credited (`frozen_by`) to the run that froze it, and never comes from the close's own catalog or
+      the close's copy of a watch's values.
+    - A watch the later synthesis wrote: that synthesis's evidence.
+    - A watch the premarket wrote: its values, then the premarket's snapshots.
+    - A watch or relationship carried from an earlier session: only the rows today's own assessments cited, credited
+      to the run that assessed. Its criterion values are not read, because any later carry may have filled them.
+      Anything else is a named gap that points to the session record that cited it.
+    - Lineage is filled in only from the same run's copy of the same observation.
+    - `continuity.INTERPRETATION_FIELDS`/`SNAPSHOT_FIELDS` now keep `source_id`, `retrieved_at`, `formula_version`
+      and `input_ids`. `admitted_rows` keeps the full rows. Analyst contexts and pages are byte-identical.
+- [x] **Size, a discrepancy with §4.** The real W47 closes (Nov 16–20, reconstructed offline from their archived
+  artifacts) project to about 30–33 KB compact, against the 8–10 KB estimate. Storage is the run artifact. The
+  regression bound is 40 KB, and the Sunday context selects from the records.
+- [x] Tests: `tests/test_session_memory.py` (35, including regressions for every review finding).
+- [x] Review:
+  - Codex Astra, rounds 1–3, CHANGES REQUESTED: 7, 5 and 4 findings, all fixed.
+  - Independent fresh-context agents ran round 4 and its verification, because Codex hit its usage limit. They found
+    4 issues, then 2 more plus a small cleanup window, all fixed:
+    - carried-watch facts;
+    - cleanup on any interruption;
+    - this note;
+    - a committed `.venv` symlink, removed (`.gitignore` now ignores `.venv` as a file too).

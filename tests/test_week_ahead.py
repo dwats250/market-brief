@@ -505,14 +505,120 @@ def test_memory_restore_lists_newest_first_and_keeps_only_this_repositorys_own_c
 def test_an_archived_row_without_its_original_source_is_withheld_and_named(lived):
     records, _ = load_week(lived.root, list(WEEK))
     record = json.loads(json.dumps(records[0]["record"]))
+    refs = set()
+    for watch in record["retained"]["watches"]:  # as a W47 record frozen before snapshots kept lineage
+        for ref, fact in watch["facts"].items():
+            if fact.pop("source_id", None):
+                refs.add(ref)
+    packet = dict(sources=[], observations=[], derived=[])
+    packet, gaps, withheld = memory.admit_archived(packet, [dict(records[0], record=record)])
+    assert not any(r.get("frozen") and not r.get("source_id") for r in packet["derived"])
+    gap = next(g for g in gaps if "without an original source, withheld" in g)
+    named = gap.split(": ", 1)[1].split(", ")
+    # Each withheld row is a stripped fact with no sourced copy elsewhere in the record (that copy would be kept).
+    assert named and all(any(ident.startswith(f"{ref}-") for ref in refs) for ident in named)
+    assert withheld["no_source"] == len(named) and withheld["collision"] == 0
+
+
+def test_an_archived_row_whose_source_descriptor_is_missing_is_counted_as_withheld(lived):
+    records, _ = load_week(lived.root, list(WEEK))
+    record = json.loads(json.dumps(records[0]["record"]))
     watch = next(w for w in record["retained"]["watches"] if w["facts"])
     ref = next(iter(watch["facts"]))
-    del watch["facts"][ref]["source_id"]  # as a W47 record frozen before snapshots kept lineage
+    watch["facts"][ref]["source_id"] = "ghost-source"  # no archived descriptor names it
     packet = dict(sources=[], observations=[], derived=[])
-    packet, gaps = memory.admit_archived(packet, [dict(records[0], record=record)])
-    assert not any(r.get("lineage", {}).get("original_id") == ref and r.get("frozen") and not r.get("source_id")
-                   for r in packet["derived"])
-    assert any("without an original source, withheld" in g and ref in g for g in gaps)
+    packet, gaps, withheld = memory.admit_archived(packet, [dict(records[0], record=record)])
+    assert withheld["no_descriptor"] == 1
+    assert not any(r.get("source_id") == "ghost-source" for r in packet["derived"])
+
+
+def _strip_sources(week, days=WEEK):
+    """Remove the original source from every frozen fact of the sessions' records (as W47's pre-lineage records),
+    resealing each so it still verifies. Returns the stripped fact ids."""
+    from market_brief.evidence import digest
+    stripped = set()
+    for day in days:
+        path = next((week.root / "runs" / "week").rglob(f"{day}/*/{MEMORY_FILE}"))
+        record = json.loads(path.read_text())
+        for watch in record["retained"]["watches"]:
+            for ref, fact in watch["facts"].items():
+                if fact.pop("source_id", None):
+                    stripped.add(ref)
+        body = {k: v for k, v in record.items() if k != "content_hash"}
+        path.write_text(json.dumps(dict(body, content_hash=digest(body))))
+    return stripped
+
+
+def test_the_page_names_how_many_facts_were_withheld_and_why_without_showing_them(lived):
+    import html
+    import re
+    assert _strip_sources(lived)
+    assert lived.sunday() == 0
+    meta = lived.metadata("WEEK_AHEAD", SUNDAY)
+    gap = next(g for g in meta["week"]["gaps"] if g.startswith("archived rows without an original source"))
+    withheld_ids = gap.split(": ", 1)[1].split(", ")
+    count = meta["week"]["withheld"]["no_source"]
+    assert count == len(withheld_ids) > 0
+    raw = (lived.sunday_folder() / "brief.html").read_text()
+    page = html.unescape(re.sub(r"<style>.*?</style>", "", raw, flags=re.S))
+    noun = "fact" if count == 1 else "facts"
+    assert (f"{count} archived {noun} from the week's session records withheld: saved without their original "
+            "source, so they cannot be cited.") in page
+    assert f"· {count} withheld</span>" in page
+    # The disclosure sits in the coverage drawer the page opens by default.
+    assert re.search(r'<details class="drawer" open><summary>Coverage limitations.*?withheld: saved', raw, re.S)
+    # Neither the withheld facts nor their identities reach the page, the evidence or the analyst.
+    context = (lived.sunday_folder() / "analyst_context.json").read_text()
+    packet = json.loads((lived.sunday_folder() / "evidence.json").read_text())
+    admitted = {r["id"] for key in ("observations", "derived") for r in packet[key]}
+    for ident in withheld_ids:
+        assert ident not in raw, ident
+        assert f'"{ident}"' not in context, ident
+        assert ident not in admitted, ident
+
+
+def test_a_sourced_copy_of_a_fact_wins_over_an_unsourced_duplicate(lived):
+    records, _ = load_week(lived.root, list(WEEK))
+    first = json.loads(json.dumps(records[0]["record"]))
+    watch = next(w for w in first["retained"]["watches"] if w["facts"])
+    ref = next(iter(watch["facts"]))
+    second = json.loads(json.dumps(first))
+    del watch["facts"][ref]["source_id"]
+    packet = dict(sources=[], observations=[], derived=[])
+    packet, gaps, withheld = memory.admit_archived(
+        packet, [dict(records[0], record=first), dict(records[0], record=second)])
+    assert withheld["no_source"] == 0
+    assert any(r.get("lineage", {}).get("original_id") == ref and r.get("source_id") for r in packet["derived"])
+
+
+def test_an_archived_source_without_a_retrieval_time_is_withheld_not_a_crash(lived):
+    records, _ = load_week(lived.root, list(WEEK))
+    record = json.loads(json.dumps(records[0]["record"]))
+    watch = next(w for w in record["retained"]["watches"] if w["facts"])
+    ref = next(iter(watch["facts"]))
+    fact = watch["facts"][ref]
+    fact["source_id"] = "ghost-source"
+    fact.pop("retrieved_at", None)
+    record.setdefault("sources", {})["ghost-source"] = dict(id="ghost-source", name="Ghost", url="https://example.org")
+    packet = dict(sources=[], observations=[], derived=[])
+    packet, gaps, withheld = memory.admit_archived(packet, [dict(records[0], record=record)])
+    assert withheld["no_descriptor"] == 1
+    assert not any(r.get("source_id") == "ghost-source" for r in packet["derived"])
+
+
+def test_no_withheld_line_when_every_archived_fact_kept_its_source(lived):
+    assert lived.sunday() == 0
+    assert lived.metadata("WEEK_AHEAD", SUNDAY)["week"]["withheld"] == {}
+    page = (lived.sunday_folder() / "brief.html").read_text()
+    assert "withheld:" not in page and " withheld</span>" not in page
+
+
+def test_withheld_wording_is_a_count_and_a_reason():
+    from market_brief.weekpage import withheld_limitation
+    assert withheld_limitation("no_source", 1) == ("1 archived fact from the week's session records withheld: saved "
+                                                   "without their original source, so they cannot be cited.")
+    assert withheld_limitation("no_descriptor", 3).startswith("3 archived facts from the week's session records")
+    assert "provenance is incomplete" in withheld_limitation("unknown", 2)
 
 
 # --- review regressions (independent review of B) ----------------------------------------------------

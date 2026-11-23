@@ -149,7 +149,8 @@ def _week_ids(packet, catalog, note=None):
 def compact_note(note, citable=()):
     """The week's hypotheses as the analyst reads them: each watch once, with its verdict trail as `date checkpoint
     status`, how it ended, and (only when judged) the archived facts it cited; relationships likewise. Record ids are
-    left out: nothing here is citable."""
+    left out: nothing here is citable, and a fact id is listed only when the edition admitted that row (a withheld
+    fact never reaches the analyst)."""
     def trail(items):
         return [f"{item['day']} {item.get('by') or ''} {item['status']}".replace("  ", " ") for item in items]
 
@@ -160,10 +161,12 @@ def compact_note(note, citable=()):
     return {"class": note["class"], "note": note["note"],
             "sessions": [dict(date=s["date"], read=s["read"]) for s in note.get("sessions", [])],
             "watches": [dict(first=w["first"], hypothesis=plain(w["hypothesis"]), verdicts=trail(w.get("verdicts", [])),
-                             end=w.get("end"), **({"facts": w["facts"]} if w.get("verdicts") else {}))
+                             end=w.get("end"),
+                             **({"facts": [f for f in w["facts"] if f in citable]} if w.get("verdicts") else {}))
                         for w in note.get("watches", [])],
             "relationships": [dict(first=r["first"], statement=plain(r["statement"]),
-                                   statuses=trail(r.get("statuses", [])), facts=r.get("facts", []))
+                                   statuses=trail(r.get("statuses", [])),
+                                   facts=[f for f in r.get("facts", []) if f in citable])
                               for r in note.get("relationships", [])]}
 
 

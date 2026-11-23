@@ -85,6 +85,21 @@ def _hours(info):
     return f"{opening}–{closing} {VANCOUVER_LABEL}"
 
 
+WITHHELD_WORDS = {
+    "no_source": "saved without their original source, so they cannot be cited",
+    "no_descriptor": "their source's description or retrieval time was not archived, so their attribution cannot be "
+                     "shown",
+    "collision": "this run collected the same measurement again, and the new value is used instead",
+}
+
+
+def withheld_limitation(reason, count):
+    """A count and its reason only: a withheld fact's value or identity never reaches the page."""
+    noun = "fact" if count == 1 else "facts"
+    because = WITHHELD_WORDS.get(reason, "their provenance is incomplete")
+    return f"{count} archived {noun} from the week's session records withheld: {because}."
+
+
 def week_view(packet, narrative=None, context=None, interpretation=None, repairs=None, notice=None):
     if interpretation is None:
         interpretation = interpretation_record(packet, narrative, context)
@@ -266,6 +281,8 @@ def week_view(packet, narrative=None, context=None, interpretation=None, repairs
     archived_count = sum(1 for r in rows.values() if r.get("archived"))
     limitations = [reader_limitation(text) for text in packet["coverage"]["limitations"]]
     limitations += [g for g in week.get("gaps", []) if "week return" in g]
+    withheld = {reason: n for reason, n in (week.get("withheld") or {}).items() if n}
+    limitations += [withheld_limitation(reason, n) for reason, n in withheld.items()]
     next_info = next_checkpoint(target, "WEEK_AHEAD")
     restore_line = dict(name="Session records", status_label=f"{len(records)} of {len(sessions)} sessions",
                         detail="restored from this repository's close-run artifacts; each row above keeps its own "
@@ -276,6 +293,7 @@ def week_view(packet, narrative=None, context=None, interpretation=None, repairs
     experiment = bool(packet["run"].get("experiment"))
     return dict(
         style=style, script=script, mode=packet["run"]["mode"], experiment=experiment, notice=notice,
+        withheld_count=sum(withheld.values()),
         reconstructed=[short_date(d) for d in reconstructed],
         sample=packet["run"]["mode"] == "SAMPLE",
         session_date=session["date"], evidence_cutoff=packet["run"]["target_time"],

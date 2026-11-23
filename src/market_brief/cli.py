@@ -363,11 +363,13 @@ def admit_week(args, packet, thresholds, allow_reconstructed):
     base = getattr(args, "memory", None) if args.replay else None
     records, report = load_week(RUN_ROOT, week, allow_reconstructed=allow_reconstructed, base=base)
     gaps = week_returns(packet, week, thresholds)
+    withheld = {}
     if records:
-        packet, admission_gaps = admit_archived(packet, records)
+        packet, admission_gaps, withheld = admit_archived(packet, records)
         gaps += admission_gaps
     packet["week"] = dict(sessions=week, records=report["records"], missing=report["missing"],
-                          report=report, calendar=week_calendar(day), note=week_note(records), gaps=gaps)
+                          report=report, calendar=week_calendar(day), note=week_note(records), gaps=gaps,
+                          withheld={k: v for k, v in withheld.items() if v})
     return records
 
 
@@ -497,7 +499,8 @@ def run(args):
                                     anchors={k: v["run_id"] for k, v in prior["anchors"].items()},
                                     comparisons=len(comparisons), advanced=False))
     if week_ahead:
-        metadata["week"] = dict(packet["week"]["report"], gaps=packet["week"]["gaps"])
+        metadata["week"] = dict(packet["week"]["report"], gaps=packet["week"]["gaps"],
+                                withheld=packet["week"].get("withheld", {}))
     try:
         if packet["coverage"]["status"] == "INSUFFICIENT":
             raise ValueError("no usable observations/events/context; evidence diagnostic only")

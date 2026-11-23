@@ -561,6 +561,10 @@ def archived_rows(records):
         if prior is None:
             seen[row["id"]] = row
             rows.append(row)
+        elif (prior.get("value"), prior.get("observed_at")) == (row.get("value"), row.get("observed_at")):
+            # The same fact twice: keep the copy that still names its original source.
+            if not prior.get("source_id") and row.get("source_id"):
+                rows[rows.index(prior)] = seen[row["id"]] = row
         elif (prior.get("value"), prior.get("observed_at")) != (row.get("value"), row.get("observed_at")):
             gaps.append(f"archived {row['id']}: two records disagree; the first is kept")
     for item in records:
@@ -587,12 +591,23 @@ def archived_rows(records):
     return rows, sources, gaps
 
 
+# Why an archived row is kept out of a week edition. Provenance incomplete: the row never recorded its original source
+# (records frozen before sources were kept), or its source's archived descriptor or retrieval time is missing. A
+# collision is an archived row whose identity a current row already holds.
+WITHHELD_REASONS = ("no_source", "no_descriptor", "collision")
+
+
 def admit_archived(packet, records):
     """Append the archived rows to the packet as citable, dated BACKGROUND rows, and admit each referenced source the
-    current collection lacks from its archived descriptor. No row is attributed to the restore channel."""
+    current collection lacks from its archived descriptor. No row is attributed to the restore channel.
+
+    Returns (packet, gaps, withheld): `withheld` counts the archived rows kept out of the edition by reason
+    (WITHHELD_REASONS), so the page can say how many and why without showing any of them."""
     from .evidence import metric_identity
     rows, descriptors, gaps = archived_rows(records)
+    withheld = dict.fromkeys(WITHHELD_REASONS, 0)
     unattributed = [row for row in rows if not row.get("source_id")]
+    withheld["no_source"] = len(unattributed)
     if unattributed:
         # A row without its original source cannot be cited with its attribution: withheld, and named.
         gaps.append("archived rows without an original source, withheld: "
@@ -602,22 +617,24 @@ def admit_archived(packet, records):
     current = {r["id"] for key in ("observations", "derived") for r in packet[key]}
     for source_id in sorted({row["source_id"] for row in rows} - present):
         descriptor = descriptors.get(source_id)
-        if not descriptor or not descriptor.get("url"):
-            gaps.append(f"source {source_id}: no archived descriptor; its rows are withheld")
+        retrieved = [row["retrieved_at"] for row in rows if row["source_id"] == source_id and row.get("retrieved_at")]
+        if not descriptor or not descriptor.get("url") or not retrieved:
+            gaps.append(f"source {source_id}: no archived descriptor or retrieval time; its rows are withheld")
+            withheld["no_descriptor"] += sum(1 for row in rows if row["source_id"] == source_id)
             rows = [row for row in rows if row["source_id"] != source_id]
             continue
         packet["sources"].append(dict(
-            {key: descriptor.get(key) for key in SOURCE_FIELDS}, retrieved_at=min(
-                row["retrieved_at"] for row in rows if row["source_id"] == source_id and row.get("retrieved_at")),
+            {key: descriptor.get(key) for key in SOURCE_FIELDS}, retrieved_at=min(retrieved),
             status="AVAILABLE", reason="archived descriptor from the week's session records", llm_allowed=True,
             retention_allowed=True, coverage_date=None, coverage_symbols=None, archived=True))
     for row in rows:
         if row["id"] in current:
             gaps.append(f"archived {row['id']}: collides with a current row; withheld")
+            withheld["collision"] += 1
             continue
         row["identity"] = metric_identity(row)
         packet["derived"].append(row)
-    return packet, gaps
+    return packet, gaps, withheld
 
 
 def rewrite_placeholders(text, facts, suffixes):

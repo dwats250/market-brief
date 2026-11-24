@@ -102,7 +102,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment_retry.outputs.page_url || steps.deployment.outputs.page_url }}
     env:
       APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
       APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
@@ -290,9 +290,17 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: publish
-      - name: Deploy Pages
+      - name: Deploy Pages (attempt 1)
         if: steps.checkpoint.outputs.run == 'true' && inputs.experiment != true && steps.current.outputs.deploy == 'true'
         id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+      - name: Wait before one Pages retry
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 10
+      - name: Retry Pages deployment once
+        if: steps.deployment.outcome == 'failure'
+        id: deployment_retry
         uses: actions/deploy-pages@v4
       - name: Archive this run's evidence, context, narrative, and metadata
         # Outside the Pages payload and Git history; thirty-day retention, not a historical store. Diagnostic only,
@@ -341,7 +349,9 @@ jobs:
           RECEIPT_CONTINUITY: ${{ steps.continuity.outcome }}
           RECEIPT_PUBLISH: ${{ steps.publish.outcome }}
           RECEIPT_CURRENT: ${{ steps.current.outcome }}
-          RECEIPT_DEPLOY: ${{ steps.deployment.outcome }}
+          RECEIPT_DEPLOY_ATTEMPT_1: ${{ steps.deployment.outcome }}
+          RECEIPT_DEPLOY_ATTEMPT_2: ${{ steps.deployment_retry.outcome }}
+          RECEIPT_DEPLOY: ${{ steps.deployment_retry.outcome != 'skipped' && steps.deployment_retry.outcome || steps.deployment.outcome }}
           RECEIPT_PUBLISH_SHA: ${{ steps.publish.outputs.sha }}
         run: |
           python -m market_brief receipt

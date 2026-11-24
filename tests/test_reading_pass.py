@@ -246,7 +246,8 @@ def test_the_guide_is_collapsed_above_sources_and_leads_with_the_latest_move():
     from test_rates_module import rates_packet
     md, page = render(rates_packet(), narrative())
     assert page.count('<details class="drawer guide">') == 1  # no `open`: collapsed by default
-    assert page.index('<details class="drawer guide">') < page.index("<h2>Sources &amp; coverage</h2>")
+    assert page.index('<details class="drawer guide">') < page.index(
+        '<h2>Sources &amp; coverage <span class="coverage-counts">')
     assert page.index("<h2>Equity structure</h2>") < page.index('<details class="drawer guide">')
     body = guide(page)
     assert body.startswith("<summary>How to read this brief</summary><dl><dt>Bear steepener</dt><dd>The latest "

@@ -62,10 +62,12 @@ def test_populated_sections_still_render_in_reading_order():
     """Top-down and fixed: the macro backdrop (with metals), then breadth, then the names."""
     md, page = render(fixture_packet(), narrative())
     for heading in ("What matters next", "Macro &amp; rates", "Sector view", "Equity structure",
-                    "Cuttingboard context", "Sources &amp; coverage"):
+                    "Cuttingboard context"):
         assert f"<h2>{heading}</h2>" in page
+    assert '<h2>Sources &amp; coverage <span class="coverage-counts">' in page
     order = [page.index(f"<h2>{h}</h2>") for h in ("What matters next", "Macro &amp; rates", "Sector view",
-                                                   "Equity structure", "Sources &amp; coverage")]
+                                                   "Equity structure")]
+    order.append(page.index('<h2>Sources &amp; coverage <span class="coverage-counts">'))
     assert order == sorted(order)
     assert "<h2>Metals</h2>" not in page and "\n## Metals\n" not in md
     macro = page.split("<h2>Macro &amp; rates</h2>", 1)[1].split("</section>", 1)[0]
@@ -156,7 +158,8 @@ def test_no_figure_strip_and_current_prints_keep_their_label_in_the_tables():
 # Basis line and other plumbing live in Technical details, where sector ETF proxies are clearly distinguished from
 # constituent-level market breadth.
 def sources_reading_line(page):
-    return page.split("<h2>Sources &amp; coverage</h2>", 1)[1].split("<details", 1)[0]
+    audit = page.split('<section class="audit">', 1)[1]
+    return audit.split('<details class="drawer"><summary>Sources ·', 1)[0]
 
 
 def test_basis_excludes_technical_plumbing():
@@ -202,7 +205,7 @@ def test_average_is_shown_as_distance_from_the_50dma_not_a_price():
     assert nvda["average"]["display"] == "114.03"  # the average itself stays in evidence
     assert nvda["r20"]["display"].endswith("%")
     _, page = render(packet, narrative())
-    assert "114.03" not in page.split("<h2>Sources &amp; coverage</h2>", 1)[0]
+    assert "114.03" not in page.split('<h2>Sources &amp; coverage <span class="coverage-counts">', 1)[0]
 
 
 def test_missing_current_prints_are_not_called_premarket_after_the_close():

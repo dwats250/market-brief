@@ -70,7 +70,8 @@ MISMATCH = "take text and evidence must be both present or both empty"
 # Keep the whole stylesheet fingerprint so unrelated CSS changes still require explicit review.
 # WP-MB-STATE-01 adds the .shift rules for the "Since the analysis" check (inset surface, rates-lead metrics).
 # WP-MB-RATES-INTELLIGENCE-01 adds the .rates-panel, .rates-chart and dl.rates-facts rules (existing tokens only).
-STYLE_SHA256 = "9086b0b48ac5abec7117cca60d86f323c7724f5898ca0267245925e7aa8acfe3"
+# WP-MB-UX-DIGEST-01 adds wrapping and summary rules for the rates and coverage disclosures.
+STYLE_SHA256 = "f1cc4d37c258c394254df9b306d4bee067a5859c45904a9187a04200926e4096"
 
 
 def with_take(value=None, text=TAKE, ids=TAKE_IDS):
@@ -437,7 +438,7 @@ def test_an_empty_or_missing_take_emits_nothing(empty):
     assert "\n\n\n" not in md.split("\n## ", 1)[0]  # the lead, before the first section
 
 
-def test_the_template_adds_no_css():
+def test_the_template_css_bundle_matches_the_committed_style():
     template = (ROOT / "templates/brief.html.j2").read_text()
     style = re.search(r"<style>.*?</style>", template, re.S).group(0)
     assert hashlib.sha256(style.encode()).hexdigest() == STYLE_SHA256

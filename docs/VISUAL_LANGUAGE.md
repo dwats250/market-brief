@@ -37,10 +37,24 @@ something a person cared about, never as a dashboard, a terminal, a card grid or
 | Narrative | Headline, dek, paragraphs, the take, What changed, flags, events | None: ink on paper |
 | Evidence | Tables, the curve module, the release card, opened `§` evidence (its rows and, when useful, its chart), the before → after lines under a verdict, the one-line rates takeaway after the take, the "Since the analysis" check on a carried page | Caps caption and tabular figures; compact objects on the inset surface |
 | Watch | Open and carried watches | The teal gutter rule, grey once the horizon has passed |
-| Audit | The guide, Sources & coverage, the footer | Small muted type behind a disclosure; Coverage limitations open when there are any |
+| Audit | The guide, Sources & coverage, the footer | Small muted type behind a disclosure; the Sources & coverage summary shows limitation/source/evidence counts, and Coverage limitations open when there are any |
 
 A new element names its plane and reuses that plane's signature. If it needs a new one, change this
 document in the same pull request.
+
+## Progressive disclosure
+
+The headline, interpretation, and one rates takeaway stay on the normal reading path. When the lead does not cite
+a Treasury row, the rates takeaway uses the already-rendered first front-versus-long-end note and links to the
+complete Rates in context module. That module's native disclosure summary keeps its title, Treasury-entry date,
+and row count; opening it reveals every table row, chart, spread, horizon note, funding value, caveat, and exact-value
+citation.
+
+Sources & coverage is one native disclosure. Its summary keeps the heading and shows coverage-limit, checked-source,
+unavailable-source, and evidence-row counts. Opening it reveals Coverage limitations first; that nested disclosure
+opens by default when limitations exist. Source status, the complete evidence ledger, and technical details remain
+in their own disclosures. Evidence links keep their original fragment IDs; the page opens the target disclosure and
+every enclosing disclosure before scrolling. Native summaries and links remain keyboard-operable.
 
 ## The inset surface
 

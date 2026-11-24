@@ -313,6 +313,48 @@ def test_the_page_shows_horizons_leadership_volatility_and_funding():
     assert "RATES IN CONTEXT" in md and "| 10Y | 4.92% | −12 | −23 |" in md
 
 
+def test_rates_takeaway_stays_near_the_read_when_the_headline_does_not_cite_rates():
+    from test_pipeline import narrative
+
+    from market_brief.render import presentation
+
+    packet, value = packet_for(), narrative()
+    for item in [value["banner"], value["character"], *value["summary"], value["take"]]:
+        item["evidence_ids"] = [ident for ident in item.get("evidence_ids", []) if not ident.startswith("treasury-")]
+    view = presentation(packet, value)
+    assert view["rates_lead"] is None and view["macro"]["panel"]["leaders"]
+    leader = view["macro"]["panel"]["leaders"][0]
+    _, html = render(packet, value)
+    header = html.split('<section class="since">', 1)[0]
+    expected = f"{leader['horizon']}: {leader['text']} ({leader['detail']})"
+    assert '<div class="rates-lead rates-takeaway">' in header
+    assert "Rates takeaway" in header and expected in header
+    assert 'href="#rates-context">Full rates context</a>' in header
+    assert header.index("Rates takeaway") < header.index('<section class="next">')
+
+
+def test_rates_context_is_closed_by_default_and_keeps_its_complete_module():
+    from test_pipeline import narrative
+
+    packet, value = packet_for(), narrative()
+    view = presentation(packet, value)
+    _, html = render(packet, value)
+    assert '<details class="drawer rates-panel" id="rates-context"><summary>' in html
+    module = html.split('id="rates-context"', 1)[1].split("</section>", 1)[0]
+    panel = view["macro"]["panel"]
+    assert (f"<span>{panel['title']}</span><span>{panel['caption']} · "
+            f"{len(panel['rows'])} rows</span>") in module
+    assert '<table class="horizons">' in module and "View exact values &amp; baselines" in module
+    assert all(row["level"] in module and row["maturity"] in module for row in panel["rows"])
+    assert all(note in module for note in panel["notes"])
+    assert all(spread in module for spread in panel["spreads"])
+    assert all(leader["text"] in module and leader["detail"] in module for leader in panel["leaders"])
+    assert all(part["text"] in module for part in panel["parts"])
+    assert panel["volatility"]["text"] in module
+    assert all(row["level"] in module for row in panel["funding"]["rows"])
+    assert '<details class="drawer rates-panel" id="rates-context" open' not in html
+
+
 def test_the_page_chart_draws_twenty_entries():
     view = presentation(packet_for(), __import__("test_pipeline").narrative())
     chart = view["macro"]["panel"]["chart"]

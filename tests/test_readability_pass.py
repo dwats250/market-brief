@@ -355,18 +355,56 @@ def test_october_13_is_broadly_lower_with_mild_flattening_not_a_parallel_shift()
 def test_coverage_limitations_stay_visible_and_the_ledger_stays_one_step_away():
     packet = fixture_packet()
     _, page = render(packet, narrative())
-    audit = page.split('<section class="audit"><h2>Sources &amp; coverage</h2>', 1)[1]
-    # The fixture records no deterministic limitation: a closed drawer says so without an empty list.
+    audit = page.split('<details class="drawer coverage-disclosure" id="sources-coverage">', 1)[1]
+    # The top summary keeps the section heading and exposes coverage/source/evidence counts before opening.
+    assert '<summary><h2>Sources &amp; coverage <span class="coverage-counts">0 coverage limitations' in audit
+    assert 'sources checked · ' in audit and 'evidence rows</span></h2></summary>' in audit
     assert ('<details class="drawer"><summary>Coverage limitations <span>· none recorded</span></summary>'
             '</details>') in audit
     assert '<details class="drawer" id="evidence-ledger"><summary>Evidence ledger' in audit
     assert 'href="#evidence-ledger">Full evidence ledger</a>' in page
-    # A recorded limitation is open on arrival, counted in its summary.
+    # A recorded limitation is still open as soon as the compact parent is opened.
     packet["coverage"]["limitations"] = ["Not automated: options positioning", "QQQ: no print"]
     _, page = render(packet, narrative())
-    audit = page.split('<section class="audit"><h2>Sources &amp; coverage</h2>', 1)[1]
+    audit = page.split('<details class="drawer coverage-disclosure" id="sources-coverage">', 1)[1]
     assert '<details class="drawer" open><summary>Coverage limitations <span>· 2</span></summary><ul>' in audit
     assert "<li>Not collected: options positioning</li><li>QQQ: no print</li>" in audit
+
+
+@pytest.mark.parametrize("fragment", ["evidence-ledger", "evidence-SPY-daily"])
+def test_evidence_fragments_open_the_target_and_all_nested_disclosures(fragment, tmp_path):
+    import shutil
+    import subprocess
+    from html.parser import HTMLParser
+
+    chrome = shutil.which("google-chrome") or shutil.which("google-chrome-stable") or shutil.which("chromium")
+    if not chrome:
+        pytest.skip("headless Chrome is not installed")
+    _, page = render(fixture_packet(), narrative())
+    assert f'id="{fragment}"' in page
+    target = tmp_path / "fragment.html"
+    target.write_text(page)
+    result = subprocess.run([chrome, "--headless=new", "--disable-gpu", "--no-sandbox", "--dump-dom",
+                             "--virtual-time-budget=1500", f"{target.as_uri()}#{fragment}"],
+                            capture_output=True, text=True, timeout=90, check=False)
+    assert result.returncode == 0, result.stderr[-500:]
+
+    class Details(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.items = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "details":
+                self.items.append(dict(attrs))
+
+    parsed = Details()
+    parsed.feed(result.stdout)
+    opened = [item for item in parsed.items if "open" in item]
+    assert any(item.get("id") == "sources-coverage" for item in opened)
+    assert any(item.get("id") == "evidence-ledger" for item in opened)
+    if fragment == "evidence-SPY-daily":
+        assert any("ledger-group" in item.get("class", "").split() for item in opened)
 
 
 def test_the_no_change_note_reads_plainly():

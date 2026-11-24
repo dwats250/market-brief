@@ -14,8 +14,9 @@ from pathlib import Path
 
 from .schedule import checkpoint_kind, checkpoint_session
 
-RECEIPT_SCHEMA = "market-brief.receipt.v1"
-STEPS = ("resolve", "restore", "pipeline", "continuity", "publish", "current", "deploy")
+RECEIPT_SCHEMA = "market-brief.receipt.v2"
+STEPS = ("resolve", "restore", "pipeline", "continuity", "publish", "current",
+         "deploy_attempt_1", "deploy_attempt_2", "deploy")
 # GitHub step outcomes; an absent step (never reached, or not in this run's path) reads as "" and is unknown.
 OUTCOMES = {"success", "failure", "cancelled", "skipped"}
 

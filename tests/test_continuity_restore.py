@@ -297,7 +297,8 @@ def test_the_diagnostic_archive_cannot_gate_continuity_or_publication():
     gated = [i for i, step in enumerate(steps)
              if re.search(rf"^          name: {ARTIFACT_NAME}$", step["text"], re.M)
              or any(marker in step["code"] for marker in PUBLICATION)]
-    assert len(gated) == 1 + len(PUBLICATION)
+    expected_gated = 1 + sum(sum(marker in step["code"] for step in steps) for marker in PUBLICATION)
+    assert len(gated) == expected_gated
     independent = [i for i, step in enumerate(steps) if re.search(r"\b(always|failure|cancelled)\s*\(", step["code"])]
     assert independent and min(independent) > max(gated), (independent, gated)
     archive = [i for i, step in enumerate(steps) if "name: market-brief-run-" in step["code"]]
@@ -321,14 +322,18 @@ def test_the_deploy_guard_follows_the_continuity_upload_and_the_push_and_gates_o
                   if re.search(rf"^          name: {ARTIFACT_NAME}$", step["text"], re.M))
     push = next(i for i, step in enumerate(steps) if "git push" in step["code"])
     pages = [i for i, step in enumerate(steps) if any(marker in step["code"] for marker in PUBLICATION[1:])]
-    assert upload < push < guard < min(pages) and len(pages) == 3
+    assert upload < push < guard < min(pages) and len(pages) == 4
     code = steps[guard]["code"]
     assert not re.search(r"\b(always|success|failure|cancelled)\s*\(", code) and "continue-on-error" not in code
     # A step timeout fails the run (restorable), never the job timeout's cancel (which would make it ineligible).
     assert re.search(r"^        timeout-minutes: [1-5]$", code, re.M)
     assert not any(marker in code for marker in PUBLICATION)
+    retry = next(i for i in pages if "id: deployment_retry" in steps[i]["code"])
     for i in pages:
-        assert re.search(r"^        if: .* && steps\.current\.outputs\.deploy == 'true'$", steps[i]["code"], re.M)
+        if i == retry:
+            assert re.search(r"^        if: steps\.deployment\.outcome == 'failure'$", steps[i]["code"], re.M)
+        else:
+            assert re.search(r"^        if: .* && steps\.current\.outputs\.deploy == 'true'$", steps[i]["code"], re.M)
 
 
 def guard_script():

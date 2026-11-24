@@ -13,7 +13,7 @@ from test_cloudflare_scheduler import workflow_text
 from market_brief.receipts import build_receipt, outcome_class
 
 GREEN = dict(resolve="success", restore="success", pipeline="success", continuity="success", publish="success",
-             current="success", deploy="success")
+             current="success", deploy_attempt_1="success", deploy_attempt_2="skipped", deploy="success")
 
 
 def env(checkpoint, **steps):
@@ -60,8 +60,10 @@ def test_a_stale_price_refusal_is_an_explained_collection_failure(day):  # noqa:
     (dict(pipeline="failure"), None, "pipeline_crashed"),
     (dict(pipeline="cancelled"), None, "not_finished"),
     (dict(publish="failure", current="skipped", deploy="skipped"), dict(validation="PASS"), "push_failed"),
-    (dict(deploy="failure"), dict(validation="PASS"), "deploy_failed"),
-    (dict(current="success", deploy="skipped"), dict(validation="PASS"), "not_deployed"),
+    (dict(deploy_attempt_1="failure", deploy_attempt_2="failure", deploy="failure"),
+     dict(validation="PASS"), "deploy_failed"),
+    (dict(current="success", deploy_attempt_1="skipped", deploy_attempt_2="skipped", deploy="skipped"),
+     dict(validation="PASS"), "not_deployed"),
     (dict(pipeline="failure"), dict(validation="FAILED", kind="synthesis", error="unknown reference"),
      "synthesis_rejected"),
     (dict(), dict(validation="PASS", published=False), "recorded_without_page"),
@@ -82,6 +84,44 @@ def test_unknown_step_outcomes_are_unknown_not_success(day):  # noqa: F811
     assert receipt["deployed"] is False and receipt["delivery"] == "none"
 
 
+@pytest.mark.parametrize(("first", "retry", "final", "expected"), [
+    ("success", "skipped", "success", "published"),
+    ("failure", "success", "success", "published"),
+    ("failure", "failure", "failure", "deploy_failed"),
+])
+def test_receipt_records_both_pages_attempts_and_final_outcome(day, first, retry, final, expected):  # noqa: F811
+    assert day.run(f"{TUE}T13:00:00+00:00", "PREMARKET", intraday=False) == 0
+    receipt = build_receipt(env("PREMARKET", deploy_attempt_1=first, deploy_attempt_2=retry, deploy=final),
+                            day.root, at(f"{TUE}T13:03:10+00:00"))
+    assert receipt["schema_version"] == "market-brief.receipt.v2"
+    assert receipt["steps"]["deploy_attempt_1"] == first
+    assert receipt["steps"]["deploy_attempt_2"] == retry
+    assert receipt["steps"]["deploy"] == final
+    assert receipt["outcome"] == expected
+    assert receipt["deployed"] is (final == "success")
+
+
+def test_workflow_has_exactly_one_deployment_only_retry_and_records_both_attempts():
+    workflow = workflow_text()
+    brief = workflow.split("\n  brief:\n", 1)[1].split("\n  cloudflare-smoke:\n", 1)[0]
+    steps = brief.split("\n      - name: ")[1:]
+    deploys = [step for step in steps if "uses: actions/deploy-pages@v4" in step]
+    assert len(deploys) == 2
+    first, retry = deploys
+    assert first.startswith("Deploy Pages (attempt 1)")
+    assert "id: deployment" in first and "continue-on-error: true" in first
+    assert retry.startswith("Retry Pages deployment once")
+    assert "if: steps.deployment.outcome == 'failure'" in retry
+    assert "id: deployment_retry" in retry and "continue-on-error" not in retry
+    first_index, retry_index = (steps.index(step) for step in deploys)
+    assert not any("market_brief schedule" in step or "market_brief premarket" in step
+                   for step in steps[first_index + 1:retry_index])
+    receipt = next(step for step in steps if step.startswith("Write this checkpoint's receipt"))
+    assert "RECEIPT_DEPLOY_ATTEMPT_1:" in receipt
+    assert "RECEIPT_DEPLOY_ATTEMPT_2:" in receipt
+    assert "RECEIPT_DEPLOY:" in receipt and "steps.deployment_retry.outcome" in receipt
+
+
 def test_the_receipt_runs_last_always_and_can_never_fail_the_run():
     workflow = workflow_text()
     brief = workflow.split("\n  brief:\n", 1)[1].split("\n  cloudflare-smoke:\n", 1)[0]
@@ -89,6 +129,7 @@ def test_the_receipt_runs_last_always_and_can_never_fail_the_run():
     names = [s.split("\n", 1)[0] for s in steps]
     assert names[-2:] == ["Write this checkpoint's receipt", "Upload the checkpoint receipt"]
     assert names.index("Write this checkpoint's receipt") > names.index("Upload the paid synthesis attempt record")
+    assert names.index("Retry Pages deployment once") < names.index("Write this checkpoint's receipt")
     for step in steps[-2:]:
         assert "continue-on-error: true" in step and "if: always()" in step
     assert "retention-days: 90" in steps[-1]

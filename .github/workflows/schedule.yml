@@ -306,6 +306,7 @@ jobs:
         # Outside the Pages payload and Git history; thirty-day retention, not a historical store. Diagnostic only,
         # so it comes after the continuity upload and publication, where its own failure can gate neither, and runs
         # always(), so a rejected synthesis or a failed publication is still archived.
+        id: archive
         if: always() && steps.checkpoint.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -352,6 +353,7 @@ jobs:
           RECEIPT_DEPLOY_ATTEMPT_1: ${{ steps.deployment.outcome }}
           RECEIPT_DEPLOY_ATTEMPT_2: ${{ steps.deployment_retry.outcome }}
           RECEIPT_DEPLOY: ${{ steps.deployment_retry.outcome != 'skipped' && steps.deployment_retry.outcome || steps.deployment.outcome }}
+          RECEIPT_ARCHIVE: ${{ steps.archive.outcome }}
           RECEIPT_PUBLISH_SHA: ${{ steps.publish.outputs.sha }}
         run: |
           python -m market_brief receipt

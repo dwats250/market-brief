@@ -12,11 +12,16 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from .continuity import bundle_path
 from .schedule import checkpoint_kind, checkpoint_session
 
 RECEIPT_SCHEMA = "market-brief.receipt.v2"
 STEPS = ("resolve", "restore", "pipeline", "continuity", "publish", "current",
-         "deploy_attempt_1", "deploy_attempt_2", "deploy")
+         "deploy_attempt_1", "deploy_attempt_2", "deploy", "archive")
+# Outcome classes under which the run itself claims a reader page. A claim only: the receipt audit also requires the
+# workflow run's own conclusion to be success before it counts one as published.
+PAGE_CLASSES = {"published": "published", "published_degraded": "published",
+                "published_data_only": "published_data_only"}
 # GitHub step outcomes; an absent step (never reached, or not in this run's path) reads as "" and is unknown.
 OUTCOMES = {"success", "failure", "cancelled", "skipped"}
 
@@ -44,10 +49,13 @@ def outcome_class(outcomes, metadata):
     if metadata is None:
         return "skipped" if outcomes["pipeline"] == "success" else "pipeline_crashed"
     validation, error = metadata.get("validation"), metadata.get("error") or ""
-    if outcomes["pipeline"] == "failure" and validation not in ("FAILED",):
+    # WP-MB-RECOVERY-01: publication is recorded apart from the validator. A data-only page keeps its synthesis
+    # FAILED (or not applicable on a refresh) and is classed by the page it published, never as an accepted analysis.
+    data_only = metadata.get("publication") == "DATA_ONLY" and metadata.get("published") is True
+    if outcomes["pipeline"] == "failure" and (validation != "FAILED" or data_only):
         # The pipeline step failed without a diagnosed refusal (a crash after the run folder existed).
         return "pipeline_crashed"
-    if validation == "FAILED":
+    if validation == "FAILED" and not data_only:
         if "no timestamped current prints" in error or "has no observation from this session" in error:
             return "refused_stale_data"
         return "synthesis_rejected" if metadata.get("kind") == "synthesis" else "refused"
@@ -59,9 +67,52 @@ def outcome_class(outcomes, metadata):
         return "deploy_failed" if outcomes["deploy"] in ("failure", "cancelled") else "not_deployed"
     if validation == "DEGRADED":
         return "published_degraded"
+    if data_only:
+        # Current observations only, no analysis; never an accepted synthesis.
+        return "published_data_only"
     if not metadata.get("published", True):
         return "recorded_without_page"
     return "published"
+
+
+def bundle_present(root):
+    """Whether a continuity bundle is on disk as a regular file (never a symlink). The workflow uploads it with
+    `if-no-files-found: ignore`, so a successful upload step alone does not prove a bundle was carried."""
+    path = bundle_path(root)
+    return not path.is_symlink() and path.is_file()
+
+
+def stage_health(outcomes, metadata, outcome, bundle=False):
+    """Each stage's own state for the receipt audit (WP-MB-RECOVERY-01), from the step outcomes, the run's metadata
+    and whether a continuity bundle exists: collection, the page the run claims, evidence archived, continuity.
+    Claims only; the audit decides publication."""
+    if metadata is not None:
+        collection = "completed" if metadata.get("evidence_hash") else "attempted"
+    else:
+        collection = "attempted" if outcomes["pipeline"] in ("failure", "cancelled") else "not_attempted"
+    advanced = bool(((metadata or {}).get("continuity") or {}).get("advanced"))
+    if outcomes["continuity"] == "failure":
+        continuity = "upload_failed"
+    elif not bundle:
+        continuity = "not_present"  # nothing to carry: an ignored empty upload preserves and advances nothing
+    elif outcomes["continuity"] == "success":
+        # An advanced bundle uploaded, or the restored bundle re-uploaded unchanged.
+        continuity = "advanced" if advanced else "preserved"
+    elif not advanced:
+        continuity = "unchanged"  # on disk, but its upload did not succeed: never claimed as preserved
+    else:
+        continuity = "unknown"
+    evidence = {"success": "preserved", "failure": "not_preserved", "cancelled": "not_preserved",
+                "skipped": "not_preserved"}.get(outcomes["archive"], "unknown")
+    if evidence == "preserved" and not (metadata or {}).get("evidence_hash"):
+        # The archive step ignores an empty upload: success with no collected evidence preserves nothing.
+        evidence = "none_collected"
+    data_only = (metadata or {}).get("data_only")
+    return dict(collection=collection, page=PAGE_CLASSES.get(outcome, "not_published"), evidence=evidence,
+                continuity=continuity, published=bool((metadata or {}).get("published")) and outcome in PAGE_CLASSES,
+                data_only=data_only.get("basis") if isinstance(data_only, dict) else None,
+                analysis_accepted=(metadata or {}).get("validation") == "PASS" and (metadata or {}).get("kind") ==
+                "synthesis")
 
 
 def build_receipt(environment, root, now):
@@ -88,12 +139,15 @@ def build_receipt(environment, root, now):
                          repairs=len((metadata or {}).get("repairs") or []))
     scheduled_at = info["scheduled_at"]
     lag = (now - datetime.fromisoformat(scheduled_at)).total_seconds() if scheduled_at else None
+    outcome = outcome_class(outcomes, metadata)
     return dict(
+        **stage_health(outcomes, metadata, outcome, bundle_present(root)),
         schema_version=RECEIPT_SCHEMA, session_date=info["session_date"], checkpoint=checkpoint, kind=kind,
         run_id=environment.get("GITHUB_RUN_ID"), run_attempt=environment.get("GITHUB_RUN_ATTEMPT"),
         scheduled_at=scheduled_at, started_at=started, receipt_at=now.isoformat(), steps=outcomes,
-        outcome=outcome_class(outcomes, metadata),
-        validation=(metadata or {}).get("validation"), error=(metadata or {}).get("error"),
+        outcome=outcome,
+        validation=(metadata or {}).get("validation"), publication=(metadata or {}).get("publication"),
+        error=(metadata or {}).get("error"),
         coverage=(metadata or {}).get("coverage"), synthesis=synthesis,
         degraded_from=(metadata or {}).get("degraded_from"),
         publish_sha=environment.get("RECEIPT_PUBLISH_SHA") or None,

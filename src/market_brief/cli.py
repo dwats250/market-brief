@@ -35,7 +35,7 @@ from .continuity import (
     session_handoff,
     write_bundle,
 )
-from .evidence import ROOT, digest, finalize_coverage, normalize_packet, read_json, timestamp
+from .evidence import ROOT, USABLE, digest, finalize_coverage, normalize_packet, read_json, timestamp
 from .memory import MEMORY_FILE, eligible, session_memory
 from .metrics import annotate_magnitude, derive
 from .receipts import build_receipt, write_receipt
@@ -72,6 +72,9 @@ CLOSING_DATA_FOR_HANDOFF = {"COMPLETED_SESSION", "PROVISIONAL_NEAR_CLOSE"}
 # production provider request is sent and uploaded by the workflow as `market-brief-attempt-<session>-<checkpoint>`.
 ATTEMPT_SCHEMA = "market-brief.synthesis-attempt.v1"
 ATTEMPT_ARTIFACT = "market-brief-attempt"
+# WP-MB-RECOVERY-01: the synthesis checkpoints whose rejected analysis, with no accepted analysis of the session to
+# stand, may publish this run's observations alone. Nothing interpretive, no continuity, no acceptance record.
+DATA_ONLY_CHECKPOINTS = ("PREMARKET", "OPEN_30M")
 
 
 def output_directory(root, mode, target, checkpoint="PREMARKET"):
@@ -272,6 +275,136 @@ def degradable(exc):
     not accepted, never a refusal or fault before any request."""
     return (isinstance(exc, NarrativeRejected) or isinstance(getattr(exc, "attempt", None), dict)
             or "edition budget" in str(exc))
+
+
+def current_session_gate(packet, metadata, scheduled):
+    """(prints, None) when this run is a scheduled production LIVE checkpoint holding valid current-session market
+    evidence, else (None, reason). WP-MB-RECOVERY-01, shared by every data-only page. Fails closed: usable (READY or
+    PARTIAL) coverage, a session date equal to the evidence cutoff's exchange date, and at least one usable,
+    timestamped intraday print from that session at or before the cutoff."""
+    run = packet["run"]
+    if (not scheduled or run.get("mode") != "LIVE" or run.get("commissioning") or run.get("experiment")
+            or run.get("display_status") or metadata.get("commissioning") or metadata.get("experiment")):
+        return None, "not a scheduled production LIVE checkpoint"
+    coverage = packet["coverage"].get("status")
+    if coverage not in ("READY", "PARTIAL"):
+        return None, f"coverage {coverage}"
+    try:
+        cutoff = timestamp(run["target_time"])
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None, "no evidence cutoff"
+    session_date = (run.get("session") or {}).get("date")
+    if session_date != cutoff.astimezone(ET).date().isoformat() or metadata.get("target_time") != run["target_time"]:
+        return None, "the session is not the evidence cutoff's date"
+    prints = []
+    for row in packet["observations"]:
+        if (row.get("frequency") != "intraday" or row.get("status") not in USABLE
+                or not isinstance(row.get("value"), (int, float)) or isinstance(row.get("value"), bool)):
+            continue
+        try:
+            observed = timestamp(row["observed_at"])
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue  # an undated or naive print proves nothing
+        if observed <= cutoff and observed.astimezone(ET).date().isoformat() == session_date:
+            prints.append(observed)
+    if not prints:
+        return None, f"no usable timestamped print from {session_date} at or before the cutoff"
+    return prints, None
+
+
+def data_only_fallback(exc, packet, context, metadata, folder, scheduled):
+    """(fallback, None) when a rejected synthesis may publish today's observations alone, else (None, reason).
+
+    WP-MB-RECOVERY-01. The caller has established a production run and that no analysis of this session was
+    accepted. Every gate here fails closed: only the strict validator's own rejection (`NarrativeRejected`) of the
+    response to exactly this request, on PREMARKET or OPEN_30M, with the saved rejected response, the evidence and
+    context the request was built from unchanged on disk and in memory, plus `current_session_gate`. No model call,
+    retry, replay or repair; the strict validator is not touched."""
+    checkpoint = packet["run"].get("checkpoint")
+    if not isinstance(exc, NarrativeRejected):
+        return None, "not a validator rejection"
+    if checkpoint not in DATA_ONLY_CHECKPOINTS or checkpoint_kind(checkpoint) != "synthesis":
+        return None, f"{checkpoint} is not a data-only synthesis checkpoint"
+    attempt = getattr(exc, "attempt", None)
+    if not isinstance(attempt, dict) or not isinstance(context, dict) or getattr(exc, "narrative", None) is None:
+        return None, "the request or the rejected response is not on record"
+    try:
+        evidence_hash = digest(packet)
+        context_hash = digest(context)
+        system, user = construct_prompt(packet, context=context)
+        on_disk = (digest(read_json(folder / "evidence.json")), digest(read_json(folder / "analyst_context.json")))
+    except (OSError, ValueError, TypeError, KeyError):
+        return None, "the saved evidence or context could not be re-read"
+    if not (attempt.get("evidence_hash") == metadata.get("evidence_hash") == context.get("evidence_hash")
+            == on_disk[0] == evidence_hash):
+        return None, "evidence changed after the request"
+    if not (metadata.get("context_hash") == on_disk[1] == context_hash):
+        return None, "analyst context changed after the request"
+    if not attempt.get("prompt_hash") or attempt["prompt_hash"] != digest(dict(system=system, user=user)):
+        return None, "the request does not match this evidence and context"
+    prints, refusal = current_session_gate(packet, metadata, scheduled)
+    if prints is None:
+        return None, refusal
+    return dict(basis="synthesis_rejected", checkpoint=checkpoint,
+                scheduled_at=metadata.get("scheduled_checkpoint_at"), reason=str(exc),
+                evidence_hash=evidence_hash, context_hash=context_hash, prompt_hash=attempt["prompt_hash"],
+                response_id=attempt.get("response_id"), current_prints=len(prints),
+                latest_print=max(prints).isoformat()), None
+
+
+def refresh_data_only(packet, metadata, note, scheduled):
+    """(fallback, None) when a deterministic refresh with no accepted interpretation of this session may publish its
+    own collection alone, else (None, reason). WP-MB-RECOVERY-01: no synthesis call is made or implied; the refresh
+    renders only what it collected, under `current_session_gate`. Only `refresh` checkpoints qualify.
+
+    CLOSE_1M is excluded at the close handoff boundary. A data-only page writes no edition state, session handoff,
+    session record or continuity bundle, but the close is the one checkpoint whose job is exactly those writes: with no
+    accepted interpretation it still records the closing snapshot (`carried_state`), writes `session_handoff.json` and
+    advances the bundle so the next session admits this one's closing state. Skipping them to publish a page would
+    drop the session's handoff; doing both would publish a data-only page beside an advanced continuity. Neither is
+    safe, so the close keeps its own fail-closed / recorded-without-a-page path."""
+    checkpoint = packet["run"].get("checkpoint")
+    if checkpoint_kind(checkpoint) != "refresh":
+        return None, f"{checkpoint} is not a deterministic refresh checkpoint"
+    if not packet["coverage"].get("current_premarket"):
+        return None, missing_prints_reason(packet)
+    prints, refusal = current_session_gate(packet, metadata, scheduled)
+    if prints is None:
+        return None, refusal
+    return dict(basis="no_accepted_analysis", checkpoint=checkpoint,
+                scheduled_at=metadata.get("scheduled_checkpoint_at"), reason=note,
+                evidence_hash=metadata.get("evidence_hash"), current_prints=len(prints),
+                latest_print=max(prints).isoformat()), None
+
+
+def publish_data_only(packet, data_only, metadata, folder, mode, overseas):
+    """Publish this run's observations under the data-only heading (WP-MB-RECOVERY-01). A rejected synthesis stays
+    rejected; a refresh made no synthesis call.
+
+    A rejected synthesis is recorded (`record_rejection`) first, so its response, usage and cost, response ID and
+    diagnostic are on record. Writes the page and nothing else: no narrative.json, edition state, session handoff,
+    session record, latest-success pointer or continuity bundle, so `continuity.advanced` stays False and the
+    restored bundle is exactly what the next run restores."""
+    try:
+        markdown, page = render(packet, glance=overseas, data_only=data_only)
+    except Exception as exc:  # noqa: BLE001 - a rendering defect leaves the run unpublished, as it was
+        raise ValueError(f"{data_only['reason']}; data-only render failed ({type(exc).__name__}: {exc})") from None
+    (folder / "brief.md").write_text(markdown)
+    (folder / "brief.html").write_text(page)
+    update_latest(RUN_ROOT, page)
+    if mode == "LIVE":
+        publish_latest(RUN_ROOT)
+    # Publication is recorded apart from the validator's outcome, which stays true: a rejected synthesis keeps
+    # validation FAILED with its error, model, cost and rejected response (set by `record_rejection`); a refresh made
+    # no model call, so nothing was validated and its synthesis is not applicable.
+    if checkpoint_kind(packet["run"]["checkpoint"]) != "synthesis":
+        metadata["validation"] = "NOT_APPLICABLE"
+    metadata.update(markdown_hash=digest(markdown), html_hash=digest(page), publication="DATA_ONLY", published=True,
+                    data_only=data_only)
+    print("No accepted analysis of this session; published current market observations only (no analysis). "
+          "Continuity unchanged.", flush=True)
+    print(f"{mode} / {packet['coverage']['status']} / data only: {folder / 'brief.html'}")
+    return 0
 
 
 def record_rejection(folder, metadata, exc):
@@ -497,8 +630,18 @@ def run(args):
                 if not production or not degradable(exc):
                     raise
                 interpretation, interpretation_note = admit_interpretation(bundle, packet)
-                if interpretation is None or interpretation["origin"].get("checkpoint") == checkpoint:
-                    # No earlier analysis to stand, or this checkpoint's own analysis already stands.
+                if interpretation is None:
+                    # No analysis of this session to stand (WP-MB-RECOVERY-01): this run's observations alone, under
+                    # every gate of `data_only_fallback`, or the run fails closed as before.
+                    data_only, refusal = data_only_fallback(exc, packet, context, metadata, folder,
+                                                            bool(getattr(args, "scheduled", False)))
+                    if data_only is None:
+                        print(f"No data-only page: {refusal}.", flush=True)
+                        raise
+                    record_rejection(folder, metadata, exc)
+                    return publish_data_only(packet, data_only, metadata, folder, mode, overseas)
+                if interpretation["origin"].get("checkpoint") == checkpoint:
+                    # This checkpoint's own analysis already stands.
                     raise
                 record_rejection(folder, metadata, exc)
                 degraded = dict(checkpoint=checkpoint, scheduled_at=checkpoint_data["scheduled_at"], reason=str(exc))
@@ -509,6 +652,15 @@ def run(args):
             if interpretation is None and args.replay:
                 # A fictional replay carries the fixture narrative; a fixture mismatch is a diagnosed rejection.
                 interpretation, interpretation_note = sample_interpretation(packet, prior, comparisons), ""
+            if kind == "refresh" and interpretation is None and production:
+                # No accepted analysis of this session to carry (WP-MB-RECOVERY-01): this refresh's own collection
+                # alone, under every gate of `refresh_data_only`, or the run fails closed as before. No synthesis.
+                data_only, refusal = refresh_data_only(packet, metadata, interpretation_note,
+                                                       bool(getattr(args, "scheduled", False)))
+                if data_only is None:
+                    print(f"No data-only page: {refusal}.", flush=True)
+                    raise ValueError(interpretation_note)
+                return publish_data_only(packet, data_only, metadata, folder, mode, overseas)
             if kind == "refresh" or degraded:
                 if interpretation is None:
                     raise ValueError(interpretation_note)
@@ -612,6 +764,18 @@ def _gh_json(args, runner=subprocess.run):
     return json.loads(result.stdout)
 
 
+def _gh_bytes(args, runner=subprocess.run):
+    """A binary GitHub API response (an artifact's zip), read-only. Every failure is a ValueError, so an unreadable
+    receipt payload is reported per checkpoint and never hides the missed-wake answer."""
+    try:
+        result = runner(["gh", "api", *args], capture_output=True, check=False, timeout=60)
+    except subprocess.TimeoutExpired:
+        raise ValueError("GitHub API request timed out") from None
+    if result.returncode != 0:
+        raise ValueError("GitHub API request failed")
+    return result.stdout
+
+
 def audit_receipts(args, runner=subprocess.run):
     """Fail (exit 1) when a checkpoint the calendar expected left no receipt; read-only. See audit.py."""
     repository = args.repository or os.environ.get("GITHUB_REPOSITORY")
@@ -620,7 +784,8 @@ def audit_receipts(args, runner=subprocess.run):
     try:
         session = None if args.date is None else date.fromisoformat(args.date).isoformat()
         code, lines = receipt_audit.audit(receipt_audit.utc_now(), lambda request: _gh_json(request, runner),
-                                          repository, session, args.branch)
+                                          repository, session, args.branch,
+                                          gh_bytes=lambda request: _gh_bytes(request, runner))
     except (ValueError, OSError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired) as exc:
         # Not a missed wake: the audit itself could not verify. Exit 2 still fails the job, so it still emails.
         print(f"AUDIT ERROR / receipts could not be verified ({type(exc).__name__})")

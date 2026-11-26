@@ -184,6 +184,18 @@ AFTER_HOURS_REASON = "after-hours trade, after the regular-session close"
 SHARED_CLOCK_TOLERANCE = timedelta(minutes=5)
 # The header's three clocks. The interpretation is named by the synthesis edition that wrote it.
 EDITION_WORDS = {"PREMARKET": "premarket", "OPEN_30M": "opening structure"}
+# WP-MB-RECOVERY-01: the page a rejected PREMARKET / OPEN_30M publishes when no analysis of this session was accepted.
+DATA_ONLY_HEADING = "Analysis unavailable — current market observations only"
+
+
+def unavailable_narrative():
+    """An empty narrative in the accepted shape: no headline read, summary, take, watch, relationship, change,
+    attention or section prose. Only `presentation` uses it, in memory, so a data-only page renders the observed
+    modules with nothing interpretive; it is never validated, written, frozen or carried."""
+    empty = dict(text="", evidence_ids=[])
+    return dict(banner=dict(title="", limitation="", evidence_ids=[]), character=dict(empty), summary=[],
+                take=dict(empty), watches=[], watch_updates=[], relationships=[], changes=[], attention=[],
+                sections=dict(macro=[], equities=[], attention=[], events=[], cuttingboard=[]))
 NEXT_WORDS = {"synthesis": "analysis update", "close": "close snapshot", "refresh": "price refresh"}
 # A page whose next scheduled update is this late says so in the reader's browser (no server change): publishes land a
 # few minutes after their checkpoint, so only a real miss (a failed run or a legitimate no-publish) crosses it.
@@ -1315,7 +1327,11 @@ def state_notice(interpretation, packet, carried, refs, catalog):
 
 
 def presentation(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None,
-                 degraded=None):
+                 degraded=None, data_only=None):
+    if data_only is not None:
+        # No analysis of this session was accepted: nothing interpretive is carried, read or shown. The blank record
+        # is this run's own (one clock), with no context, so no prior watch, verdict or attention can enter it.
+        narrative, context, interpretation = None, None, interpretation_record(packet, unavailable_narrative())
     if interpretation is None:
         interpretation = interpretation_record(packet, narrative, context)
     narrative = interpretation["narrative"]
@@ -1781,7 +1797,7 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
     if since_label and carried:
         # A carried page's comparisons end where its analysis was written, not at this refresh.
         since_label += f" · through the {interpretation_clock} analysis"
-    return dict(
+    view = dict(data_only=False,
         mode=packet["run"]["mode"], status=status, commissioning=commissioning,
         live_commissioning=live_commissioning, checkpoint=checkpoint, kind=kind, carried=carried, glance=glance,
         # The scheduler's idempotency marker; a commissioning run never claims a scheduled slot.
@@ -1840,6 +1856,55 @@ def presentation(packet, narrative=None, context=None, interpretation=None, glan
         interpretation_groups=interpretation_groups,
         cuttingboard=cuttingboard,
         evidence=evidence_rows, evidence_groups=evidence_groups, context_items=packet["context_items"])
+    if data_only is not None:
+        view.update(data_only_view(packet, data_only, view, prices, upcoming))
+    return view
+
+
+def data_only_view(packet, data_only, view, prices, upcoming):
+    """What a data-only page says in place of the analysis (WP-MB-RECOVERY-01): the heading, the date and checkpoint,
+    why there is no analysis, and nothing else. Tables, rates, events, sources and the evidence ledger are the
+    deterministic view's own. Every interpretive surface is emptied here as well as by the blank record."""
+    checkpoint = packet["run"]["checkpoint"]
+    day = date.fromisoformat(packet["run"]["session"]["date"])
+    edition = EDITION_LABELS.get(checkpoint, "Market edition")
+    due = timestamp(data_only["scheduled_at"])
+    clock = f"{due.astimezone(ET):%-I:%M %p} ET ({due.astimezone(PACIFIC):%-I:%M %p} {VANCOUVER_LABEL})"
+    rejected = data_only.get("basis") == "synthesis_rejected"
+    technical = dict(view["technical"],
+                     synthesis=("analyst call not accepted (rejected by validation); data-only page, no analysis"
+                                if rejected else "none at this checkpoint (no model call); no accepted analysis of "
+                                "this session to carry; data-only page, no analysis"),
+                     interpretation=dict(run_id=None, checkpoint="none (analysis unavailable)",
+                                         evidence_cutoff="not applicable"),
+                     cuttingboard="Cuttingboard: not shown on a data-only page (optional commentary)")
+    if rejected:
+        why = (f"The {EDITION_WORDS.get(checkpoint, 'scheduled')} analysis due {clock} was not accepted, so this "
+               "page carries no analysis")
+    else:
+        why = (f"No analysis of this session has been accepted, so the {clock} update carries no analysis and no "
+               "analysis was requested for it")
+    return dict(
+        data_only=True,
+        banner=dict(title=DATA_ONLY_HEADING, limitation="", refs=[], evidence_ids=[]),
+        character=f"{day:%A, %B} {day.day}, {day.year} · {edition} ({checkpoint})",
+        character_ids=[], character_refs=[], summary=[], take=None, rates_lead=None, shift=None,
+        truth=(f"{why}: no headline read, take, watches, relationships or flags, and nothing from an "
+               "earlier analysis. The prices, rates, events and sources below are this checkpoint's own "
+               "observations, each with its own clock."),
+        clocks=[dict(label="Prices", text=prices, anchor=True),
+                dict(label="Analysis", text="unavailable · not accepted"),
+                dict(label="Next", text=upcoming["text"], next_at=upcoming["at"], next_when=upcoming["when"],
+                     grace_minutes=int(OVERDUE_GRACE.total_seconds() // 60))],
+        interpretation_clock="not applicable",
+        since=dict(view["since"], label="", entries=[], note=""),
+        next=dict(view["next"], watches=[], carried=[], retired=[], attention=[], paragraphs=[]),
+        equities=dict(view["equities"], paragraphs=[]), macro=dict(view["macro"], paragraphs=[]),
+        # Cuttingboard is optional upstream commentary, not this project's verified record: a data-only page shows
+        # none of it (no section, no quotation, no status line). The project's own dated rows, rates, sources and
+        # evidence ledger above are untouched.
+        cuttingboard_section=dict(view["cuttingboard_section"], paragraphs=[], visible=False),
+        interpretation_groups=[], technical=technical)
 
 
 def markdown(view):
@@ -1865,7 +1930,8 @@ def markdown(view):
     lines += [f"- {clock['label']} · {esc(clock['text'])}" for clock in view["clocks"]]  # labels are constants
     if view["truth"]:
         lines += ["", f"> {esc(view['truth'])}"]
-    lines += ["", f"**INTERPRETATION** · {esc(view['character'])} {refs(view['character_ids'])}", ""]
+    lead = "OBSERVATIONS ONLY" if view.get("data_only") else "INTERPRETATION"
+    lines += ["", f"**{lead}** · {esc(view['character'])} {refs(view['character_ids'])}", ""]
     if view["banner"]["limitation"]:
         lines += [esc(view["banner"]["limitation"]), ""]
     for p in view["summary"]:
@@ -2148,15 +2214,20 @@ def markdown(view):
               esc(technical["cuttingboard"]), "",
               *([f"Citations rewritten from a comparison to the two observations it compares: "
                  f"{esc('; '.join(technical['repairs']))}", ""] if technical["repairs"] else []),
-              "Model-assisted interpretation; factual rows are deterministic.", ""]
+              ("No interpretation on this page; factual rows are deterministic." if view.get("data_only")
+               else "Model-assisted interpretation; factual rows are deterministic."), ""]
     return "\n".join(lines)
 
 
-def render(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None, degraded=None):
+def render(packet, narrative=None, context=None, interpretation=None, glance=None, repairs=None, degraded=None,
+           data_only=None):
     """Render one edition. A synthesis edition passes its narrative (and freezes it on the way); a
-    deterministic refresh passes the frozen `interpretation` record it carries. `glance` is the optional overseas
-    line's view (`glance.view`), kept out of the packet so it never reaches evidence, continuity or the analyst."""
-    view = presentation(packet, narrative, context, interpretation, glance, repairs, degraded)
+    deterministic refresh passes the frozen `interpretation` record it carries; a data-only page (WP-MB-RECOVERY-01)
+    passes neither, only `data_only`. `glance` is the optional overseas line's view (`glance.view`), kept out of the
+    packet so it never reaches evidence, continuity or the analyst."""
+    if data_only is not None and (narrative is not None or context is not None or interpretation is not None):
+        raise ValueError("a data-only page renders no narrative, context or interpretation")
+    view = presentation(packet, narrative, context, interpretation, glance, repairs, degraded, data_only)
     env = Environment(loader=FileSystemLoader(ROOT / "templates"),
                       autoescape=select_autoescape(default=True))
     template = env.get_template("brief.html.j2")

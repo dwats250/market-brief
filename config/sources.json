@@ -10,6 +10,7 @@
     "BLS release-calendar ICS, else the official monthly List View (current and next exchange session)",
     "BLS Employment Situation and CPI values from their current-edition release pages, once the calendar's release time passes",
     "BLS JOLTS and Productivity and Costs readers (disabled until explicitly enabled in config/economic_actuals.json)",
+    "BEA release-schedule ICS (one exact URL): when a national GDP estimate, Personal Income and Outlays or International Trade is scheduled today or at the next exchange session; scheduled releases only, no values",
     "Statistics Canada Labour Force Survey values from the dated Daily release (disabled until explicitly enabled)",
     "Federal Reserve press-release RSS",
     "NVIDIA official press-release RSS (exact feed URL): dated issuer releases, and the revenue and diluted EPS a results release reports",
@@ -20,7 +21,6 @@
     "optional published Cuttingboard contract"
   ],
   "deferred": [
-    "BEA calendar",
     "Fed calendar",
     "live yields",
     "DXY",

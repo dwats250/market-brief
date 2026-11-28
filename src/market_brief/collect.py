@@ -29,7 +29,7 @@ from .actuals import (
     release_rows,
 )
 from .evidence import ET as EASTERN
-from .evidence import ROOT, read_json, timestamp
+from .evidence import ROOT, ohlc_ranges, read_json, timestamp
 from .issuer import NVIDIA_IR, IssuerError, conference_calls, nvidia_releases
 from .issuer import SOURCE_NAME as NVIDIA_NAME
 from .schedule import next_session_date, prior_session_date
@@ -829,20 +829,25 @@ def _bar_date(value):
 def _alpaca_history(payload, now, retrieved_at, source_id):
     histories = []
     for symbol, bars in payload.get("bars", {}).items():
-        rows = [(bar.get("t"), bar.get("c")) for bar in bars
+        rows = [(bar.get("t"), bar.get("c"), bar) for bar in bars
                 if isinstance(bar, dict) and isinstance(bar.get("t"), str)
                 and finite_number(bar.get("c"))]
-        rows = [(date, close) for date, close in rows
+        rows = [(date, close, bar) for date, close, bar in rows
                 if date[:10] < now.date().isoformat()]
         rows.sort(key=lambda row: row[0])
         rows = rows[-65:]
         if not rows:
             continue
-        dates = [_bar_date(date) for date, _ in rows]
-        closes = [close for _, close in rows]
+        dates = [_bar_date(date) for date, _, _ in rows]
+        closes = [close for _, close, _ in rows]
+        # The same bars' open, high and low, for the chart's prior-session range only. They ride with the history
+        # or not at all: one bar that is not a coherent range costs the symbol its range, never a close.
+        ranges = ohlc_ranges(dict(dates=dates, closes=closes, opens=[bar.get("o") for _, _, bar in rows],
+                                  highs=[bar.get("h") for _, _, bar in rows],
+                                  lows=[bar.get("l") for _, _, bar in rows]))
         histories.append(dict(id=f"history-{symbol}", symbol=symbol, dates=dates, closes=closes,
                               adjustment="split", session="regular_close", source_id=source_id,
-                              retrieved_at=retrieved_at.isoformat()))
+                              retrieved_at=retrieved_at.isoformat(), **(ranges or {})))
     return histories
 
 

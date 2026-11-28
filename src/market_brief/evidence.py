@@ -62,6 +62,31 @@ def finite(value):
     return type(value) in (int, float) and math.isfinite(value)
 
 
+RANGE_FIELDS = ("opens", "highs", "lows")
+
+
+def ohlc_ranges(history):
+    """The history's `opens`, `highs` and `lows`, or None. For the chart's prior-session range only: never an
+    observation, a derived row or a word the analyst reads (`model_packet` drops the whole history).
+
+    Fail closed on presentation only. Every bar must be a coherent range aligned with the closes: the three arrays
+    as long as the dates and closes, every member finite, `low <= min(open, close)`, `high >= max(open, close)`
+    and `high >= low`. One bar that is not costs the symbol its whole range, never a close, and never leaves a
+    partial array behind."""
+    arrays = [history.get(key) for key in RANGE_FIELDS]
+    closes, dates = history.get("closes"), history.get("dates")
+    if not all(isinstance(array, list) for array in (*arrays, closes, dates)):
+        return None
+    if not closes or len({len(array) for array in (*arrays, closes, dates)}) != 1:
+        return None
+    for opened, high, low, close in zip(*arrays, closes):
+        if not all(finite(value) for value in (opened, high, low, close)):
+            return None
+        if not (low <= min(opened, close) and high >= max(opened, close) and high >= low):
+            return None
+    return {key: list(array) for key, array in zip(RANGE_FIELDS, arrays)}
+
+
 def canonical(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False)
 
@@ -369,9 +394,11 @@ def normalize_packet(raw, now, mode, checkpoint="PREMARKET"):
             raise ValueError("history references unknown source")
         if source["retention_allowed"] is not True:
             continue
-        packet["history"].append({key: h.get(key) for key in (
+        record = {key: h.get(key) for key in (
             "id", "symbol", "dates", "closes", "adjustment", "session",
-            "source_id", "retrieved_at")})
+            "source_id", "retrieved_at")}
+        record.update(ohlc_ranges(h) or {})
+        packet["history"].append(record)
     packet["rates_history"] = rates_history_record(raw.get("rates_history"), by_source, now)
     for field in ("events", "context_items"):
         for item in raw.get(field, []):

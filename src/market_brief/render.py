@@ -64,6 +64,7 @@ from .evidence import (
     SECTOR_ETFS,
     USABLE,
     evidence_catalog,
+    ohlc_ranges,
     read_json,
     timestamp,
 )
@@ -232,6 +233,7 @@ EVIDENCE_SESSIONS = 20
 EVIDENCE_SPLIT = 0.62      # share of the width given to the close path when prints follow it
 EVIDENCE_MIN_SPAN = 2.0    # percentage points
 EVIDENCE_PADDING = 1.15
+EVIDENCE_TICK = 0.015      # share of the width the prior session's open tick reaches left of its wick
 EVIDENCE_CHARTS = 2
 EVIDENCE_DOT_LABELS = 3    # more prints than this label only the first and the last
 # A chart earns its place only when it shows what the rows beside it cannot: a drawer cites the instrument's
@@ -335,6 +337,13 @@ def evidence_chart(history, prints=(), average=None, session_date=None, sessions
         values.append(reference)
     else:
         reference = None
+    # The prior session's open, high and low join the values that fix the domain, so its wick is always inside the
+    # box: the prior close is often the path's own extreme, and a wick cut at the box edge would read as `high = top of
+    # the chart`. Whether the reference line shows is decided above, on the closes and prints alone, as it always was.
+    ranges = ohlc_ranges(history)
+    session = [ranges[key][-1] for key in ("opens", "highs", "lows")] if ranges else None
+    if session:
+        values.extend(100 * (price / prior - 1) for price in session)
     low, high = min(values), max(values)
     span = max((high - low) * EVIDENCE_PADDING, EVIDENCE_MIN_SPAN)
     base = (low + high) / 2 - span / 2
@@ -356,6 +365,14 @@ def evidence_chart(history, prints=(), average=None, session_date=None, sessions
         marks.append(dict(x=x(share), y=y(row["value"]), direction=direction(row),
                           label=(pacific_time(row["observed_at"]).removesuffix(f" {VANCOUVER_LABEL}")
                                  if labelled else "")))
+    # The prior session's own range, a neutral wick and open tick on the prior point. Its prices are inside the domain
+    # (above), so nothing is cut; the head line also states the exact range.
+    candle = None
+    if session:
+        opened, session_high, session_low = session
+        top, bottom, tick = (y(100 * (price / prior - 1)) for price in (session_high, session_low, opened))
+        candle = dict(x=points[-1]["x"], tick_x=x(split - EVIDENCE_TICK), y_high=top, y_low=bottom, y_open=tick,
+                      label=f"Prior session · O {opened:.2f} H {session_high:.2f} L {session_low:.2f} C {prior:.2f}")
     return dict(height=EVIDENCE_HEIGHT, label_y=EVIDENCE_LABEL_Y, zero_y=y(0),
                 reference_y=y(reference) if reference is not None else None,
                 path=dict(points=points, segments=segments), prior=points[-1],
@@ -363,7 +380,7 @@ def evidence_chart(history, prints=(), average=None, session_date=None, sessions
                 left_label=f"{len(closes) - 1} sessions to {short_date(dates[-1])}",
                 right_label=(f"{short_date(session_date)} prints" if dots and session_date else
                              "prints" if dots else ""),
-                domain=[round(base, 4), round(base + span, 4)])
+                domain=[round(base, 4), round(base + span, 4)], candle=candle)
 
 
 def pacific_time(value, include_date=False):

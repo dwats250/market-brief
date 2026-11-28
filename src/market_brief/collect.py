@@ -38,6 +38,8 @@ from .stats_can import StatisticsCanadaError, lfs_actual, lfs_schedule
 
 TREASURY = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml"
 BLS = "https://www.bls.gov/schedule/news_release/bls.ics"
+# BEA's release-schedule subscription file: the one URL ever requested on BEA, for the dates of its releases only.
+BEA = "https://www.bea.gov/news/schedule/ics/online-calendar-subscription.ics"
 # The calendar file's fallback, BLS's official monthly List View. On BLS only these two forms and the two fixed
 # current-edition release pages (`actuals.RELEASE_PAGES`) are ever requested.
 BLS_LIST = re.compile(r"https://www\.bls\.gov/schedule/[0-9]{4}/(0[1-9]|1[0-2])_sched_list\.htm")
@@ -49,7 +51,8 @@ ALPACA_SNAPSHOTS = f"{ALPACA_DATA}/v2/stocks/snapshots"
 # The New York Fed's documented Markets Data API: only these two exact requests (the last 30 published rates).
 NYFED = "https://markets.newyorkfed.org/api/rates"
 FUNDING = {"sofr": f"{NYFED}/secured/sofr/last/30.json", "effr": f"{NYFED}/unsecured/effr/last/30.json"}
-HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, FED, CB, ALPACA_DATA, STATCAN_SCHEDULE, NVIDIA_IR, NYFED)}
+HOSTS = {urlsplit(u).hostname for u in (TREASURY, BLS, BEA, FED, CB, ALPACA_DATA, STATCAN_SCHEDULE, NVIDIA_IR,
+                                        NYFED)}
 ALPACA_UNIVERSE = (
     "SPY", "QQQ", "XLK", "XLF", "XLE", "XLI", "XLY", "XLP", "XLV", "XLU",
     "XLB", "XLRE", "XLC", "GLD", "SLV", "GDX", "AAPL", "MSFT", "NVDA", "META", "AMZN", "GOOG",
@@ -67,12 +70,15 @@ class SourceError(ValueError):
 
 def allowed(url):
     """An allowlisted host over HTTPS; on BLS, only the calendar file, the monthly List View pages and the two
-    current-edition release pages; on NVIDIA's newsroom, only the press-release feed itself."""
+    current-edition release pages; on BEA, only its schedule file; on NVIDIA's newsroom, only the press-release feed
+    itself."""
     parts = urlsplit(url)
     if parts.scheme != "https" or parts.hostname not in HOSTS:
         return False
     if parts.hostname == urlsplit(NVIDIA_IR).hostname:
         return url == NVIDIA_IR
+    if parts.hostname == urlsplit(BEA).hostname:
+        return url == BEA
     if parts.hostname == urlsplit(NYFED).hostname:
         return url in FUNDING.values()
     if parts.hostname == urlsplit(BLS).hostname:
@@ -321,7 +327,10 @@ def treasury_rows(text, now, retrieved):
     return yield_rows(treasury_entries(text, now), retrieved)
 
 
-def calendar_events(text, now, retrieved):
+def calendar_events(text, now, retrieved, source_id="bls", id_prefix="bls-event", admit=None, unescape=None):
+    """The events of an ICS calendar file scheduled today or at the next session, in Eastern time. With only the first
+    three arguments this is BLS's reader. BEA's names its own source and ids and passes `admit`, the test a title must
+    pass, and `unescape`, how its titles are decoded; the file must bracket the target date whatever `admit` leaves."""
     if "BEGIN:VCALENDAR" not in text or "END:VCALENDAR" not in text:
         raise SourceError("malformed calendar")
     text = re.sub(r"\r?\n[ \t]", "", text)
@@ -342,12 +351,14 @@ def calendar_events(text, now, retrieved):
         dates.append(when.astimezone(EASTERN).date())
         if dates[-1].isoformat() not in admitted_dates:
             continue
-        title = fields["SUMMARY"].replace("\\,", ",")
+        title = fields["SUMMARY"].replace("\\,", ",") if unescape is None else unescape(fields["SUMMARY"])
+        if admit is not None and not admit(title):
+            continue
         releases.append((when, title, title))
     today = now.astimezone(EASTERN).date()
     if not dates or not min(dates) <= today <= max(dates):
         raise SourceError("calendar does not establish coverage for target date")
-    return release_events(releases, retrieved)
+    return release_events(releases, retrieved, source_id, id_prefix)
 
 
 # BLS's calendar file names its own VTIMEZONE `US-Eastern` (New York's rules), which is not an IANA key; ZoneInfo's
@@ -362,18 +373,45 @@ def ics_zone(key):
         raise SourceError("unsupported calendar time zone") from None
 
 
-def release_events(releases, retrieved):
-    """`(time, title, release name)` as scheduled BLS events, one per title and time, numbered by time and then
-    release name: the calendar file and the List View order a shared time differently (Real Earnings before CPI, or
-    after), and a frozen `bls-event-<n>` must name the same release whichever path the next run read."""
+def release_events(releases, retrieved, source_id="bls", id_prefix="bls-event"):
+    """`(time, title, release name)` as scheduled BLS events (BEA's, named by `source_id` and `id_prefix`), one per
+    title and time, numbered by time and then release name: the calendar file and the List View order a shared time
+    differently (Real Earnings before CPI, or after), and a frozen `bls-event-<n>` must name the same release whichever
+    path the next run read."""
     events = []
     for when, title, _ in sorted(releases, key=lambda release: (release[0], RELEASE_MARK.sub("", release[2]),
                                                                 release[1])):
         scheduled_at = when.astimezone(timezone.utc).isoformat()
         if not any(event["title"] == title and event["scheduled_at"] == scheduled_at for event in events):
-            events.append(dict(id=f"bls-event-{len(events)}", title=title, source_id="bls", published_at=None,
+            events.append(dict(id=f"{id_prefix}-{len(events)}", title=title, source_id=source_id, published_at=None,
                                checked_at=retrieved.isoformat(), scheduled_at=scheduled_at, status="SCHEDULED"))
     return events
+
+
+# BEA's file lists regional, territorial and satellite-account releases beside the national ones, some beginning with
+# the same words, and bundles corporate profits, industries and state statistics into the national GDP releases. Two
+# axioms decide, not a list of releases:
+#   1. A headline national GDP estimate is admitted whatever else it bundles: any title beginning `GDP (` or
+#      `Gross Domestic Product,` is.
+#   2. A release whose subject is a region, territory or account is not, even when its name begins `Gross Domestic
+#      Product` or `GDP`. Those read `... by State` or `... for Puerto Rico`, so none has the comma or parenthesis the
+#      prefixes need; and a guard (` by ` or ` for ` before the first comma) refuses one the feed might drift toward.
+# Only the words before the first comma are guarded: the third estimate names State GDP after it.
+BEA_FAMILIES = re.compile(
+    r"Gross Domestic Product,|GDP \(|Personal Income and Outlays,|U\.S\. International Trade in Goods and Services,")
+ICS_ESCAPE = re.compile(r"\\([\\;,])")
+
+
+def bea_release(title):
+    """Whether a BEA calendar title is a national GDP estimate, Personal Income and Outlays or International Trade."""
+    subject = title.split(",", 1)[0]
+    return bool(BEA_FAMILIES.match(title)) and " by " not in subject and " for " not in subject
+
+
+def ics_text(value):
+    """An ICS text value as its writer meant it: a backslash, semicolon or comma is escaped with a backslash (RFC 5545,
+    3.3.11). BLS's calendar reader decodes only the comma and is left as it was."""
+    return ICS_ESCAPE.sub(r"\1", value)
 
 
 LIST_DATE = re.compile(rf"({'|'.join(WEEKDAYS)}), ({'|'.join(MONTHS)}) (\d{{1,2}}), (\d{{4}})")
@@ -387,6 +425,7 @@ WITHDRAWAL = re.compile(r"\s*'((?:[^'\\]|\\.)*)'\s*:\s*'((?:[^'\\]|\\.)*)'\s*(?:
 MONTH_VIEW_CELL = re.compile(r"d\d{4}")  # the Month View's cell IDs; the List View carries its own dated entries
 RELEASE_MARK = re.compile(r"\s*\((?:P|R)\)$")  # the List View marks preliminary and revised releases; the file does not
 BLS_SECONDS = 30  # the calendar file and its fallback share one source's time: two fifteen-second attempts
+BEA_SECONDS = 30  # BEA's file has no fallback: its own two fifteen-second attempts, and no more of the shared deadline
 RELEASE_SECONDS = 20  # one release page: a fifteen-second attempt and a short retry
 
 
@@ -577,6 +616,31 @@ def bls_calendar(now, deadline, fetcher):
     events = release_events([release for release in listed if release[0].date() in days], retrieved)
     label = ", ".join(f"{year}-{month:02d}" for year, month in months)
     return events, schedule_url(*months[0]), f"monthly schedule {label}; calendar file: {file_failure}", retrieved
+
+
+def bea_calendar(now, deadline, fetcher):
+    """BEA's national GDP estimates, Personal Income and Outlays and International Trade scheduled today and at the next
+    session, from its one schedule file: dates and titles only, never a figure. Returns `(events, url, reason,
+    retrieved)` as `bls_calendar` does. There is no fallback page, retry or other host: a file that cannot be read whole
+    is a SourceError, and no event of it is admitted."""
+    deadline = min(deadline, time.monotonic() + BEA_SECONDS)
+    body = fetcher(BEA, deadline)
+    retrieved = datetime.now(timezone.utc)
+    events = calendar_events(body, now, retrieved, "bea", "bea-event", bea_release, ics_text)
+    return events, BEA, "", retrieved
+
+
+def bea_collection(now, deadline, fetcher):
+    """BEA for one run: one source record and the scheduled releases it admits. Returns `(record, events)`; when the
+    file cannot be read the record is UNAVAILABLE with the reason and the events are none."""
+    record = source("bea", "BEA release schedule", "calendar", BEA, now)
+    try:
+        events, record["url"], record["reason"], retrieved = bea_calendar(now, deadline, fetcher)
+    except (SourceError, ValueError, LookupError, UnicodeError, OverflowError) as exc:
+        record.update(status="UNAVAILABLE", reason=failure(exc))
+        return record, []
+    record.update(retrieved_at=retrieved.isoformat(), coverage_date=now.astimezone(EASTERN).date().isoformat())
+    return record, events
 
 
 def release_actuals(events, now, deadline, fetcher, enabled=None):
@@ -1119,8 +1183,10 @@ def collect_live(now, include_cuttingboard=False, fetcher=fetch):
         except (SourceError, ValueError, UnicodeError, OverflowError) as exc:
             record.update(status="UNAVAILABLE", reason=failure(exc))
         raw["sources"].append(record)
+    bea_record, bea_events = bea_collection(now, deadline, fetcher)
+    raw["sources"].append(bea_record)
+    raw["events"].extend(bea_events)
     for ident, name, url in (
-        ("bea", "BEA calendar", "https://www.bea.gov/news/schedule"),
         ("fed-calendar", "Fed calendar", "https://www.federalreserve.gov/newsevents/calendar.htm"),
     ):
         raw["sources"].append(source(ident, name, "calendar", url, now, "UNAVAILABLE",
